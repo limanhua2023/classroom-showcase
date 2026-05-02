@@ -52,12 +52,30 @@
           <td>${s.view_count}</td><td>${s.rating_count}</td><td>${s.average_rating > 0 ? Number(s.average_rating).toFixed(1) : '-'}</td>
           <td style="font-size:0.8rem;">${new Date(s.upload_time).toLocaleString('zh-CN')}</td>
           <td style="white-space:nowrap;">
+            <button class="btn btn-sm btn-primary" onclick="downloadImage('${s.image_url}', '${u.student_id||s.anonymous_code}', '${s.title}')">⬇️ 下载</button>
             <button class="btn btn-sm ${s.is_pinned?'btn-success':'btn-secondary'}" onclick="toggleField('${s.id}','is_pinned',${!s.is_pinned})">${s.is_pinned?'取消置顶':'置顶'}</button>
             <button class="btn btn-sm ${s.is_teacher_selected?'btn-success':'btn-secondary'}" onclick="toggleField('${s.id}','is_teacher_selected',${!s.is_teacher_selected})">${s.is_teacher_selected?'取消精选':'精选'}</button>
             <button class="btn btn-sm btn-danger" onclick="deleteWork('${s.id}')">删除</button>
           </td>
         </tr>`;
       }).join('');
+    }
+
+    async function downloadImage(url, studentId, title) {
+      try {
+        toast('正在处理下载...', 'success');
+        const res = await fetch(url);
+        const blob = await res.blob();
+        const blobUrl = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = blobUrl;
+        const ext = url.split('.').pop() || 'jpg';
+        a.download = `${studentId}_${title}.${ext}`;
+        a.click();
+        URL.revokeObjectURL(blobUrl);
+      } catch(e) {
+        toast('下载失败，您可以右键图片另存为', 'error');
+      }
     }
 
     document.getElementById('searchBox').addEventListener('input', e => {
