@@ -86,12 +86,10 @@
         const updated = await api('/activities/' + actId, { method: 'PUT', body: JSON.stringify({ [key]: newVal }) });
         act[key] = newVal;
         sessionStorage.setItem('classshow_activity', JSON.stringify({ ...act, [key]: newVal }));
-        updateToggleBtn('toggle' + key.split('_').map((w,i) => i ? w[0].toUpperCase()+w.slice(1) : w).join('').replace('open','').replace('show_live_','') === 'upload' ? 'Upload' : key === 'voting_open' ? 'Voting' : 'Ranking', newVal);
         toast(key + ' → ' + (newVal ? '开启' : '关闭'), 'success');
-        // Re-render buttons properly
-        updateToggleBtn('toggleUpload', key === 'upload_open' ? newVal : act.upload_open);
-        updateToggleBtn('toggleVoting', key === 'voting_open' ? newVal : act.voting_open);
-        updateToggleBtn('toggleRanking', key === 'show_live_ranking' ? newVal : act.show_live_ranking);
+        updateToggleBtn('toggleUpload', act.upload_open);
+        updateToggleBtn('toggleVoting', act.voting_open);
+        updateToggleBtn('toggleRanking', act.show_live_ranking);
       } catch (e) { toast('操作失败', 'error'); }
     }
 
