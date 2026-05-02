@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>课堂作业展示厅 | Classroom Showcase</title>
+    <link rel="stylesheet" href="./style.css">
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Noto+Sans+SC:wght@300;400;700&display=swap" rel="stylesheet">
+</head>
+<body>
+    <div id="app">
+        <header>
+            <div class="container">
+                <nav>
+                    <div class="logo">CLASS<span>WORK</span></div>
+                    <button id="open-submit-btn" class="btn-primary">上交作业</button>
+                </nav>
+                <div class="hero">
+                    <h1>课堂作业<span>实时展示</span></h1>
+                    <p>灵感就在此刻，提交你的作品，让全班共同见证。</p>
+                </div>
+            </div>
+        </header>
+
+        <main class="container">
+            <section class="gallery-controls">
+                <h2>作品画廊</h2>
+                <button id="refresh-btn" class="btn-secondary">刷新列表</button>
+            </section>
+            
+            <div id="assignment-grid" class="grid">
+                <!-- Assignments will be loaded here -->
+                <div class="loading-state">正在加载精选作品...</div>
+            </div>
+        </main>
+
+        <!-- Modal for submission -->
+        <div id="submit-modal" class="modal">
+            <div class="modal-content">
+                <span class="close-btn">&times;</span>
+                <h2>提交作业</h2>
+                <form id="assignment-form">
+                    <div class="form-group">
+                        <label for="studentName">学生姓名</label>
+                        <input type="text" id="studentName" placeholder="输入你的名字" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="title">作业标题</label>
+                        <input type="text" id="title" placeholder="给你的作业起个名字" required>
+                    </div>
+                    <div class="form-group">
+                        <label for="content">作业内容 (支持 Markdown 格式)</label>
+                        <textarea id="content" placeholder="在此输入你的作业内容或心得体会..." required></textarea>
+                    </div>
+                    <button type="submit" class="btn-submit">确认上交</button>
+                </form>
+            </div>
+        </div>
+
+        <footer>
+            <div class="container">
+                <p>&copy; 2026 AIOT-TEST 智慧课堂系统</p>
+            </div>
+        </footer>
+    </div>
+    <script type="module" src="./main.js"></script>
+</body>
+</html>
