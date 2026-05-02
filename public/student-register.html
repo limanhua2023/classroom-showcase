@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>学生注册 - ClassShow</title>
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <div class="page-center">
+    <div class="auth-box">
+      <a href="index.html" class="back-link">← 返回首页</a>
+      <h1>加入<span>课堂</span></h1>
+      <p class="subtitle" id="activityInfo">请填写您的信息</p>
+      <form onsubmit="register(event)">
+        <div class="form-group"><label>姓名 *</label><input type="text" id="name" placeholder="输入你的真实姓名" required></div>
+        <div class="form-group"><label>学号 *</label><input type="text" id="studentId" placeholder="输入你的学号" required></div>
+        <div class="form-group"><label>班级 *</label><input type="text" id="className" placeholder="例如：2026级电商1班" required></div>
+        <div class="form-group"><label>小组名称</label><input type="text" id="groupName" placeholder="输入你的小组名称（选填）"></div>
+        <button type="submit" class="btn btn-primary btn-block btn-lg">确认进入</button>
+      </form>
+      <p class="form-hint" style="margin-top:12px;text-align:center;">您的姓名和学号仅教师可见，同学间完全匿名。</p>
+    </div>
+  </div>
+  <script src="js/api.js"></script>
+  <script>
+    const actId = getActivityId();
+    if (!actId) location.href = 'index.html';
+    const act = JSON.parse(sessionStorage.getItem('classshow_activity') || '{}');
+    document.getElementById('activityInfo').textContent = act.activity_name || '课堂活动';
+    // Pre-fill if returning
+    const existing = getSession();
+    if (existing) {
+      document.getElementById('name').value = existing.name || '';
+      document.getElementById('studentId').value = existing.student_id || '';
+      document.getElementById('className').value = existing.class_name || '';
+      document.getElementById('groupName').value = existing.group_name || '';
+    }
+    async function register(e) {
+      e.preventDefault();
+      try {
+        const user = await api('/users', {
+          method: 'POST',
+          body: JSON.stringify({
+            activity_id: actId,
+            name: document.getElementById('name').value.trim(),
+            student_id: document.getElementById('studentId').value.trim(),
+            class_name: document.getElementById('className').value.trim(),
+            group_name: document.getElementById('groupName').value.trim() || null
+          })
+        });
+        setSession(user);
+        location.href = 'student-gallery.html';
+      } catch (e) { toast('注册失败: ' + e.message, 'error'); }
+    }
+  </script>
+</body>
+</html>

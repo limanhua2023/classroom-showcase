@@ -1,70 +1,42 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>课堂作业展示厅 | Classroom Showcase</title>
-    <link rel="stylesheet" href="./style.css">
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;800&family=Noto+Sans+SC:wght@300;400;700&display=swap" rel="stylesheet">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>ClassShow 课堂作品秀</title>
+  <link rel="stylesheet" href="css/main.css">
 </head>
 <body>
-    <div id="app">
-        <header>
-            <div class="container">
-                <nav>
-                    <div class="logo">CLASS<span>WORK</span></div>
-                    <button id="open-submit-btn" class="btn-primary">上交作业</button>
-                </nav>
-                <div class="hero">
-                    <h1>课堂作业<span>实时展示</span></h1>
-                    <p>灵感就在此刻，提交你的作品，让全班共同见证。</p>
-                </div>
-            </div>
-        </header>
-
-        <main class="container">
-            <section class="gallery-controls">
-                <h2>作品画廊</h2>
-                <button id="refresh-btn" class="btn-secondary">刷新列表</button>
-            </section>
-            
-            <div id="assignment-grid" class="grid">
-                <!-- Assignments will be loaded here -->
-                <div class="loading-state">正在加载精选作品...</div>
-            </div>
-        </main>
-
-        <!-- Modal for submission -->
-        <div id="submit-modal" class="modal">
-            <div class="modal-content">
-                <span class="close-btn">&times;</span>
-                <h2>提交作业</h2>
-                <form id="assignment-form">
-                    <div class="form-group">
-                        <label for="studentName">学生姓名</label>
-                        <input type="text" id="studentName" placeholder="输入你的名字" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="title">作业标题</label>
-                        <input type="text" id="title" placeholder="给你的作业起个名字" required>
-                    </div>
-                    <div class="form-group">
-                        <label for="content">作业内容 (支持 Markdown 格式)</label>
-                        <textarea id="content" placeholder="在此输入你的作业内容或心得体会..." required></textarea>
-                    </div>
-                    <button type="submit" class="btn-submit">确认上交</button>
-                </form>
-            </div>
+  <div class="page-center">
+    <div class="auth-box" style="text-align:center;">
+      <h1>Class<span>Show</span></h1>
+      <p class="subtitle">课堂作品秀 · 匿名互评 · 公平展示</p>
+      <div id="student-section">
+        <div class="form-group">
+          <input type="text" id="inviteCode" placeholder="输入课堂邀请码" style="text-align:center;font-size:1.2rem;letter-spacing:2px;">
         </div>
-
-        <footer>
-            <div class="container">
-                <p>&copy; 2026 AIOT-TEST 智慧课堂系统</p>
-            </div>
-        </footer>
+        <button class="btn btn-primary btn-block btn-lg" onclick="joinActivity()">进入课堂</button>
+      </div>
+      <div class="auth-divider">— 教师入口 —</div>
+      <button class="btn btn-secondary btn-block" onclick="location.href='teacher-login.html'">教师登录</button>
+      <div style="margin-top:24px;">
+        <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-login.html?create=1'">+ 创建新活动</button>
+      </div>
     </div>
-    <script src="./main.js"></script>
+  </div>
+  <script src="js/api.js"></script>
+  <script>
+    document.getElementById('inviteCode').addEventListener('keydown', e => { if (e.key === 'Enter') joinActivity(); });
+    async function joinActivity() {
+      const code = document.getElementById('inviteCode').value.trim().toUpperCase();
+      if (!code) return toast('请输入邀请码', 'error');
+      try {
+        const activity = await api('/activities/code/' + code);
+        setActivityId(activity.id);
+        sessionStorage.setItem('classshow_activity', JSON.stringify(activity));
+        location.href = 'student-register.html';
+      } catch (e) { toast('邀请码无效，请检查后重试', 'error'); }
+    }
+  </script>
 </body>
 </html>

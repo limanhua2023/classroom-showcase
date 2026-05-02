@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>作品详情 - ClassShow</title>
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <div class="topbar"><div class="topbar-logo">Class<span>Show</span></div>
+    <div class="topbar-right"><button class="btn btn-sm btn-secondary" onclick="location.href='student-gallery.html'">← 返回画廊</button></div>
+  </div>
+  <div class="container" style="max-width:700px;padding-top:24px;">
+    <div id="loading" class="empty">加载中...</div>
+    <div id="detail" style="display:none;">
+      <img id="workImg" style="width:100%;border-radius:var(--radius);margin-bottom:16px;max-height:500px;object-fit:contain;background:#f0f2f5;">
+      <div style="display:flex;gap:8px;margin-bottom:12px;">
+        <span class="card-badge" id="workCode"></span>
+        <span class="card-badge new" id="newBadge" style="display:none;">NEW</span>
+      </div>
+      <h1 id="workTitle" style="font-size:1.5rem;margin-bottom:8px;"></h1>
+      <p id="workDesc" style="color:var(--text-muted);line-height:1.6;margin-bottom:16px;"></p>
+      <div class="card-meta" style="margin-bottom:24px;">
+        <span>👁 <span id="viewCount">0</span> 浏览</span>
+        <span>⭐ <span id="avgScore">-</span> 平均分</span>
+        <span>👥 <span id="rateCount">0</span> 人评分</span>
+      </div>
+      <!-- Rating Section -->
+      <div id="ratingSection" class="card" style="padding:24px;text-align:center;">
+        <h3 style="margin-bottom:12px;" id="ratingTitle">为这份作品评分</h3>
+        <div class="stars" id="stars">
+          <span class="star" data-v="1" onclick="rate(1)" onmouseenter="hoverStar(1)" onmouseleave="resetStars()">★</span>
+          <span class="star" data-v="2" onclick="rate(2)" onmouseenter="hoverStar(2)" onmouseleave="resetStars()">★</span>
+          <span class="star" data-v="3" onclick="rate(3)" onmouseenter="hoverStar(3)" onmouseleave="resetStars()">★</span>
+          <span class="star" data-v="4" onclick="rate(4)" onmouseenter="hoverStar(4)" onmouseleave="resetStars()">★</span>
+          <span class="star" data-v="5" onclick="rate(5)" onmouseenter="hoverStar(5)" onmouseleave="resetStars()">★</span>
+        </div>
+        <p id="ratingHint" style="margin-top:8px;color:var(--text-muted);font-size:0.9rem;"></p>
+      </div>
+    </div>
+  </div>
+  <script src="js/api.js"></script>
+  <script>
+    const user = getSession(); const actId = getActivityId();
+    if (!user || !actId) location.href = 'index.html';
+    const act = JSON.parse(sessionStorage.getItem('classshow_activity') || '{}');
+    const sid = new URLSearchParams(location.search).get('id');
+    let currentRating = 0; let work = null;
+
+    async function load() {
+      try {
+        work = await api('/submissions/' + sid);
+        document.getElementById('loading').style.display = 'none';
+        document.getElementById('detail').style.display = 'block';
+        document.getElementById('workImg').src = work.image_url;
+        document.getElementById('workCode').textContent = work.anonymous_code;
+        document.getElementById('workTitle').textContent = work.title;
+        document.getElementById('workDesc').textContent = work.description || '';
+        document.getElementById('viewCount').textContent = work.view_count;
+        document.getElementById('avgScore').textContent = work.average_rating > 0 ? Number(work.average_rating).toFixed(1) : '-';
+        document.getElementById('rateCount').textContent = work.rating_count;
+        if (isNewWork(work.upload_time)) document.getElementById('newBadge').style.display = 'inline';
+        // Check if own work
+        if (work.user_id === user.id) {
+          document.getElementById('ratingSection').innerHTML = '<p style="color:var(--text-muted);">这是你自己的作品，不能评分。</p>';
+          return;
+        }
+        if (!act.voting_open) {
+          document.getElementById('ratingSection').innerHTML = '<p style="color:var(--text-muted);">评分尚未开启，请等待教师开启。</p>';
+          return;
+        }
+        // Check existing rating
+        const myRatings = await api('/ratings/my?activity_id=' + actId + '&user_id=' + user.id);
+        const existing = myRatings.find(r => r.submission_id === sid);
+        if (existing) { currentRating = existing.score; updateStars(); document.getElementById('ratingHint').textContent = '你已评 ' + existing.score + ' 分（点击可修改）'; }
+        // Record view (after 3 seconds)
+        setTimeout(() => { api('/views', { method: 'POST', body: JSON.stringify({ submission_id: sid, viewer_user_id: user.id }) }); }, 3000);
+      } catch (e) { document.getElementById('loading').innerHTML = '加载失败'; }
+    }
+
+    function hoverStar(n) { document.querySelectorAll('.star').forEach(s => s.classList.toggle('hover', parseInt(s.dataset.v) <= n)); }
+    function resetStars() { document.querySelectorAll('.star').forEach(s => s.classList.remove('hover')); }
+    function updateStars() { document.querySelectorAll('.star').forEach(s => s.classList.toggle('active', parseInt(s.dataset.v) <= currentRating)); }
+
+    async function rate(score) {
+      try {
+        const res = await api('/ratings', { method: 'POST', body: JSON.stringify({
+          activity_id: actId, submission_id: sid, rater_user_id: user.id, score
+        })});
+        currentRating = score; updateStars();
+        document.getElementById('ratingHint').textContent = '评分成功！你打了 ' + score + ' 分';
+        document.getElementById('avgScore').textContent = Number(res.average).toFixed(1);
+        document.getElementById('rateCount').textContent = res.count;
+        toast('评分成功！', 'success');
+      } catch (e) { toast(e.message, 'error'); }
+    }
+    load();
+  </script>
+</body>
+</html>

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>上传作品 - ClassShow</title>
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <div class="topbar"><div class="topbar-logo">Class<span>Show</span></div>
+    <div class="topbar-right"><button class="btn btn-sm btn-secondary" onclick="location.href='student-gallery.html'">返回画廊</button></div>
+  </div>
+  <div class="container" style="max-width:600px;padding-top:24px;">
+    <h2 style="margin-bottom:20px;">📤 上传你的作品</h2>
+    <form onsubmit="submitWork(event)">
+      <div class="form-group"><label>作品标题 *</label><input type="text" id="title" placeholder="给你的作品起个名字" required></div>
+      <div class="form-group"><label>作品说明</label><textarea id="desc" placeholder="简要描述你的作品（50-100字）" maxlength="200"></textarea><div class="form-hint"><span id="charCount">0</span>/200</div></div>
+      <div class="form-group"><label>作品图片 *</label>
+        <div class="upload-area" id="uploadArea">
+          <input type="file" id="imageFile" accept="image/jpeg,image/png,image/webp" onchange="previewImage(this)" required>
+          <div id="uploadPrompt"><div class="upload-icon">📷</div><div>点击或拖拽上传图片</div><div class="form-hint">支持 JPG、PNG、WebP，最大 5MB</div></div>
+          <img id="preview" class="upload-preview" style="display:none;">
+        </div>
+      </div>
+      <button type="submit" id="submitBtn" class="btn btn-primary btn-block btn-lg">确认上传</button>
+    </form>
+  </div>
+  <script src="js/api.js"></script>
+  <script>
+    const user = getSession(); const actId = getActivityId();
+    if (!user || !actId) location.href = 'index.html';
+    document.getElementById('desc').addEventListener('input', e => { document.getElementById('charCount').textContent = e.target.value.length; });
+    function previewImage(input) {
+      if (input.files[0]) {
+        const reader = new FileReader();
+        reader.onload = e => { document.getElementById('preview').src = e.target.result; document.getElementById('preview').style.display = 'block'; document.getElementById('uploadPrompt').style.display = 'none'; };
+        reader.readAsDataURL(input.files[0]);
+      }
+    }
+    async function submitWork(e) {
+      e.preventDefault();
+      const btn = document.getElementById('submitBtn');
+      btn.disabled = true; btn.textContent = '上传中...';
+      try {
+        const file = document.getElementById('imageFile').files[0];
+        if (!file) throw new Error('请选择图片');
+        if (file.size > 5 * 1024 * 1024) throw new Error('图片不能超过5MB');
+        const { url } = await uploadImage(file);
+        await api('/submissions', { method: 'POST', body: JSON.stringify({
+          activity_id: actId, user_id: user.id,
+          title: document.getElementById('title').value.trim(),
+          description: document.getElementById('desc').value.trim(),
+          image_url: url
+        })});
+        toast('作品上传成功！', 'success');
+        setTimeout(() => location.href = 'student-gallery.html', 1000);
+      } catch (err) { toast(err.message, 'error'); btn.disabled = false; btn.textContent = '确认上传'; }
+    }
+  </script>
+</body>
+</html>

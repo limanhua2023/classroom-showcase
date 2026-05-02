@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>作品管理 - ClassShow</title>
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-logo">Class<span>Show</span> · 作品管理</div>
+    <div class="topbar-right">
+      <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-dashboard.html'">← 返回后台</button>
+      <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-scores.html'">📊 评分成绩</button>
+    </div>
+  </div>
+  <div class="container" style="padding-top:24px;">
+    <div class="section-header">
+      <h2>📋 全部作品（实名）</h2>
+      <input type="text" id="searchBox" placeholder="搜索姓名/学号/编号..." style="padding:8px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);width:200px;">
+    </div>
+    <div class="table-wrap" style="margin-top:12px;">
+      <table>
+        <thead><tr>
+          <th>编号</th><th>图片</th><th>标题</th><th>姓名</th><th>学号</th><th>班级</th><th>小组</th><th>浏览</th><th>评分</th><th>平均分</th><th>上传时间</th><th>操作</th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+  <script src="js/api.js"></script>
+  <script>
+    const actId = sessionStorage.getItem('classshow_activity_id');
+    const token = sessionStorage.getItem('teacherToken');
+    if (!token) location.href = 'teacher-login.html';
+    let allData = [];
+
+    async function loadWorks() {
+      try {
+        allData = await api('/teacher/submissions?activity_id=' + actId);
+        render(allData);
+      } catch (e) { toast('加载失败', 'error'); }
+    }
+
+    function render(data) {
+      document.getElementById('tbody').innerHTML = data.map(s => {
+        const u = s.users || {};
+        return `<tr>
+          <td><span class="card-badge">${s.anonymous_code}</span></td>
+          <td><img src="${s.image_url}" alt="" onerror="this.style.display='none'"></td>
+          <td><strong>${s.title}</strong></td>
+          <td>${u.name||'-'}</td><td>${u.student_id||'-'}</td><td>${u.class_name||'-'}</td><td>${u.group_name||'-'}</td>
+          <td>${s.view_count}</td><td>${s.rating_count}</td><td>${s.average_rating > 0 ? Number(s.average_rating).toFixed(1) : '-'}</td>
+          <td style="font-size:0.8rem;">${new Date(s.upload_time).toLocaleString('zh-CN')}</td>
+          <td style="white-space:nowrap;">
+            <button class="btn btn-sm ${s.is_pinned?'btn-success':'btn-secondary'}" onclick="toggleField('${s.id}','is_pinned',${!s.is_pinned})">${s.is_pinned?'取消置顶':'置顶'}</button>
+            <button class="btn btn-sm ${s.is_teacher_selected?'btn-success':'btn-secondary'}" onclick="toggleField('${s.id}','is_teacher_selected',${!s.is_teacher_selected})">${s.is_teacher_selected?'取消精选':'精选'}</button>
+            <button class="btn btn-sm btn-danger" onclick="deleteWork('${s.id}')">删除</button>
+          </td>
+        </tr>`;
+      }).join('');
+    }
+
+    document.getElementById('searchBox').addEventListener('input', e => {
+      const q = e.target.value.toLowerCase();
+      render(allData.filter(s => {
+        const u = s.users || {};
+        return (s.anonymous_code||'').toLowerCase().includes(q) || (u.name||'').toLowerCase().includes(q) || (u.student_id||'').toLowerCase().includes(q) || (s.title||'').toLowerCase().includes(q);
+      }));
+    });
+
+    async function toggleField(id, field, val) {
+      try {
+        await api('/teacher/submissions/' + id, { method: 'PUT', body: JSON.stringify({ [field]: val }) });
+        toast('更新成功', 'success'); loadWorks();
+      } catch (e) { toast('操作失败', 'error'); }
+    }
+
+    async function deleteWork(id) {
+      if (!confirm('确定删除这份作品？')) return;
+      try { await api('/teacher/submissions/' + id, { method: 'DELETE' }); toast('已删除', 'success'); loadWorks(); }
+      catch (e) { toast('删除失败', 'error'); }
+    }
+    loadWorks();
+  </script>
+</body>
+</html>

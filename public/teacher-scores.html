@@ -1,0 +1,104 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>评分与成绩 - ClassShow</title>
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-logo">Class<span>Show</span> · 评分成绩</div>
+    <div class="topbar-right">
+      <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-dashboard.html'">← 返回后台</button>
+      <button class="btn btn-sm btn-success" onclick="exportCSV()">📥 导出 CSV</button>
+    </div>
+  </div>
+  <div class="container" style="padding-top:24px;">
+    <div class="section-header"><h2>📊 评分与成绩管理</h2></div>
+    <div class="card" style="padding:16px;margin-bottom:16px;">
+      <div style="display:flex;flex-wrap:wrap;gap:16px;align-items:center;">
+        <label>互评权重: <input type="number" id="peerWeight" value="40" min="0" max="100" style="width:60px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;">%</label>
+        <label>教师权重: <input type="number" id="teacherWeight" value="60" min="0" max="100" style="width:60px;padding:4px 8px;border:1px solid var(--border);border-radius:4px;">%</label>
+        <button class="btn btn-sm btn-primary" onclick="recalculate()">重新计算</button>
+      </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th>排名</th><th>编号</th><th>姓名</th><th>学号</th><th>小组</th><th>标题</th><th>浏览</th><th>评分人数</th><th>平均分</th><th>综合分</th><th>教师评分</th><th>最终成绩</th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table>
+    </div>
+  </div>
+  <script src="js/api.js"></script>
+  <script>
+    const actId = sessionStorage.getItem('classshow_activity_id');
+    const token = sessionStorage.getItem('teacherToken');
+    if (!token) location.href = 'teacher-login.html';
+    let allData = [];
+
+    async function loadData() {
+      try {
+        allData = await api('/teacher/submissions?activity_id=' + actId);
+        // Calculate composite scores
+        const maxRC = Math.max(...allData.map(d => d.rating_count), 1);
+        const maxVC = Math.max(...allData.map(d => d.view_count), 1);
+        allData.forEach(d => {
+          const normRC = d.rating_count / maxRC * 5;
+          const normVC = d.view_count / maxVC * 5;
+          d.composite_score = Math.round((d.average_rating * 0.7 + normRC * 0.2 + normVC * 0.1) * 100) / 100;
+        });
+        allData.sort((a, b) => b.composite_score - a.composite_score || b.rating_count - a.rating_count || b.average_rating - a.average_rating);
+        allData.forEach((d, i) => d.rank = i + 1);
+        render();
+      } catch (e) { toast('加载失败', 'error'); }
+    }
+
+    function render() {
+      const pw = parseInt(document.getElementById('peerWeight').value) / 100;
+      const tw = parseInt(document.getElementById('teacherWeight').value) / 100;
+      document.getElementById('tbody').innerHTML = allData.map(s => {
+        const u = s.users || {};
+        const ts = s.teacher_score;
+        const fs = ts != null ? Math.round((s.average_rating * pw + ts * tw) * 100) / 100 : null;
+        const rankClass = s.rank === 1 ? 'gold' : s.rank === 2 ? 'silver' : s.rank === 3 ? 'bronze' : '';
+        return `<tr>
+          <td><span class="rank-badge ${rankClass}">${s.rank}</span></td>
+          <td><span class="card-badge">${s.anonymous_code}</span></td>
+          <td>${u.name||'-'}</td><td>${u.student_id||'-'}</td><td>${u.group_name||'-'}</td>
+          <td>${s.title}</td><td>${s.view_count}</td><td>${s.rating_count}</td>
+          <td><strong>${s.average_rating > 0 ? Number(s.average_rating).toFixed(2) : '-'}</strong></td>
+          <td>${s.composite_score}</td>
+          <td><input type="number" min="0" max="5" step="0.1" value="${ts||''}" style="width:60px;padding:4px;border:1px solid var(--border);border-radius:4px;" onchange="saveTeacherScore('${s.id}', this.value)"></td>
+          <td style="font-weight:700;color:var(--primary);">${fs != null ? fs : '-'}</td>
+        </tr>`;
+      }).join('');
+    }
+
+    function recalculate() { render(); toast('重新计算完成', 'success'); }
+
+    async function saveTeacherScore(id, val) {
+      const score = val ? parseFloat(val) : null;
+      try {
+        await api('/teacher/submissions/' + id, { method: 'PUT', body: JSON.stringify({ teacher_score: score }) });
+        const item = allData.find(d => d.id === id);
+        if (item) item.teacher_score = score;
+        render();
+        toast('教师评分已保存', 'success');
+      } catch (e) { toast('保存失败', 'error'); }
+    }
+
+    async function exportCSV() {
+      try {
+        const blob = await api('/teacher/export?activity_id=' + actId);
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a'); a.href = url; a.download = 'classshow_export.csv'; a.click();
+        URL.revokeObjectURL(url);
+        toast('导出成功', 'success');
+      } catch (e) { toast('导出失败', 'error'); }
+    }
+    loadData();
+  </script>
+</body>
+</html>

@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>作品画廊 - ClassShow</title>
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-logo">Class<span>Show</span></div>
+    <div class="topbar-right">
+      <button class="btn btn-sm btn-secondary" onclick="loadWorks()">🔄 刷新</button>
+      <button class="btn btn-sm btn-primary" id="uploadBtn" onclick="location.href='student-upload.html'">📤 上传作品</button>
+    </div>
+  </div>
+  <div class="container">
+    <div class="stats-row" id="statsRow">
+      <div class="stat-card"><div class="stat-value" id="totalWorks">0</div><div class="stat-label">作品总数</div></div>
+      <div class="stat-card"><div class="stat-value" id="myRated">0</div><div class="stat-label">已评分数</div></div>
+    </div>
+    <!-- New Works Section -->
+    <div id="newSection" style="display:none;">
+      <div class="section-header"><h3 class="section-title">🔥 新作品展示区</h3><span class="card-badge new">5分钟内</span></div>
+      <div class="grid grid-3" id="newGrid"></div>
+    </div>
+    <!-- Rubric -->
+    <div class="rubric" id="rubricBox" style="display:none;">
+      <h3>📋 评分标准（1-5分）</h3>
+      <ol>
+        <li><strong>内容完整性</strong>：作品是否完整、清楚、有主题</li>
+        <li><strong>视觉表达</strong>：图片、海报、图表是否清晰美观</li>
+        <li><strong>数据使用</strong>：是否使用了真实或合理的数据</li>
+        <li><strong>AI辅助质量</strong>：AI使用是否有效</li>
+        <li><strong>创意与实用性</strong>：作品是否有新意</li>
+      </ol>
+    </div>
+    <!-- All Works -->
+    <div class="section-header" style="margin-top:16px;"><h3 class="section-title">🎨 全部作品</h3></div>
+    <div class="grid grid-3" id="allGrid"><div class="empty"><div class="empty-icon">📭</div>还没有作品，快来上传第一个吧！</div></div>
+  </div>
+  <script src="js/api.js"></script>
+  <script>
+    const user = getSession(); const actId = getActivityId();
+    if (!user || !actId) location.href = 'index.html';
+    const act = JSON.parse(sessionStorage.getItem('classshow_activity') || '{}');
+    let myRatings = {};
+
+    async function loadWorks() {
+      try {
+        const [works, ratings] = await Promise.all([
+          api('/submissions?activity_id=' + actId),
+          api('/ratings/my?activity_id=' + actId + '&user_id=' + user.id)
+        ]);
+        myRatings = {};
+        ratings.forEach(r => myRatings[r.submission_id] = r.score);
+        document.getElementById('totalWorks').textContent = works.length;
+        document.getElementById('myRated').textContent = ratings.length;
+        if (act.voting_open) { document.getElementById('rubricBox').style.display = 'block'; }
+        // Separate new works (< 5 min)
+        const newWorks = works.filter(w => isNewWork(w.upload_time));
+        const allWorks = works.filter(w => !isNewWork(w.upload_time));
+        // Shuffle for fairness
+        for (let i = allWorks.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [allWorks[i], allWorks[j]] = [allWorks[j], allWorks[i]]; }
+        // Pinned first
+        allWorks.sort((a, b) => (b.is_pinned ? 1 : 0) - (a.is_pinned ? 1 : 0));
+        if (newWorks.length > 0) {
+          document.getElementById('newSection').style.display = 'block';
+          document.getElementById('newGrid').innerHTML = newWorks.map(w => workCard(w)).join('');
+        } else { document.getElementById('newSection').style.display = 'none'; }
+        document.getElementById('allGrid').innerHTML = allWorks.length ? allWorks.map(w => workCard(w)).join('') : '<div class="empty"><div class="empty-icon">📭</div>还没有作品</div>';
+        if (!act.upload_open) document.getElementById('uploadBtn').style.display = 'none';
+      } catch (e) { toast('加载失败: ' + e.message, 'error'); }
+    }
+
+    function workCard(w) {
+      const isOwn = w.user_id === user.id;
+      const rated = myRatings[w.id];
+      const isNew = isNewWork(w.upload_time);
+      return `<div class="card" onclick="location.href='student-detail.html?id=${w.id}'">
+        <img class="card-img" src="${w.image_url}" alt="${w.title}" loading="lazy" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 1 1%22><rect fill=%22%23e2e8f0%22 width=%221%22 height=%221%22/></svg>'">
+        <div class="card-body">
+          <div style="display:flex;gap:6px;margin-bottom:8px;">
+            <span class="card-badge">${w.anonymous_code}</span>
+            ${isNew ? '<span class="card-badge new">NEW</span>' : ''}
+            ${w.is_pinned ? '<span class="card-badge pinned">置顶</span>' : ''}
+            ${w.is_teacher_selected ? '<span class="card-badge" style="background:#fef3c7;color:#b45309;">⭐ 精选</span>' : ''}
+          </div>
+          <div class="card-title">${w.title}</div>
+          <div class="card-meta">
+            <span>👁 ${w.view_count}</span>
+            <span>⭐ ${w.average_rating > 0 ? Number(w.average_rating).toFixed(1) : '-'}</span>
+            <span>👥 ${w.rating_count}人评</span>
+            ${rated ? '<span style="color:var(--success);">✓ 已评'+rated+'分</span>' : (isOwn ? '<span style="color:var(--text-light);">我的作品</span>' : '')}
+          </div>
+        </div>
+      </div>`;
+    }
+    loadWorks();
+    setInterval(loadWorks, 15000);
+  </script>
+</body>
+</html>

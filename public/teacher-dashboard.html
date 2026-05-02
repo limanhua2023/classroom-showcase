@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>教师后台 - ClassShow</title>
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-logo">Class<span>Show</span> · 教师后台</div>
+    <div class="topbar-right">
+      <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-works.html'">📋 作品管理</button>
+      <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-scores.html'">📊 评分成绩</button>
+      <button class="btn btn-sm btn-secondary" onclick="window.open('display.html','_blank')">🖥️ 大屏展示</button>
+      <button class="btn btn-sm btn-danger" onclick="sessionStorage.clear();location.href='index.html'">退出</button>
+    </div>
+  </div>
+  <div class="container" style="padding-top:24px;">
+    <h2 id="actTitle" style="margin-bottom:4px;"></h2>
+    <p id="actSubtitle" style="color:var(--text-muted);margin-bottom:20px;"></p>
+
+    <!-- Stats -->
+    <div class="stats-row">
+      <div class="stat-card"><div class="stat-value" id="sUsers">0</div><div class="stat-label">参与学生</div></div>
+      <div class="stat-card"><div class="stat-value" id="sSubs">0</div><div class="stat-label">作品数量</div></div>
+      <div class="stat-card"><div class="stat-value" id="sRatings">0</div><div class="stat-label">评分次数</div></div>
+    </div>
+
+    <!-- Controls -->
+    <div class="card" style="margin:20px 0;">
+      <div class="card-body" style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;">
+        <h3 style="margin-right:auto;">活动控制</h3>
+        <div>
+          上传：<button class="btn btn-sm" id="toggleUpload" onclick="toggleSetting('upload_open')"></button>
+        </div>
+        <div>
+          评分：<button class="btn btn-sm" id="toggleVoting" onclick="toggleSetting('voting_open')"></button>
+        </div>
+        <div>
+          实时排行：<button class="btn btn-sm" id="toggleRanking" onclick="toggleSetting('show_live_ranking')"></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Activity Info -->
+    <div class="card">
+      <div class="card-body">
+        <h3 style="margin-bottom:12px;">📌 活动信息</h3>
+        <table style="width:100%;">
+          <tr><td style="font-weight:600;width:100px;">邀请码</td><td><span id="invCode" style="font-size:1.3rem;font-weight:800;color:var(--primary);letter-spacing:2px;"></span></td></tr>
+          <tr><td style="font-weight:600;">课程</td><td id="infoCourse"></td></tr>
+          <tr><td style="font-weight:600;">班级</td><td id="infoClass"></td></tr>
+          <tr><td style="font-weight:600;">活动</td><td id="infoActivity"></td></tr>
+          <tr><td style="font-weight:600;">说明</td><td id="infoDesc"></td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+  <script src="js/api.js"></script>
+  <script>
+    const act = JSON.parse(sessionStorage.getItem('classshow_activity') || '{}');
+    const token = sessionStorage.getItem('teacherToken');
+    if (!token) location.href = 'teacher-login.html';
+    const actId = act.id;
+
+    document.getElementById('actTitle').textContent = act.activity_name || '';
+    document.getElementById('actSubtitle').textContent = (act.course_name || '') + ' · ' + (act.class_name || '');
+    document.getElementById('invCode').textContent = act.invite_code || '';
+    document.getElementById('infoCourse').textContent = act.course_name || '';
+    document.getElementById('infoClass').textContent = act.class_name || '';
+    document.getElementById('infoActivity').textContent = act.activity_name || '';
+    document.getElementById('infoDesc').textContent = act.description || '无';
+
+    function updateToggleBtn(id, val) {
+      const btn = document.getElementById(id);
+      btn.textContent = val ? '已开启 ✓' : '已关闭 ✕';
+      btn.className = 'btn btn-sm ' + (val ? 'btn-success' : 'btn-danger');
+    }
+    updateToggleBtn('toggleUpload', act.upload_open);
+    updateToggleBtn('toggleVoting', act.voting_open);
+    updateToggleBtn('toggleRanking', act.show_live_ranking);
+
+    async function toggleSetting(key) {
+      const newVal = !act[key];
+      try {
+        const updated = await api('/activities/' + actId, { method: 'PUT', body: JSON.stringify({ [key]: newVal }) });
+        act[key] = newVal;
+        sessionStorage.setItem('classshow_activity', JSON.stringify({ ...act, [key]: newVal }));
+        updateToggleBtn('toggle' + key.split('_').map((w,i) => i ? w[0].toUpperCase()+w.slice(1) : w).join('').replace('open','').replace('show_live_','') === 'upload' ? 'Upload' : key === 'voting_open' ? 'Voting' : 'Ranking', newVal);
+        toast(key + ' → ' + (newVal ? '开启' : '关闭'), 'success');
+        // Re-render buttons properly
+        updateToggleBtn('toggleUpload', key === 'upload_open' ? newVal : act.upload_open);
+        updateToggleBtn('toggleVoting', key === 'voting_open' ? newVal : act.voting_open);
+        updateToggleBtn('toggleRanking', key === 'show_live_ranking' ? newVal : act.show_live_ranking);
+      } catch (e) { toast('操作失败', 'error'); }
+    }
+
+    async function loadStats() {
+      try {
+        const stats = await api('/activities/' + actId + '/stats');
+        document.getElementById('sUsers').textContent = stats.users;
+        document.getElementById('sSubs').textContent = stats.submissions;
+        document.getElementById('sRatings').textContent = stats.ratings;
+      } catch (e) {}
+    }
+    loadStats();
+    setInterval(loadStats, 10000);
+  </script>
+</body>
+</html>
