@@ -1,4 +1,4 @@
-const API_URL = 'http://localhost:3000/api';
+const API_URL = '/api';
 
 const assignmentGrid = document.getElementById('assignment-grid');
 const submitModal = document.getElementById('submit-modal');
