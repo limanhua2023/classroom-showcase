@@ -4,6 +4,70 @@
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>大屏展示 - ClassShow</title>
   <link rel="stylesheet" href="css/main.css">
+  <style>
+    /* Spotlight Modal - Full Screen Work Detail */
+    .spotlight-overlay {
+      position: fixed; inset: 0; z-index: 500; background: rgba(0,0,0,0.92);
+      backdrop-filter: blur(20px); display: none; opacity: 0;
+      transition: opacity 0.4s ease;
+    }
+    .spotlight-overlay.active { display: flex; opacity: 1; }
+    .spotlight-layout {
+      display: flex; width: 100%; height: 100%; padding: 40px;
+      gap: 40px; align-items: center; justify-content: center;
+    }
+    .spotlight-img-wrap {
+      flex: 1; max-width: 60%; height: 100%; display: flex;
+      align-items: center; justify-content: center;
+    }
+    .spotlight-img-wrap img {
+      max-width: 100%; max-height: 85vh; object-fit: contain;
+      border-radius: 16px; box-shadow: 0 20px 60px rgba(0,0,0,0.5);
+      animation: spotlightZoom 0.5s ease forwards;
+    }
+    @keyframes spotlightZoom {
+      from { transform: scale(0.85); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+    .spotlight-info {
+      width: 380px; max-height: 85vh; overflow-y: auto;
+      background: rgba(30, 41, 59, 0.95); border-radius: 20px;
+      padding: 32px; border: 1px solid rgba(99, 102, 241, 0.25);
+      animation: spotlightSlide 0.5s ease forwards;
+    }
+    @keyframes spotlightSlide {
+      from { transform: translateX(30px); opacity: 0; }
+      to { transform: translateX(0); opacity: 1; }
+    }
+    .spotlight-badge { display: inline-block; padding: 4px 14px; border-radius: 999px; font-size: 0.8rem; font-weight: 700; background: rgba(99,102,241,0.2); color: #818cf8; margin-bottom: 12px; }
+    .spotlight-title { font-size: 1.6rem; font-weight: 800; color: #f1f5f9; margin-bottom: 8px; }
+    .spotlight-desc { color: #94a3b8; font-size: 0.95rem; line-height: 1.6; margin-bottom: 20px; }
+    .spotlight-stats { display: flex; gap: 24px; margin-bottom: 24px; }
+    .spotlight-stat { text-align: center; }
+    .spotlight-stat-val { font-size: 1.8rem; font-weight: 800; color: #818cf8; }
+    .spotlight-stat-lbl { font-size: 0.75rem; color: #64748b; margin-top: 2px; }
+    .spotlight-stars { display: flex; gap: 6px; margin-bottom: 24px; justify-content: center; }
+    .spotlight-star { font-size: 2rem; color: #334155; }
+    .spotlight-star.filled { color: #f59e0b; }
+    .spotlight-comments-title { font-size: 1rem; font-weight: 700; color: #94a3b8; margin-bottom: 12px; border-top: 1px solid rgba(148,163,184,0.15); padding-top: 16px; }
+    .spotlight-comment { padding: 12px; background: rgba(15,23,42,0.6); border-radius: 12px; margin-bottom: 10px; }
+    .spotlight-comment-text { color: #e2e8f0; font-size: 0.9rem; line-height: 1.5; }
+    .spotlight-comment-time { color: #475569; font-size: 0.75rem; margin-top: 6px; }
+    .spotlight-empty { color: #475569; text-align: center; padding: 20px; font-size: 0.9rem; }
+    .spotlight-close {
+      position: fixed; top: 24px; right: 32px; z-index: 600;
+      background: rgba(255,255,255,0.15); border: none; color: #f1f5f9;
+      width: 48px; height: 48px; border-radius: 50%; font-size: 1.5rem;
+      cursor: pointer; transition: background 0.2s; display: none;
+    }
+    .spotlight-close:hover { background: rgba(255,255,255,0.3); }
+    .spotlight-overlay.active ~ .spotlight-close { display: flex; align-items: center; justify-content: center; }
+    @media (max-width: 900px) {
+      .spotlight-layout { flex-direction: column; padding: 20px; }
+      .spotlight-img-wrap { max-width: 100%; }
+      .spotlight-info { width: 100%; max-height: 40vh; }
+    }
+  </style>
 </head>
 <body class="display-mode">
   <div class="display-header">
@@ -50,6 +114,29 @@
     </div>
     <div class="display-ranking" id="rankList"></div>
   </div>
+
+  <!-- Spotlight Full-Screen Modal -->
+  <div class="spotlight-overlay" id="spotlightOverlay" onclick="closeSpotlight(event)">
+    <div class="spotlight-layout">
+      <div class="spotlight-img-wrap">
+        <img id="spotImg" src="" alt="">
+      </div>
+      <div class="spotlight-info" onclick="event.stopPropagation()">
+        <div id="spotBadge" class="spotlight-badge"></div>
+        <div id="spotTitle" class="spotlight-title"></div>
+        <div id="spotDesc" class="spotlight-desc"></div>
+        <div class="spotlight-stats">
+          <div class="spotlight-stat"><div class="spotlight-stat-val" id="spotAvg">-</div><div class="spotlight-stat-lbl">平均分</div></div>
+          <div class="spotlight-stat"><div class="spotlight-stat-val" id="spotViews">0</div><div class="spotlight-stat-lbl">浏览量</div></div>
+          <div class="spotlight-stat"><div class="spotlight-stat-val" id="spotRaters">0</div><div class="spotlight-stat-lbl">评分人数</div></div>
+        </div>
+        <div class="spotlight-stars" id="spotStars"></div>
+        <div class="spotlight-comments-title">💬 匿名评价</div>
+        <div id="spotComments"><div class="spotlight-empty">暂无评价</div></div>
+      </div>
+    </div>
+  </div>
+  <button class="spotlight-close" id="spotlightClose" onclick="closeSpotlight()">✕</button>
 
   <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
   <script src="js/api.js"></script>
@@ -102,7 +189,7 @@
           document.getElementById('newCarousel').innerHTML = newWorks.map(w => {
             const remaining = Math.max(0, Math.ceil((5 * 60 * 1000 - (Date.now() - new Date(w.upload_time).getTime())) / 1000));
             const mm = Math.floor(remaining / 60); const ss = remaining % 60;
-            return `<div class="display-card">
+            return `<div class="display-card" style="cursor:pointer" onclick="openSpotlight('${w.id}')">
               <img src="${w.image_url}" alt="">
               <div class="display-card-body">
                 <span class="card-badge new">${w.anonymous_code}</span>
@@ -116,7 +203,7 @@
         // All works
         const selected = works.filter(w => w.is_teacher_selected);
         const display = selected.length > 0 ? selected : works;
-        document.getElementById('allCarousel').innerHTML = display.map(w => `<div class="display-card">
+        document.getElementById('allCarousel').innerHTML = display.map(w => `<div class="display-card" style="cursor:pointer" onclick="openSpotlight('${w.id}')">
           <img src="${w.image_url}" alt="">
           <div class="display-card-body">
             <span class="card-badge">${w.anonymous_code}</span>
@@ -155,6 +242,8 @@
 
     // Auto-scroll carousel
     setInterval(() => {
+      // Pause auto-scroll when spotlight is open
+      if (document.getElementById('spotlightOverlay').classList.contains('active')) return;
       document.querySelectorAll('.display-carousel').forEach(c => {
         if (c.scrollWidth > c.clientWidth) {
           c.scrollLeft += 340;
@@ -162,6 +251,68 @@
         }
       });
     }, 4000);
+
+    // ─── Spotlight Functions ───
+    async function openSpotlight(submissionId) {
+      const overlay = document.getElementById('spotlightOverlay');
+      try {
+        // Fetch submission detail
+        const work = await api('/submissions/' + submissionId);
+        document.getElementById('spotImg').src = work.image_url;
+        document.getElementById('spotBadge').textContent = work.anonymous_code;
+        document.getElementById('spotTitle').textContent = work.title;
+        document.getElementById('spotDesc').textContent = work.description || '';
+        document.getElementById('spotAvg').textContent = work.average_rating > 0 ? Number(work.average_rating).toFixed(1) : '-';
+        document.getElementById('spotViews').textContent = work.view_count;
+        document.getElementById('spotRaters').textContent = work.rating_count;
+
+        // Render star visualization
+        const rating = Math.round(work.average_rating || 0);
+        document.getElementById('spotStars').innerHTML = [1,2,3,4,5].map(i =>
+          `<span class="spotlight-star ${i <= rating ? 'filled' : ''}">★</span>`
+        ).join('');
+
+        // Load comments
+        try {
+          const comments = await api('/comments?submission_id=' + submissionId);
+          if (comments.length > 0) {
+            document.getElementById('spotComments').innerHTML = comments.map(c => `
+              <div class="spotlight-comment">
+                <div class="spotlight-comment-text">${c.content}</div>
+                <div class="spotlight-comment-time">${timeAgo(c.created_at)}</div>
+              </div>
+            `).join('');
+          } else {
+            document.getElementById('spotComments').innerHTML = '<div class="spotlight-empty">暂无评价</div>';
+          }
+        } catch (e) {
+          document.getElementById('spotComments').innerHTML = '<div class="spotlight-empty">评论加载失败</div>';
+        }
+
+        // Show overlay with animation
+        overlay.style.display = 'flex';
+        requestAnimationFrame(() => overlay.classList.add('active'));
+        document.getElementById('spotlightClose').style.display = 'flex';
+
+        // ESC to close
+        document.addEventListener('keydown', handleEsc);
+      } catch (e) {
+        console.error('Spotlight load error:', e);
+      }
+    }
+
+    function closeSpotlight(event) {
+      if (event && event.target !== event.currentTarget) return;
+      const overlay = document.getElementById('spotlightOverlay');
+      overlay.classList.remove('active');
+      document.getElementById('spotlightClose').style.display = 'none';
+      setTimeout(() => { overlay.style.display = 'none'; }, 400);
+      document.removeEventListener('keydown', handleEsc);
+    }
+
+    function handleEsc(e) {
+      if (e.key === 'Escape') closeSpotlight();
+    }
   </script>
 </body>
 </html>
