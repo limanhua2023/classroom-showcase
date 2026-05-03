@@ -110,6 +110,7 @@
         <div class="card-body">
           <div style="display:flex;gap:6px;margin-bottom:8px;">
             <span class="card-badge">${w.anonymous_code}</span>
+            ${isOwn ? '<span class="card-badge" style="background:#10b981;color:#fff;">ME 我的</span>' : ''}
             ${isNew ? '<span class="card-badge new">NEW</span>' : ''}
             ${w.is_pinned ? '<span class="card-badge pinned">置顶</span>' : ''}
             ${w.is_teacher_selected ? '<span class="card-badge" style="background:#fef3c7;color:#b45309;">⭐ 精选</span>' : ''}

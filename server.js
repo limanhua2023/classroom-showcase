@@ -150,7 +150,7 @@ app.get('/api/submissions', async (req, res) => {
     const { activity_id } = req.query;
     const [subsResult, commentsResult] = await Promise.all([
       supabase.from('submissions')
-        .select('id,anonymous_code,title,description,image_url,upload_time,view_count,rating_count,average_rating,composite_score,is_pinned,is_teacher_selected,status')
+        .select('id,anonymous_code,title,description,image_url,upload_time,view_count,rating_count,average_rating,composite_score,is_pinned,is_teacher_selected,status,user_id')
         .eq('activity_id', activity_id).eq('status', 'visible')
         .order('upload_time', { ascending: false }),
       supabase.from('comments').select('submission_id').eq('activity_id', activity_id)
@@ -207,6 +207,20 @@ app.put('/api/teacher/submissions/:id', teacherAuth, async (req, res) => {
 
 app.delete('/api/teacher/submissions/:id', teacherAuth, async (req, res) => {
   try {
+    await supabase.from('submissions').delete().eq('id', req.params.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// Student: delete own submission
+app.delete('/api/submissions/:id', async (req, res) => {
+  try {
+    const { user_id } = req.body; // In a real app, this should be from a secure token
+    if (!user_id) return res.status(400).json({ error: 'Missing user_id' });
+    // Verify ownership
+    const { data: sub } = await supabase.from('submissions').select('user_id').eq('id', req.params.id).single();
+    if (!sub || sub.user_id !== user_id) return res.status(403).json({ error: 'Unauthorized' });
+    
     await supabase.from('submissions').delete().eq('id', req.params.id);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }

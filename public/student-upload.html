@@ -58,6 +58,7 @@
       </div>
 
       <button type="submit" id="submitBtn" class="btn btn-primary btn-block btn-lg">确认上传</button>
+      <button type="button" class="btn btn-secondary btn-block" style="margin-top:12px;" onclick="location.href='student-gallery.html'">取消</button>
     </form>
   </div>
   <script src="js/api.js"></script>
@@ -65,6 +66,34 @@
     const user = getSession(); const actId = getActivityId();
     if (!user || !actId) location.href = 'index.html';
     let currentTab = 'image';
+    let existingWork = null;
+
+    async function init() {
+      try {
+        // Find if this student already has a submission
+        const works = await api('/submissions?activity_id=' + actId);
+        existingWork = works.find(w => w.user_id === user.id);
+        if (existingWork) {
+          document.getElementById('title').value = existingWork.title;
+          document.getElementById('desc').value = existingWork.description;
+          document.getElementById('charCount').textContent = (existingWork.description || '').length;
+          document.getElementById('submitBtn').textContent = '更新作品信息';
+          
+          if (isVideo(existingWork.image_url)) {
+            switchTab('video');
+            document.getElementById('previewVid').src = existingWork.image_url;
+            document.getElementById('previewVid').style.display = 'block';
+            document.getElementById('uploadPromptVid').style.display = 'none';
+          } else {
+            switchTab('image');
+            document.getElementById('previewImg').src = existingWork.image_url;
+            document.getElementById('previewImg').style.display = 'block';
+            document.getElementById('uploadPromptImg').style.display = 'none';
+          }
+        }
+      } catch (e) { console.error(e); }
+    }
+    init();
 
     document.getElementById('desc').addEventListener('input', e => {
       document.getElementById('charCount').textContent = e.target.value.length;
@@ -122,18 +151,25 @@
         let file, fileType;
         if (currentTab === 'image') {
           file = document.getElementById('imageFile').files[0];
-          if (!file) throw new Error('请选择图片');
-          if (file.size > 10 * 1024 * 1024) throw new Error('图片不能超过 10MB');
+          if (!file && !existingWork) throw new Error('请选择图片');
+          if (file && file.size > 10 * 1024 * 1024) throw new Error('图片不能超过 10MB');
           fileType = 'image';
         } else {
           file = document.getElementById('videoFile').files[0];
-          if (!file) throw new Error('请选择视频');
-          if (file.size > 200 * 1024 * 1024) throw new Error('视频不能超过 200MB');
+          if (!file && !existingWork) throw new Error('请选择视频');
+          if (file && file.size > 200 * 1024 * 1024) throw new Error('视频不能超过 200MB');
           fileType = 'video';
         }
 
-        btn.textContent = '上传中，请稍候...';
-        const { url } = await uploadMedia(file);
+        btn.textContent = '提交中...';
+        let url = existingWork ? existingWork.image_url : null;
+        if (file) {
+          btn.textContent = '上传中，请稍候...';
+          const uploadRes = await uploadMedia(file);
+          url = uploadRes.url;
+        }
+        if (!url) throw new Error('请选择作品文件');
+
         await api('/submissions', { method: 'POST', body: JSON.stringify({
           activity_id: actId, user_id: user.id,
           title: document.getElementById('title').value.trim(),

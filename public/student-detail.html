@@ -18,6 +18,10 @@
         <span class="card-badge" id="workCode"></span>
         <span class="card-badge new" id="newBadge" style="display:none;">NEW</span>
       </div>
+      <div id="ownerActions" style="display:none;margin-bottom:20px;gap:10px;">
+        <button class="btn btn-sm btn-secondary" onclick="location.href='student-upload.html'" style="flex:1;">✏️ 修改作品</button>
+        <button class="btn btn-sm btn-danger" onclick="deleteMyWork()" style="flex:1;">🗑️ 删除作品</button>
+      </div>
       <h1 id="workTitle" style="font-size:1.5rem;margin-bottom:8px;"></h1>
       <p id="workDesc" style="color:var(--text-muted);line-height:1.6;margin-bottom:16px;"></p>
       <div class="card-meta" style="margin-bottom:24px;">
@@ -119,8 +123,9 @@
         }
 
         // ─── Rating Section ───
-        if (work.user_id === user.id) {
-          document.getElementById('ratingSection').innerHTML = '<p style="color:var(--text-muted);">这是你自己的作品，不能评分。</p>';
+        if (!guest && work.user_id === user.id) {
+          document.getElementById('ownerActions').style.display = 'flex';
+          document.getElementById('ratingSection').innerHTML = '<p style="color:var(--text-muted);text-align:center;">这是你自己的作品，你可以修改或删除它。</p>';
           return;
         }
         if (!act.voting_open) {
@@ -137,6 +142,15 @@
     function openLightbox(src) {
       document.getElementById('lightboxImg').src = src;
       document.getElementById('lightboxModal').classList.add('active');
+    }
+
+    async function deleteMyWork() {
+      if (!confirm('确定要删除这件作品吗？删除后不可恢复。')) return;
+      try {
+        await api('/submissions/' + sid, { method: 'DELETE', body: JSON.stringify({ user_id: user.id }) });
+        toast('作品已删除', 'success');
+        setTimeout(() => location.href = 'student-gallery.html', 1000);
+      } catch (err) { toast(err.message, 'error'); }
     }
 
     async function loadComments() {
