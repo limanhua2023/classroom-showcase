@@ -49,7 +49,10 @@
         const u = s.users || {};
         return `<tr>
           <td><span class="card-badge">${s.anonymous_code}</span></td>
-          <td><img src="${s.image_url}" alt="" onerror="this.style.display='none'"></td>
+          <td>${isVideo(s.image_url)
+            ? `<video src="${s.image_url}" preload="metadata" muted playsinline style="width:60px;height:60px;object-fit:cover;border-radius:6px;" onloadedmetadata="this.currentTime=0.001"></video>`
+            : `<img src="${s.image_url}" alt="" onerror="this.style.display='none'" style="width:60px;height:60px;object-fit:cover;border-radius:6px;">`
+          }</td>
           <td><strong>${s.title}</strong></td>
           <td>${u.name||'-'}</td><td>${u.student_id||'-'}</td><td>${u.class_name||'-'}</td><td>${u.group_name||'-'}</td>
           <td>${s.view_count}</td><td>${s.comment_count || 0}</td><td>${s.rating_count}</td><td>${s.average_rating > 0 ? Number(s.average_rating).toFixed(1) : '-'}</td>

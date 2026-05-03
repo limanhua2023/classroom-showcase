@@ -234,15 +234,23 @@
               confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 } });
             }
             rankSec.style.display = 'block';
-            document.getElementById('rankList').innerHTML = top.map((w, i) => `<div class="display-rank-item">
-              <span class="rank-badge ${i===0?'gold':i===1?'silver':i===2?'bronze':''}">${i+1}</span>
-              <img class="display-rank-img" src="${w.image_url}" alt="">
-              <div class="display-rank-info">
-                <div class="display-rank-title">${w.anonymous_code} · ${w.title}</div>
-                <div class="card-meta"><span>👁 ${w.view_count}</span><span>💬 ${w.comment_count || 0}</span><span>👥 ${w.rating_count}人评</span></div>
-              </div>
-              <div class="display-rank-score">${w.average_rating > 0 ? Number(w.average_rating).toFixed(1) : '-'}</div>
-            </div>`).join('');
+            document.getElementById('rankList').innerHTML = top.map((w, i) => {
+              const vid = isVideo(w.image_url);
+              // Video thumbnail: use <video> with preload="metadata" — browser renders first frame automatically
+              const thumb = vid
+                ? `<video class="display-rank-img" src="${w.image_url}" preload="metadata" muted playsinline
+                     style="object-fit:cover;" onloadedmetadata="this.currentTime=0.001"></video>`
+                : `<img class="display-rank-img" src="${w.image_url}" alt="">`;
+              return `<div class="display-rank-item">
+                <span class="rank-badge ${i===0?'gold':i===1?'silver':i===2?'bronze':''}">${i+1}</span>
+                ${thumb}
+                <div class="display-rank-info">
+                  <div class="display-rank-title">${w.anonymous_code} · ${w.title}${vid ? ' <span style="font-size:0.75rem;opacity:0.7;">🎬</span>' : ''}</div>
+                  <div class="card-meta"><span>👁 ${w.view_count}</span><span>💬 ${w.comment_count || 0}</span><span>👥 ${w.rating_count}人评</span></div>
+                </div>
+                <div class="display-rank-score">${w.average_rating > 0 ? Number(w.average_rating).toFixed(1) : '-'}</div>
+              </div>`;
+            }).join('');
           }
         } else { document.getElementById('rankSection').style.display = 'none'; }
       } catch (e) { console.error(e); }
