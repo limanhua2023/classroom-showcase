@@ -39,6 +39,9 @@
         <div>
           实时排行：<button class="btn btn-sm" id="toggleRanking" onclick="toggleSetting('show_live_ranking')"></button>
         </div>
+        <div>
+          匿名评论：<button class="btn btn-sm" id="toggleComments" onclick="toggleSetting('comments_open')"></button>
+        </div>
       </div>
     </div>
 
@@ -53,6 +56,10 @@
           <tr><td style="font-weight:600;">活动</td><td id="infoActivity"></td></tr>
           <tr><td style="font-weight:600;">说明</td><td id="infoDesc"></td></tr>
         </table>
+        <div style="margin-top:20px;text-align:center;">
+          <img id="qrCode" style="width:150px;height:150px;border-radius:8px;border:1px solid var(--border);display:none;margin:0 auto 8px auto;">
+          <p style="font-size:0.85rem;color:var(--text-muted);"><a href="#" id="downloadQr" style="display:none;" download="课堂二维码.png">下载二维码图片</a></p>
+        </div>
       </div>
     </div>
   </div>
@@ -79,6 +86,24 @@
     updateToggleBtn('toggleUpload', act.upload_open);
     updateToggleBtn('toggleVoting', act.voting_open);
     updateToggleBtn('toggleRanking', act.show_live_ranking);
+    updateToggleBtn('toggleComments', act.comments_open);
+
+    // Generate QR Code
+    async function loadQrCode() {
+      try {
+        const url = location.origin + '/index.html?code=' + act.invite_code;
+        const res = await api('/qrcode?text=' + encodeURIComponent(url));
+        if (res.url) {
+          const img = document.getElementById('qrCode');
+          img.src = res.url;
+          img.style.display = 'block';
+          const a = document.getElementById('downloadQr');
+          a.href = res.url;
+          a.style.display = 'inline-block';
+        }
+      } catch (e) {}
+    }
+    loadQrCode();
 
     async function toggleSetting(key) {
       const newVal = !act[key];
@@ -90,6 +115,7 @@
         updateToggleBtn('toggleUpload', act.upload_open);
         updateToggleBtn('toggleVoting', act.voting_open);
         updateToggleBtn('toggleRanking', act.show_live_ranking);
+        updateToggleBtn('toggleComments', act.comments_open);
       } catch (e) { toast('操作失败', 'error'); }
     }
 

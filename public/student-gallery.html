@@ -21,7 +21,7 @@
     <!-- New Works Section -->
     <div id="newSection" style="display:none;">
       <div class="section-header"><h3 class="section-title">🔥 新作品展示区</h3><span class="card-badge new">5分钟内</span></div>
-      <div class="grid grid-3" id="newGrid"></div>
+      <div class="masonry" id="newGrid"></div>
     </div>
     <!-- Rubric -->
     <div class="rubric" id="rubricBox" style="display:none;">
@@ -36,7 +36,7 @@
     </div>
     <!-- All Works -->
     <div class="section-header" style="margin-top:16px;"><h3 class="section-title">🎨 全部作品</h3></div>
-    <div class="grid grid-3" id="allGrid"><div class="empty"><div class="empty-icon">📭</div>还没有作品，快来上传第一个吧！</div></div>
+    <div class="masonry" id="allGrid"><div class="empty"><div class="empty-icon">📭</div>还没有作品，快来上传第一个吧！</div></div>
   </div>
   <script src="js/api.js"></script>
   <script>
@@ -77,7 +77,9 @@
       const rated = myRatings[w.id];
       const isNew = isNewWork(w.upload_time);
       return `<div class="card" onclick="location.href='student-detail.html?id=${w.id}'">
-        <img class="card-img" src="${w.image_url}" alt="${w.title}" loading="lazy" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 1 1%22><rect fill=%22%23e2e8f0%22 width=%221%22 height=%221%22/></svg>'">
+        <div class="skeleton" style="min-height: 200px; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+          <img class="card-img" style="opacity:0; transition: opacity 0.5s;" onload="this.style.opacity=1; this.parentElement.classList.remove('skeleton')" src="${w.image_url}" alt="${w.title}" loading="lazy" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 1 1%22><rect fill=%22%23e2e8f0%22 width=%221%22 height=%221%22/></svg>'">
+        </div>
         <div class="card-body">
           <div style="display:flex;gap:6px;margin-bottom:8px;">
             <span class="card-badge">${w.anonymous_code}</span>

@@ -5,6 +5,8 @@ import { fileURLToPath } from 'url';
 import { createClient } from '@supabase/supabase-js';
 import dotenv from 'dotenv';
 import multer from 'multer';
+import archiver from 'archiver';
+import QRCode from 'qrcode';
 
 dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
@@ -58,7 +60,7 @@ app.post('/api/activities', async (req, res) => {
 app.get('/api/activities/code/:code', async (req, res) => {
   try {
     const { data, error } = await supabase.from('activities')
-      .select('id,course_name,class_name,activity_name,description,invite_code,upload_open,voting_open,show_live_ranking,created_at')
+      .select('id,course_name,class_name,activity_name,description,invite_code,upload_open,voting_open,comments_open,show_live_ranking,created_at')
       .eq('invite_code', req.params.code).single();
     if (error) throw error;
     res.json(data);
@@ -220,6 +222,39 @@ app.get('/api/ratings/my', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── COMMENTS ───
+app.post('/api/comments', async (req, res) => {
+  try {
+    const { activity_id, submission_id, user_id, content } = req.body;
+    const { data: act } = await supabase.from('activities').select('comments_open').eq('id', activity_id).single();
+    if (!act || !act.comments_open) return res.status(403).json({ error: 'Comments are closed' });
+    const { data, error } = await supabase.from('comments').insert([{
+      activity_id, submission_id, user_id, content
+    }]).select().single();
+    if (error) throw error;
+    res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/comments', async (req, res) => {
+  try {
+    const { submission_id } = req.query;
+    // return comments without real names (anonymous)
+    const { data, error } = await supabase.from('comments')
+      .select('id, content, created_at')
+      .eq('submission_id', submission_id).order('created_at', { ascending: true });
+    if (error) throw error;
+    res.json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/api/teacher/comments/:id', teacherAuth, async (req, res) => {
+  try {
+    await supabase.from('comments').delete().eq('id', req.params.id);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // ─── RANKINGS ───
 app.get('/api/rankings', async (req, res) => {
   try {
@@ -297,6 +332,48 @@ app.get('/api/teacher/export', teacherAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── ZIP EXPORT ───
+app.get('/api/teacher/export-zip', teacherAuth, async (req, res) => {
+  try {
+    const { activity_id } = req.query;
+    const { data: act } = await supabase.from('activities').select('*').eq('id', activity_id).single();
+    if (!act || act.teacher_password !== req.teacherPassword) return res.status(403).json({ error: 'Forbidden' });
+    
+    const { data: subs } = await supabase.from('submissions')
+      .select('*, users(name, student_id, class_name)')
+      .eq('activity_id', activity_id);
+      
+    if (!subs || subs.length === 0) return res.status(404).json({ error: 'No submissions found' });
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(act.activity_name)}_works.zip"`);
+
+    const archive = archiver('zip', { zlib: { level: 9 } });
+    archive.pipe(res);
+
+    // Download images from Supabase and append to ZIP
+    for (const s of subs) {
+      if (s.image_url) {
+        try {
+          const response = await fetch(s.image_url);
+          if (response.ok) {
+            const buffer = await response.arrayBuffer();
+            const u = s.users || {};
+            const ext = s.image_url.split('.').pop()?.split('?')[0] || 'jpg';
+            // 格式: 班级_学号_姓名_标题.jpg
+            const safeTitle = s.title.replace(/[\/\?<>\\:\*\|":]/g, '');
+            const filename = `${u.class_name||'未知班级'}_${u.student_id||'未知学号'}_${u.name||'未知姓名'}_${safeTitle}.${ext}`;
+            archive.append(Buffer.from(buffer), { name: filename });
+          }
+        } catch (err) { console.error('Error downloading image for zip:', s.image_url, err); }
+      }
+    }
+    await archive.finalize();
+  } catch (e) { 
+    if (!res.headersSent) res.status(500).json({ error: e.message }); 
+  }
+});
+
 // ─── ACTIVITY STATS ───
 app.get('/api/activities/:id/stats', async (req, res) => {
   try {
@@ -305,6 +382,15 @@ app.get('/api/activities/:id/stats', async (req, res) => {
     const { count: subCount } = await supabase.from('submissions').select('*', { count: 'exact', head: true }).eq('activity_id', id);
     const { count: ratingCount } = await supabase.from('ratings').select('*', { count: 'exact', head: true }).eq('activity_id', id);
     res.json({ users: userCount || 0, submissions: subCount || 0, ratings: ratingCount || 0 });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/qrcode', async (req, res) => {
+  try {
+    const { text } = req.query;
+    if (!text) return res.status(400).json({ error: 'Text required' });
+    const url = await QRCode.toDataURL(text, { width: 300, margin: 2, color: { dark: '#1e293b', light: '#ffffff' } });
+    res.json({ url });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

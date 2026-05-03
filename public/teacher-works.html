@@ -16,7 +16,10 @@
   <div class="container" style="padding-top:24px;">
     <div class="section-header">
       <h2>📋 全部作品（实名）</h2>
-      <input type="text" id="searchBox" placeholder="搜索姓名/学号/编号..." style="padding:8px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);width:200px;">
+      <div style="display:flex;gap:12px;">
+        <input type="text" id="searchBox" placeholder="搜索姓名/学号/编号..." style="padding:8px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);width:200px;">
+        <button class="btn btn-primary" onclick="downloadAllZip()">📦 打包全班图片 (ZIP)</button>
+      </div>
     </div>
     <div class="table-wrap" style="margin-top:12px;">
       <table>
@@ -76,6 +79,31 @@
       } catch(e) {
         toast('下载失败，您可以右键图片另存为', 'error');
       }
+    }
+
+    function downloadAllZip() {
+      toast('正在打包下载中，请稍候...', 'success');
+      const url = '/api/teacher/export-zip?activity_id=' + actId;
+      const headers = new Headers();
+      headers.append('x-teacher-auth', token);
+      fetch(url, { headers })
+        .then(res => {
+          if (!res.ok) throw new Error('打包失败');
+          const disp = res.headers.get('content-disposition');
+          let filename = 'works.zip';
+          if (disp && disp.includes('filename=')) {
+            filename = decodeURIComponent(disp.split('filename=')[1].replace(/"/g, ''));
+          }
+          return res.blob().then(blob => ({ blob, filename }));
+        })
+        .then(({ blob, filename }) => {
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(blob);
+          a.download = filename;
+          a.click();
+          URL.revokeObjectURL(a.href);
+        })
+        .catch(e => toast(e.message, 'error'));
     }
 
     document.getElementById('searchBox').addEventListener('input', e => {

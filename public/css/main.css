@@ -58,11 +58,19 @@ img { max-width: 100%; display: block; }
 .card-badge.new { background: var(--accent-light); color: #b45309; }
 .card-badge.pinned { background: var(--success-light); color: #047857; }
 
-/* Grid */
+/* Grid & Masonry */
 .grid { display: grid; gap: 20px; padding: 20px 0; }
 .grid-2 { grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); }
 .grid-3 { grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); }
 .grid-4 { grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); }
+.masonry { column-count: 3; column-gap: 20px; padding: 20px 0; }
+.masonry .card { display: inline-block; width: 100%; margin-bottom: 20px; break-inside: avoid; }
+@media (max-width: 1024px) { .masonry { column-count: 2; } }
+@media (max-width: 600px) { .masonry { column-count: 1; } }
+
+/* Skeleton Loader */
+.skeleton { background: linear-gradient(90deg, var(--border) 25%, #f8f9fa 50%, var(--border) 75%); background-size: 200% 100%; animation: loading 1.5s infinite; border-radius: var(--radius-sm); }
+@keyframes loading { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
 
 /* Buttons */
 .btn {
@@ -152,11 +160,30 @@ td img { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; }
 .upload-preview { max-height: 300px; border-radius: var(--radius-sm); margin: 16px auto; }
 .upload-icon { font-size: 3rem; margin-bottom: 8px; }
 
-/* Modal */
-.modal { position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 200; display: none; align-items: center; justify-content: center; padding: 20px; }
-.modal.active { display: flex; }
-.modal-content { background: var(--surface); border-radius: var(--radius); padding: 32px; max-width: 500px; width: 100%; max-height: 90vh; overflow-y: auto; }
-.modal-close { float: right; font-size: 1.5rem; cursor: pointer; color: var(--text-muted); border: none; background: none; }
+/* Lightbox Modal */
+.modal { position: fixed; inset: 0; background: rgba(15, 23, 42, 0.85); backdrop-filter: blur(8px); z-index: 200; display: none; align-items: center; justify-content: center; padding: 20px; opacity: 0; transition: opacity 0.3s; }
+.modal.active { display: flex; opacity: 1; }
+.modal-content { background: var(--surface); border-radius: var(--radius); padding: 32px; max-width: 500px; width: 100%; max-height: 90vh; overflow-y: auto; transform: translateY(20px); transition: transform 0.3s; }
+.modal.active .modal-content { transform: translateY(0); }
+.modal-close { position: absolute; right: 20px; top: 20px; font-size: 1.5rem; cursor: pointer; color: var(--text-muted); border: none; background: rgba(255,255,255,0.8); width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; transition: background 0.2s; }
+.modal-close:hover { background: #fff; color: var(--text); }
+.lightbox-img { max-width: 90vw; max-height: 80vh; object-fit: contain; border-radius: var(--radius-sm); box-shadow: var(--shadow-lg); }
+
+/* Comments */
+.comments-section { margin-top: 24px; padding-top: 24px; border-top: 1px solid var(--border); text-align: left; }
+.comment-item { display: flex; gap: 12px; margin-bottom: 16px; padding: 12px; background: var(--bg); border-radius: var(--radius-sm); position: relative; }
+.comment-avatar { width: 36px; height: 36px; border-radius: 50%; background: var(--primary-light); color: var(--primary); display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.9rem; flex-shrink: 0; }
+.comment-content { flex: 1; font-size: 0.95rem; line-height: 1.5; }
+.comment-time { font-size: 0.75rem; color: var(--text-light); margin-top: 4px; }
+.comment-input-wrap { display: flex; gap: 8px; margin-top: 16px; }
+.comment-input-wrap input { flex: 1; padding: 10px 14px; border: 1.5px solid var(--border); border-radius: var(--radius-full); font-family: inherit; font-size: 0.95rem; outline: none; transition: border-color 0.2s; }
+.comment-input-wrap input:focus { border-color: var(--primary); }
+.comment-input-wrap button { border-radius: var(--radius-full); padding: 10px 20px; }
+
+/* Display QR Code */
+.display-qr { position: fixed; bottom: 30px; right: 30px; background: rgba(255,255,255,0.95); padding: 16px; border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); display: flex; flex-direction: column; align-items: center; gap: 8px; z-index: 100; backdrop-filter: blur(10px); }
+.display-qr img { width: 140px; height: 140px; }
+.display-qr span { color: #1e293b; font-weight: 700; font-size: 0.9rem; }
 
 /* Toast */
 .toast {

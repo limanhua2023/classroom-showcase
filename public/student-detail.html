@@ -12,7 +12,7 @@
   <div class="container" style="max-width:700px;padding-top:24px;">
     <div id="loading" class="empty">加载中...</div>
     <div id="detail" style="display:none;">
-      <img id="workImg" style="width:100%;border-radius:var(--radius);margin-bottom:16px;max-height:500px;object-fit:contain;background:#f0f2f5;">
+      <img id="workImg" style="width:100%;border-radius:var(--radius);margin-bottom:16px;max-height:500px;object-fit:contain;background:#f0f2f5;cursor:zoom-in;" onclick="openLightbox(this.src)">
       <div style="display:flex;gap:8px;margin-bottom:12px;">
         <span class="card-badge" id="workCode"></span>
         <span class="card-badge new" id="newBadge" style="display:none;">NEW</span>
@@ -36,7 +36,26 @@
         </div>
         <p id="ratingHint" style="margin-top:8px;color:var(--text-muted);font-size:0.9rem;"></p>
       </div>
+      </div>
+      
+      <!-- Comments Section -->
+      <div id="commentsWrapper" style="display:none;" class="comments-section">
+        <h3 style="margin-bottom:16px;">💬 匿名评价</h3>
+        <div id="commentsList">
+          <div class="empty" style="padding:20px;">暂无评价，来说第一句吧！</div>
+        </div>
+        <div class="comment-input-wrap" id="commentFormWrapper" style="display:none;">
+          <input type="text" id="commentInput" placeholder="写下你的鼓励或建议..." maxlength="100">
+          <button class="btn btn-primary" onclick="postComment()">发送</button>
+        </div>
+      </div>
     </div>
+  </div>
+
+  <!-- Lightbox Modal -->
+  <div class="modal" id="lightboxModal" onclick="this.classList.remove('active')">
+    <button class="modal-close" onclick="document.getElementById('lightboxModal').classList.remove('active')">×</button>
+    <img id="lightboxImg" class="lightbox-img" onclick="event.stopPropagation()">
   </div>
   <script src="js/api.js"></script>
   <script>
@@ -74,7 +93,49 @@
         if (existing) { currentRating = existing.score; updateStars(); document.getElementById('ratingHint').textContent = '你已评 ' + existing.score + ' 分（点击可修改）'; }
         // Record view (after 3 seconds)
         setTimeout(() => { api('/views', { method: 'POST', body: JSON.stringify({ submission_id: sid, viewer_user_id: user.id }) }); }, 3000);
+        // Load comments
+        if (act.comments_open) {
+          document.getElementById('commentsWrapper').style.display = 'block';
+          if (work.user_id !== user.id) document.getElementById('commentFormWrapper').style.display = 'flex';
+          loadComments();
+        }
       } catch (e) { document.getElementById('loading').innerHTML = '加载失败'; }
+    }
+
+    function openLightbox(src) {
+      document.getElementById('lightboxImg').src = src;
+      document.getElementById('lightboxModal').classList.add('active');
+    }
+
+    async function loadComments() {
+      try {
+        const comments = await api('/comments?submission_id=' + sid);
+        if (comments.length > 0) {
+          document.getElementById('commentsList').innerHTML = comments.map(c => `
+            <div class="comment-item">
+              <div class="comment-avatar">匿</div>
+              <div class="comment-content">
+                <div>${c.content}</div>
+                <div class="comment-time">${timeAgo(c.created_at)}</div>
+              </div>
+            </div>
+          `).join('');
+        }
+      } catch (e) { console.error(e); }
+    }
+
+    async function postComment() {
+      const input = document.getElementById('commentInput');
+      const text = input.value.trim();
+      if (!text) return;
+      try {
+        await api('/comments', { method: 'POST', body: JSON.stringify({
+          activity_id: actId, submission_id: sid, user_id: user.id, content: text
+        })});
+        input.value = '';
+        toast('评价发布成功', 'success');
+        loadComments();
+      } catch (e) { toast('发布失败: ' + e.message, 'error'); }
     }
 
     function hoverStar(n) { document.querySelectorAll('.star').forEach(s => s.classList.toggle('hover', parseInt(s.dataset.v) <= n)); }

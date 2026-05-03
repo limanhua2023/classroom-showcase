@@ -10,6 +10,12 @@
     <h1 id="displayTitle">课堂作品秀</h1>
     <p id="displaySubtitle">加载中...</p>
   </div>
+  
+  <!-- Floating QR Code -->
+  <div class="display-qr" id="qrContainer" style="display:none;">
+    <img id="qrImg" src="" alt="扫码加入">
+    <span>扫码加入课堂</span>
+  </div>
 
   <div class="display-stats">
     <div class="display-stat"><div class="display-stat-value" id="dSubs">0</div><div class="display-stat-label">作品数量</div></div>
@@ -45,6 +51,7 @@
     <div class="display-ranking" id="rankList"></div>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
   <script src="js/api.js"></script>
   <script>
     const actId = sessionStorage.getItem('classshow_activity_id');
@@ -61,6 +68,17 @@
           api('/activities/' + actId + '/stats'),
           api('/activities/code/' + act.invite_code)
         ]);
+
+        // Load QR once
+        if (document.getElementById('qrContainer').style.display === 'none') {
+          const url = location.origin + '/index.html?code=' + act.invite_code;
+          api('/qrcode?text=' + encodeURIComponent(url)).then(res => {
+            if (res.url) {
+              document.getElementById('qrImg').src = res.url;
+              document.getElementById('qrContainer').style.display = 'flex';
+            }
+          });
+        }
         document.getElementById('dSubs').textContent = stats.submissions;
         document.getElementById('dUsers').textContent = stats.users;
         document.getElementById('dRatings').textContent = stats.ratings;
@@ -113,7 +131,12 @@
           const ranked = [...works].sort((a, b) => b.average_rating - a.average_rating || b.rating_count - a.rating_count);
           const top = ranked.slice(0, 10);
           if (top.length > 0) {
-            document.getElementById('rankSection').style.display = 'block';
+            const rankSec = document.getElementById('rankSection');
+            if (rankSec.style.display === 'none') {
+              // Just opened ranking! Fire confetti!
+              confetti({ particleCount: 150, spread: 80, origin: { y: 0.6 } });
+            }
+            rankSec.style.display = 'block';
             document.getElementById('rankList').innerHTML = top.map((w, i) => `<div class="display-rank-item">
               <span class="rank-badge ${i===0?'gold':i===1?'silver':i===2?'bronze':''}">${i+1}</span>
               <img class="display-rank-img" src="${w.image_url}" alt="">
