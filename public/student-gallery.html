@@ -90,6 +90,7 @@
           <div class="card-title">${w.title}</div>
           <div class="card-meta">
             <span>👁 ${w.view_count}</span>
+            <span>💬 ${w.comment_count || 0}</span>
             <span>⭐ ${w.average_rating > 0 ? Number(w.average_rating).toFixed(1) : '-'}</span>
             <span>👥 ${w.rating_count}人评</span>
             ${rated ? '<span style="color:var(--success);">✓ 已评'+rated+'分</span>' : (isOwn ? '<span style="color:var(--text-light);">我的作品</span>' : '')}

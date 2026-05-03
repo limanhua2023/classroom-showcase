@@ -16,5 +16,8 @@ create table if not exists comments (
   created_at timestamptz default now()
 );
 
--- 3. 关闭行级安全 (MVP阶段)
+-- 3. 作品表增加评论数统计
+alter table submissions add column if not exists comment_count int default 0;
+
+-- 4. 关闭行级安全 (MVP阶段)
 alter table comments disable row level security;

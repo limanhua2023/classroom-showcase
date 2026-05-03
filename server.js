@@ -139,22 +139,32 @@ app.post('/api/submissions', async (req, res) => {
 app.get('/api/submissions', async (req, res) => {
   try {
     const { activity_id } = req.query;
-    const { data, error } = await supabase.from('submissions')
-      .select('id,anonymous_code,title,description,image_url,upload_time,view_count,rating_count,average_rating,composite_score,is_pinned,is_teacher_selected,status')
-      .eq('activity_id', activity_id).eq('status', 'visible')
-      .order('upload_time', { ascending: false });
-    if (error) throw error;
-    res.json(data);
+    const [subsResult, commentsResult] = await Promise.all([
+      supabase.from('submissions')
+        .select('id,anonymous_code,title,description,image_url,upload_time,view_count,rating_count,average_rating,composite_score,is_pinned,is_teacher_selected,status')
+        .eq('activity_id', activity_id).eq('status', 'visible')
+        .order('upload_time', { ascending: false }),
+      supabase.from('comments').select('submission_id').eq('activity_id', activity_id)
+    ]);
+    if (subsResult.error) throw subsResult.error;
+    // Build comment count map from live data
+    const ccMap = {};
+    (commentsResult.data || []).forEach(c => { ccMap[c.submission_id] = (ccMap[c.submission_id] || 0) + 1; });
+    const result = (subsResult.data || []).map(s => ({ ...s, comment_count: ccMap[s.id] || 0 }));
+    res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/submissions/:id', async (req, res) => {
   try {
-    const { data, error } = await supabase.from('submissions')
-      .select('id,anonymous_code,title,description,image_url,upload_time,view_count,rating_count,average_rating,user_id')
-      .eq('id', req.params.id).single();
-    if (error) throw error;
-    res.json(data);
+    const [subResult, commentsResult] = await Promise.all([
+      supabase.from('submissions')
+        .select('id,anonymous_code,title,description,image_url,upload_time,view_count,rating_count,average_rating,user_id')
+        .eq('id', req.params.id).single(),
+      supabase.from('comments').select('id', { count: 'exact', head: true }).eq('submission_id', req.params.id)
+    ]);
+    if (subResult.error) throw subResult.error;
+    res.json({ ...subResult.data, comment_count: commentsResult.count || 0 });
   } catch (e) { res.status(404).json({ error: 'Not found' }); }
 });
 
@@ -164,11 +174,17 @@ app.get('/api/teacher/submissions', teacherAuth, async (req, res) => {
     const { activity_id } = req.query;
     const { data: act } = await supabase.from('activities').select('teacher_password').eq('id', activity_id).single();
     if (!act || act.teacher_password !== req.teacherPassword) return res.status(403).json({ error: 'Forbidden' });
-    const { data, error } = await supabase.from('submissions')
-      .select('*, users(name, student_id, class_name, group_name)')
-      .eq('activity_id', activity_id).order('upload_time', { ascending: true });
-    if (error) throw error;
-    res.json(data);
+    const [subsResult, commentsResult] = await Promise.all([
+      supabase.from('submissions')
+        .select('*, users(name, student_id, class_name, group_name)')
+        .eq('activity_id', activity_id).order('upload_time', { ascending: true }),
+      supabase.from('comments').select('submission_id').eq('activity_id', activity_id)
+    ]);
+    if (subsResult.error) throw subsResult.error;
+    const ccMap = {};
+    (commentsResult.data || []).forEach(c => { ccMap[c.submission_id] = (ccMap[c.submission_id] || 0) + 1; });
+    const result = (subsResult.data || []).map(s => ({ ...s, comment_count: ccMap[s.id] || 0 }));
+    res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

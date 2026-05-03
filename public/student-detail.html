@@ -21,6 +21,7 @@
       <p id="workDesc" style="color:var(--text-muted);line-height:1.6;margin-bottom:16px;"></p>
       <div class="card-meta" style="margin-bottom:24px;">
         <span>👁 <span id="viewCount">0</span> 浏览</span>
+        <span>💬 <span id="commentCount">0</span> 评论</span>
         <span>⭐ <span id="avgScore">-</span> 平均分</span>
         <span>👥 <span id="rateCount">0</span> 人评分</span>
       </div>
@@ -75,6 +76,7 @@
         document.getElementById('workTitle').textContent = work.title;
         document.getElementById('workDesc').textContent = work.description || '';
         document.getElementById('viewCount').textContent = work.view_count;
+        document.getElementById('commentCount').textContent = work.comment_count || 0;
         document.getElementById('avgScore').textContent = work.average_rating > 0 ? Number(work.average_rating).toFixed(1) : '-';
         document.getElementById('rateCount').textContent = work.rating_count;
         if (isNewWork(work.upload_time)) document.getElementById('newBadge').style.display = 'inline';
