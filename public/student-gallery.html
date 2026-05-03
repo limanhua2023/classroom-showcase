@@ -9,6 +9,7 @@
   <div class="topbar">
     <div class="topbar-logo">Class<span>Show</span></div>
     <div class="topbar-right">
+      <button class="btn btn-sm btn-secondary" onclick="openDisplay()">🖥️ 大屏</button>
       <button class="btn btn-sm btn-secondary" onclick="loadWorks()">🔄 刷新</button>
       <button class="btn btn-sm btn-primary" id="uploadBtn" onclick="location.href='student-upload.html'">📤 上传作品</button>
     </div>
@@ -51,8 +52,14 @@
       document.getElementById('uploadBtn').style.display = 'none';
       const banner = document.createElement('div');
       banner.style.cssText = 'background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1;padding:10px 16px;border-radius:8px;font-size:0.88rem;margin-bottom:16px;text-align:center;';
-      banner.innerHTML = '👁 访客模式：仅浏览，不可评分或评论。<a href="index.html" style="color:#0369a1;font-weight:700;">点击登录</a>以参与互动';
+      banner.innerHTML = '👁 Guest mode: browse only, no rating/comment. <a href="index.html" style="color:#0369a1;font-weight:700;">Login</a> to join interactions.';
       document.querySelector('.container').prepend(banner);
+    }
+
+    function openDisplay() {
+      const code = (act.invite_code || '').trim();
+      const url = code ? ('display.html?code=' + encodeURIComponent(code)) : 'display.html';
+      window.open(url, '_blank');
     }
 
     async function loadWorks() {
@@ -62,7 +69,7 @@
           works = await api('/submissions?activity_id=' + actId);
         } else {
           [works, ratings] = await Promise.all([
-            api('/submissions?activity_id=' + actId),
+            api('/submissions?activity_id=' + actId + '&viewer_user_id=' + user.id),
             api('/ratings/my?activity_id=' + actId + '&user_id=' + user.id)
           ]);
         }
@@ -88,7 +95,7 @@
     }
 
     function workCard(w) {
-      const isOwn = w.user_id === user.id;
+      const isOwn = !!w.is_owner;
       const rated = myRatings[w.id];
       const isNew = isNewWork(w.upload_time);
       const vid = isVideo(w.image_url);
@@ -102,21 +109,21 @@
              <div style="position:absolute;top:8px;left:8px;background:rgba(0,0,0,0.6);color:#fff;padding:2px 8px;border-radius:999px;font-size:0.75rem;font-weight:700;">🎬 视频</div>
            </div>`
         : `<div class="skeleton" style="min-height:200px;display:flex;align-items:center;justify-content:center;overflow:hidden;">
-             <img class="card-img" style="opacity:0;transition:opacity 0.5s;" onload="this.style.opacity=1;this.parentElement.classList.remove('skeleton')" src="${w.image_url}" alt="${w.title}" loading="lazy" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 1 1%22><rect fill=%22%23e2e8f0%22 width=%221%22 height=%221%22/></svg>'">
+             <img class="card-img" style="opacity:0;transition:opacity 0.5s;" onload="this.style.opacity=1;this.parentElement.classList.remove('skeleton')" src="${w.image_url}" alt="${escapeHtml(w.title)}" loading="lazy" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 1 1%22><rect fill=%22%23e2e8f0%22 width=%221%22 height=%221%22/></svg>'">
            </div>`;
 
       return `<div class="card" onclick="location.href='student-detail.html?id=${w.id}'">
         ${mediaEl}
         <div class="card-body">
           <div style="display:flex;gap:6px;margin-bottom:8px;">
-            <span class="card-badge">${w.anonymous_code}</span>
+            <span class="card-badge">${escapeHtml(w.anonymous_code)}</span>
             ${isOwn ? '<span class="card-badge" style="background:#10b981;color:#fff;">ME 我的</span>' : ''}
             ${isNew ? '<span class="card-badge new">NEW</span>' : ''}
             ${w.is_pinned ? '<span class="card-badge pinned">置顶</span>' : ''}
             ${w.is_teacher_selected ? '<span class="card-badge" style="background:#fef3c7;color:#b45309;">⭐ 精选</span>' : ''}
             ${vid ? '<span class="card-badge" style="background:#e0e7ff;color:#4338ca;">🎥 MP4</span>' : ''}
           </div>
-          <div class="card-title">${w.title}</div>
+          <div class="card-title">${escapeHtml(w.title)}</div>
           <div class="card-meta">
             <span>👁 ${w.view_count}</span>
             <span>💬 ${w.comment_count || 0}</span>
@@ -146,3 +153,5 @@
   </script>
 </body>
 </html>
+
+

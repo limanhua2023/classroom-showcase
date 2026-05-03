@@ -11,7 +11,7 @@
     <div class="topbar-right">
       <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-works.html'">📋 作品管理</button>
       <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-scores.html'">📊 评分成绩</button>
-      <button class="btn btn-sm btn-secondary" onclick="window.open('display.html','_blank')">🖥️ 大屏展示</button>
+      <button class="btn btn-sm btn-secondary" onclick="openDisplay()">🖥️ 大屏展示</button>
       <button class="btn btn-sm btn-danger" onclick="sessionStorage.clear();location.href='index.html'">退出</button>
     </div>
   </div>
@@ -104,6 +104,12 @@
       } catch (e) {}
     }
     loadQrCode();
+
+    function openDisplay() {
+      const code = (act.invite_code || '').trim();
+      const url = code ? ('display.html?code=' + encodeURIComponent(code)) : 'display.html';
+      window.open(url, '_blank');
+    }
 
     async function toggleSetting(key) {
       const newVal = !act[key];

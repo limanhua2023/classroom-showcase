@@ -71,8 +71,8 @@
     async function init() {
       try {
         // Find if this student already has a submission
-        const works = await api('/submissions?activity_id=' + actId);
-        existingWork = works.find(w => w.user_id === user.id);
+        const works = await api('/submissions?activity_id=' + actId + '&viewer_user_id=' + user.id);
+        existingWork = works.find(w => w.is_owner);
         if (existingWork) {
           document.getElementById('title').value = existingWork.title;
           document.getElementById('desc').value = existingWork.description;

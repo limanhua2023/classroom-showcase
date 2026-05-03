@@ -56,6 +56,12 @@
   <script>
     document.getElementById('inviteCode').addEventListener('keydown', e => { if (e.key === 'Enter') joinActivity(); });
     document.getElementById('guestCode').addEventListener('keydown', e => { if (e.key === 'Enter') joinAsGuest(); });
+    const codeFromUrl = new URLSearchParams(location.search).get('code');
+    if (codeFromUrl) {
+      const normalized = codeFromUrl.trim().toUpperCase();
+      document.getElementById('inviteCode').value = normalized;
+      document.getElementById('guestCode').value = normalized;
+    }
 
     function switchLoginTab(tab) {
       const isStudent = tab === 'student';

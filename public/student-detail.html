@@ -74,7 +74,8 @@
 
     async function load() {
       try {
-        work = await api('/submissions/' + sid);
+        const qs = (!guest && user.id) ? ('?viewer_user_id=' + encodeURIComponent(user.id)) : '';
+        work = await api('/submissions/' + sid + qs);
         document.getElementById('loading').style.display = 'none';
         document.getElementById('detail').style.display = 'block';
         const mediaUrl = work.image_url;
@@ -86,7 +87,9 @@
               oncanplay="this.muted=false"></video>
             <p style="text-align:center;font-size:0.8rem;color:var(--text-muted);margin-top:6px;">🎬 点击播放完整视频</p>`;
         } else {
-          mediaWrap.innerHTML = `<img src="${mediaUrl}" style="width:100%;border-radius:var(--radius);max-height:500px;object-fit:contain;background:#f0f2f5;cursor:zoom-in;" onclick="openLightbox('${mediaUrl}')">` ;
+          mediaWrap.innerHTML = `<img id="detailImg" src="${mediaUrl}" style="width:100%;border-radius:var(--radius);max-height:500px;object-fit:contain;background:#f0f2f5;cursor:zoom-in;">`;
+          const detailImg = document.getElementById('detailImg');
+          if (detailImg) detailImg.addEventListener('click', () => openLightbox(mediaUrl));
         }
         document.getElementById('workCode').textContent = work.anonymous_code;
         document.getElementById('workTitle').textContent = work.title;
@@ -97,9 +100,9 @@
         document.getElementById('rateCount').textContent = work.rating_count;
         if (isNewWork(work.upload_time)) document.getElementById('newBadge').style.display = 'inline';
 
-        // Record view (after 3 seconds) — skip for guests (no user id)
+        // Record view after 3 seconds; guests do not have a user id.
         if (!guest && user.id) {
-          setTimeout(() => { api('/views', { method: 'POST', body: JSON.stringify({ submission_id: sid, viewer_user_id: user.id }) }); }, 3000);
+          setTimeout(() => { api('/views', { method: 'POST', body: JSON.stringify({ activity_id: actId, submission_id: sid, viewer_user_id: user.id }) }); }, 3000);
         }
 
         // Load comments section
@@ -107,7 +110,7 @@
           document.getElementById('commentsWrapper').style.display = 'block';
           loadComments();
           // Only show comment input for logged-in non-authors
-          if (!guest && work.user_id !== user.id) {
+          if (!guest && !work.is_owner) {
             document.getElementById('commentFormWrapper').style.display = 'flex';
           }
         }
@@ -123,7 +126,7 @@
         }
 
         // ─── Rating Section ───
-        if (!guest && work.user_id === user.id) {
+        if (!guest && work.is_owner) {
           document.getElementById('ownerActions').style.display = 'flex';
           document.getElementById('ratingSection').innerHTML = '<p style="color:var(--text-muted);text-align:center;">这是你自己的作品，你可以修改或删除它。</p>';
           return;
@@ -145,10 +148,10 @@
     }
 
     async function deleteMyWork() {
-      if (!confirm('确定要删除这件作品吗？删除后不可恢复。')) return;
+      if (!confirm('Delete this work permanently?')) return;
       try {
-        await api('/submissions/' + sid, { method: 'DELETE', body: JSON.stringify({ user_id: user.id }) });
-        toast('作品已删除', 'success');
+        await api('/submissions/' + sid, { method: 'DELETE', body: JSON.stringify({ activity_id: actId, user_id: user.id }) });
+        toast('Deleted successfully', 'success');
         setTimeout(() => location.href = 'student-gallery.html', 1000);
       } catch (err) { toast(err.message, 'error'); }
     }
@@ -161,7 +164,7 @@
             <div class="comment-item">
               <div class="comment-avatar">匿</div>
               <div class="comment-content">
-                <div>${c.content}</div>
+                <div>${escapeHtml(c.content)}</div>
                 <div class="comment-time">${timeAgo(c.created_at)}</div>
               </div>
             </div>
@@ -194,13 +197,14 @@
           activity_id: actId, submission_id: sid, rater_user_id: user.id, score
         })});
         currentRating = score; updateStars();
-        document.getElementById('ratingHint').textContent = '评分成功！你打了 ' + score + ' 分';
+        document.getElementById('ratingHint').textContent = 'Rated: ' + score;
         document.getElementById('avgScore').textContent = Number(res.average).toFixed(1);
         document.getElementById('rateCount').textContent = res.count;
-        toast('评分成功！', 'success');
+        toast('Rating submitted', 'success');
       } catch (e) { toast(e.message, 'error'); }
     }
     load();
   </script>
 </body>
 </html>
+

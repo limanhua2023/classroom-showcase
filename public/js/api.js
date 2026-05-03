@@ -5,6 +5,15 @@ async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json', ...opts.headers };
   const token = sessionStorage.getItem('teacherToken');
   if (token) headers['x-teacher-auth'] = token;
+  
+  const sStr = sessionStorage.getItem('classshow_user');
+  if (sStr) {
+    try {
+      const sUser = JSON.parse(sStr);
+      if (sUser && sUser.token) headers['x-user-token'] = sUser.token;
+    } catch (e) {}
+  }
+  
   const res = await fetch(API + path, { ...opts, headers });
   if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || res.statusText); }
   if (res.headers.get('content-type')?.includes('text/csv')) return res.blob();
@@ -14,8 +23,16 @@ async function api(path, opts = {}) {
 // Upload any media file (image or video)
 async function uploadMedia(file) {
   const fd = new FormData();
+  const user = getSession();
+  const actId = getActivityId();
+  if (!user?.id || !actId) throw new Error('Missing session info, please login again');
   fd.append('image', file); // field name kept as 'image' for multer compat
-  const res = await fetch(API + '/upload', { method: 'POST', body: fd });
+  fd.append('user_id', user.id);
+  fd.append('activity_id', actId);
+
+  const headers = {};
+  if (user.token) headers['x-user-token'] = user.token;
+  const res = await fetch(API + '/upload', { method: 'POST', body: fd, headers });
   if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Upload failed'); }
   return res.json(); // { url, type: 'image'|'video' }
 }
@@ -48,6 +65,15 @@ function getSessionOrGuest() { return getSession() || (isGuest() ? { id: null, n
 
 function getActivityId() { return sessionStorage.getItem('classshow_activity_id'); }
 function setActivityId(id) { sessionStorage.setItem('classshow_activity_id', id); }
+
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 function toast(msg, type = '') {
   const el = document.createElement('div');

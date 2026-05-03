@@ -48,17 +48,17 @@
       document.getElementById('tbody').innerHTML = data.map(s => {
         const u = s.users || {};
         return `<tr>
-          <td><span class="card-badge">${s.anonymous_code}</span></td>
+          <td><span class="card-badge">${escapeHtml(s.anonymous_code)}</span></td>
           <td>${isVideo(s.image_url)
             ? `<video src="${s.image_url}" preload="metadata" muted playsinline style="width:60px;height:60px;object-fit:cover;border-radius:6px;" onloadedmetadata="this.currentTime=0.001"></video>`
             : `<img src="${s.image_url}" alt="" onerror="this.style.display='none'" style="width:60px;height:60px;object-fit:cover;border-radius:6px;">`
           }</td>
-          <td><strong>${s.title}</strong></td>
-          <td>${u.name||'-'}</td><td>${u.student_id||'-'}</td><td>${u.class_name||'-'}</td><td>${u.group_name||'-'}</td>
+          <td><strong>${escapeHtml(s.title)}</strong></td>
+          <td>${escapeHtml(u.name||'-')}</td><td>${escapeHtml(u.student_id||'-')}</td><td>${escapeHtml(u.class_name||'-')}</td><td>${escapeHtml(u.group_name||'-')}</td>
           <td>${s.view_count}</td><td>${s.comment_count || 0}</td><td>${s.rating_count}</td><td>${s.average_rating > 0 ? Number(s.average_rating).toFixed(1) : '-'}</td>
           <td style="font-size:0.8rem;">${new Date(s.upload_time).toLocaleString('zh-CN')}</td>
           <td style="white-space:nowrap;">
-            <button class="btn btn-sm btn-primary" onclick="downloadImage('${s.image_url}', '${u.student_id||s.anonymous_code}', '${s.title}')">⬇️ 下载</button>
+            <button class="btn btn-sm btn-primary" onclick="downloadImage(decodeURIComponent('${encodeURIComponent(s.image_url)}'), decodeURIComponent('${encodeURIComponent(u.student_id||s.anonymous_code)}'), decodeURIComponent('${encodeURIComponent(s.title)}'))">⬇️ 下载</button>
             <button class="btn btn-sm ${s.is_pinned?'btn-success':'btn-secondary'}" onclick="toggleField('${s.id}','is_pinned',${!s.is_pinned})">${s.is_pinned?'取消置顶':'置顶'}</button>
             <button class="btn btn-sm ${s.is_teacher_selected?'btn-success':'btn-secondary'}" onclick="toggleField('${s.id}','is_teacher_selected',${!s.is_teacher_selected})">${s.is_teacher_selected?'取消精选':'精选'}</button>
             <button class="btn btn-sm btn-danger" onclick="deleteWork('${s.id}')">删除</button>

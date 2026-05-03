@@ -171,23 +171,64 @@
   <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
   <script src="js/api.js"></script>
   <script>
-    const actId = sessionStorage.getItem('classshow_activity_id');
-    if (!actId) { document.querySelector('.display-header p').textContent = '请先从教师后台进入大屏展示'; }
-    const act = JSON.parse(sessionStorage.getItem('classshow_activity') || '{}');
-    document.getElementById('displayTitle').textContent = act.activity_name || '课堂作品秀';
-    document.getElementById('displaySubtitle').textContent = (act.course_name || '') + ' · ' + (act.class_name || '');
+    let actId = sessionStorage.getItem('classshow_activity_id');
+    let act = JSON.parse(sessionStorage.getItem('classshow_activity') || '{}');
+    const codeFromUrl = (new URLSearchParams(location.search).get('code') || '').trim().toUpperCase();
+
+    function updateDisplayHeader() {
+      document.getElementById('displayTitle').textContent = act.activity_name || '课堂作品秀';
+      document.getElementById('displaySubtitle').textContent = (act.course_name || '') + ' · ' + (act.class_name || '');
+    }
+
+    async function resolveActivityContext() {
+      if (codeFromUrl) {
+        try {
+          const activity = await api('/activities/code/' + encodeURIComponent(codeFromUrl));
+          act = activity || {};
+          actId = activity?.id || actId;
+          if (actId) setActivityId(actId);
+          sessionStorage.setItem('classshow_activity', JSON.stringify(act));
+        } catch (e) {
+          document.querySelector('.display-header p').textContent = '邀请码无效，无法打开大屏展示';
+          return false;
+        }
+      }
+
+      if (!actId && act?.id) {
+        actId = act.id;
+        setActivityId(actId);
+      }
+
+      if (!actId) {
+        document.querySelector('.display-header p').textContent = '请从教师后台进入，或使用 display.html?code=邀请码 打开大屏';
+        return false;
+      }
+
+      updateDisplayHeader();
+      return true;
+    }
 
     async function refresh() {
       if (!actId) return;
       try {
+        const inviteCode = (act && act.invite_code) ? act.invite_code : codeFromUrl;
+        const actInfoPromise = inviteCode
+          ? api('/activities/code/' + encodeURIComponent(inviteCode))
+          : Promise.resolve({ upload_open: false, voting_open: false, show_live_ranking: false, comments_open: false });
+
         const [works, stats, actInfo] = await Promise.all([
           api('/submissions?activity_id=' + actId),
           api('/activities/' + actId + '/stats'),
-          api('/activities/code/' + act.invite_code)
+          actInfoPromise
         ]);
+        if (actInfo?.invite_code) {
+          act = { ...act, ...actInfo };
+          sessionStorage.setItem('classshow_activity', JSON.stringify(act));
+          updateDisplayHeader();
+        }
 
         // Load QR once
-        if (document.getElementById('qrContainer').style.display === 'none') {
+        if (document.getElementById('qrContainer').style.display === 'none' && (act && act.invite_code)) {
           const url = location.origin + '/index.html?code=' + act.invite_code;
           api('/qrcode?text=' + encodeURIComponent(url)).then(res => {
             if (res.url) {
@@ -289,8 +330,12 @@
         }
       } catch (e) { console.error(e); }
     }
-    refresh();
-    setInterval(refresh, 8000);
+    (async () => {
+      const ok = await resolveActivityContext();
+      if (!ok) return;
+      refresh();
+      setInterval(refresh, 8000);
+    })();
 
     // Auto-scroll carousel
     setInterval(() => {

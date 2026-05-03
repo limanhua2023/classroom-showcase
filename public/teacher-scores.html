@@ -65,9 +65,9 @@
         const rankClass = s.rank === 1 ? 'gold' : s.rank === 2 ? 'silver' : s.rank === 3 ? 'bronze' : '';
         return `<tr>
           <td><span class="rank-badge ${rankClass}">${s.rank}</span></td>
-          <td><span class="card-badge">${s.anonymous_code}</span></td>
-          <td>${u.name||'-'}</td><td>${u.student_id||'-'}</td><td>${u.group_name||'-'}</td>
-          <td>${s.title}</td><td>${s.view_count}</td><td>${s.rating_count}</td>
+          <td><span class="card-badge">${escapeHtml(s.anonymous_code)}</span></td>
+          <td>${escapeHtml(u.name||'-')}</td><td>${escapeHtml(u.student_id||'-')}</td><td>${escapeHtml(u.group_name||'-')}</td>
+          <td>${escapeHtml(s.title)}</td><td>${s.view_count}</td><td>${s.rating_count}</td>
           <td><strong>${s.average_rating > 0 ? Number(s.average_rating).toFixed(2) : '-'}</strong></td>
           <td>${s.composite_score}</td>
           <td><input type="number" min="0" max="5" step="0.1" value="${ts||''}" style="width:60px;padding:4px;border:1px solid var(--border);border-radius:4px;" onchange="saveTeacherScore('${s.id}', this.value)"></td>
