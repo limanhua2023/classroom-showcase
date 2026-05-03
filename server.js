@@ -16,8 +16,18 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// App Secret for Student Token HMAC
-const APP_SECRET = process.env.APP_SECRET || crypto.randomBytes(32).toString('hex');
+// APP_SECRET must be stable in production; otherwise all signed student/teacher tokens
+// become invalid after each deploy/restart.
+const APP_SECRET = process.env.APP_SECRET;
+if (!APP_SECRET) {
+  const msg = 'APP_SECRET is not set. Set it in Render Environment before relying on tokens in production.';
+  if (process.env.RENDER || process.env.NODE_ENV === 'production') {
+    console.error(msg);
+    process.exit(1);
+  }
+  console.warn(`${msg} Using an unsafe development fallback only for local runs.`);
+}
+const EFFECTIVE_APP_SECRET = APP_SECRET || 'classshow-local-dev-secret-change-me';
 const TEACHER_TOKEN_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 
 function escapeHtml(input = '') {
@@ -54,6 +64,72 @@ function sanitizeMediaUrl(input) {
   }
 }
 
+function sanitizeStoragePath(input) {
+  const value = String(input ?? '').trim().replace(/^\/+/, '');
+  if (!value) return null;
+  if (!/^(uploads|videos)\/[A-Za-z0-9._-]+$/.test(value)) return null;
+  return value;
+}
+
+function storagePathFromPublicUrl(input) {
+  const url = sanitizeMediaUrl(input);
+  if (!url || !supabaseUrl) return null;
+  try {
+    const u = new URL(url);
+    const expectedHost = new URL(supabaseUrl).host;
+    if (u.host !== expectedHost) return null;
+    const marker = '/storage/v1/object/public/submissions/';
+    const idx = u.pathname.indexOf(marker);
+    if (idx < 0) return null;
+    return sanitizeStoragePath(decodeURIComponent(u.pathname.slice(idx + marker.length)));
+  } catch {
+    return null;
+  }
+}
+
+function publicUrlForStoragePath(storagePath) {
+  const safePath = sanitizeStoragePath(storagePath);
+  if (!safePath) return null;
+  const { data } = supabase.storage.from('submissions').getPublicUrl(safePath);
+  return data?.publicUrl || null;
+}
+
+function isVideoFilePath(storagePath) {
+  return /\.(mp4|mov|webm|ogg)$/i.test(String(storagePath || '').split('?')[0]);
+}
+
+async function deleteStorageObject(storagePath) {
+  const safePath = sanitizeStoragePath(storagePath);
+  if (!safePath) return false;
+  const { error } = await supabase.storage.from('submissions').remove([safePath]);
+  if (error) {
+    console.warn('Failed to delete storage object:', safePath, error.message);
+    return false;
+  }
+  return true;
+}
+
+async function deleteSubmissionMedia(submission) {
+  if (!submission) return false;
+  const storagePath = sanitizeStoragePath(submission.storage_path) || storagePathFromPublicUrl(submission.image_url);
+  return deleteStorageObject(storagePath);
+}
+
+async function fetchSubmissionWithMedia(id, fields) {
+  const baseFields = fields || 'id,activity_id,user_id';
+  let result = await supabase.from('submissions')
+    .select(`${baseFields},image_url,storage_path`)
+    .eq('id', id)
+    .single();
+  if (result.error && /storage_path/i.test(result.error.message || '')) {
+    result = await supabase.from('submissions')
+      .select(`${baseFields},image_url`)
+      .eq('id', id)
+      .single();
+  }
+  return result;
+}
+
 function coerceBoolean(value) {
   if (typeof value === 'boolean') return value;
   if (typeof value === 'string') return value.toLowerCase() === 'true';
@@ -61,11 +137,11 @@ function coerceBoolean(value) {
 }
 
 function makeStudentToken(activityId, userId) {
-  return crypto.createHmac('sha256', APP_SECRET).update(`${activityId}:${userId}`).digest('hex');
+  return crypto.createHmac('sha256', EFFECTIVE_APP_SECRET).update(`${activityId}:${userId}`).digest('hex');
 }
 
 function makeLegacyStudentToken(userId) {
-  return crypto.createHmac('sha256', APP_SECRET).update(String(userId)).digest('hex');
+  return crypto.createHmac('sha256', EFFECTIVE_APP_SECRET).update(String(userId)).digest('hex');
 }
 
 function safeEqualHex(a, b) {
@@ -82,7 +158,7 @@ function makeTeacherToken(activityId) {
   const expiresAt = Date.now() + TEACHER_TOKEN_TTL_MS;
   const nonce = crypto.randomBytes(8).toString('hex');
   const payload = `${activityId}.${expiresAt}.${nonce}`;
-  const sig = crypto.createHmac('sha256', APP_SECRET).update(payload).digest('hex');
+  const sig = crypto.createHmac('sha256', EFFECTIVE_APP_SECRET).update(payload).digest('hex');
   return Buffer.from(`${payload}.${sig}`).toString('base64url');
 }
 
@@ -92,7 +168,7 @@ function parseTeacherToken(token) {
     const [activityId, expiresAtRaw, nonce, sig] = decoded.split('.');
     if (!activityId || !expiresAtRaw || !nonce || !sig) return null;
     const payload = `${activityId}.${expiresAtRaw}.${nonce}`;
-    const expectedSig = crypto.createHmac('sha256', APP_SECRET).update(payload).digest('hex');
+    const expectedSig = crypto.createHmac('sha256', EFFECTIVE_APP_SECRET).update(payload).digest('hex');
     if (!safeEqualHex(sig, expectedSig)) return null;
     const expiresAt = Number(expiresAtRaw);
     if (!Number.isFinite(expiresAt) || Date.now() > expiresAt) return null;
@@ -100,6 +176,64 @@ function parseTeacherToken(token) {
   } catch {
     return null;
   }
+}
+
+function hashPin(pin, salt = crypto.randomBytes(16).toString('hex')) {
+  const normalized = String(pin ?? '').trim();
+  if (!normalized) return null;
+  const hash = crypto.createHmac('sha256', EFFECTIVE_APP_SECRET).update(`${salt}:${normalized}`).digest('hex');
+  return { salt, hash };
+}
+
+function verifyPin(pin, salt, expectedHash) {
+  if (!pin || !salt || !expectedHash) return false;
+  const result = hashPin(pin, salt);
+  return !!result && safeEqualHex(result.hash, expectedHash);
+}
+
+async function fetchActivityByCode(code) {
+  const normalized = normalizeInviteCode(code);
+  const fields = 'id,course_name,class_name,activity_name,description,invite_code,upload_open,voting_open,comments_open,show_live_ranking,roster_enabled,pin_required,created_at';
+  let result = await supabase.from('activities').select(fields).eq('invite_code', normalized).single();
+  if (result.error && /roster_enabled|pin_required|comments_open/i.test(result.error.message || '')) {
+    result = await supabase.from('activities')
+      .select('id,course_name,class_name,activity_name,description,invite_code,upload_open,voting_open,comments_open,show_live_ranking,created_at')
+      .eq('invite_code', normalized).single();
+  }
+  if (result.data) {
+    result.data.roster_enabled = !!result.data.roster_enabled;
+    result.data.pin_required = !!result.data.pin_required;
+  }
+  return result;
+}
+
+async function fetchActivityAccessPolicy(activityId) {
+  let result = await supabase.from('activities').select('id,roster_enabled,pin_required').eq('id', activityId).single();
+  if (result.error && /roster_enabled|pin_required/i.test(result.error.message || '')) {
+    return { roster_enabled: false, pin_required: false };
+  }
+  if (result.error || !result.data) throw result.error || new Error('Activity not found');
+  return {
+    roster_enabled: !!result.data.roster_enabled,
+    pin_required: !!result.data.pin_required
+  };
+}
+
+async function validateRosterLogin(activityId, studentId, pin) {
+  const policy = await fetchActivityAccessPolicy(activityId);
+  if (!policy.roster_enabled && !policy.pin_required) return { required: false };
+
+  const { data: roster, error } = await supabase.from('student_roster')
+    .select('id,student_id,name,class_name,group_name,pin_hash,pin_salt,active')
+    .eq('activity_id', activityId)
+    .eq('student_id', studentId)
+    .maybeSingle();
+  if (error) return { required: true, ok: false, status: 500, error: 'Student roster table is not ready. Run upgrade_v4.sql first.' };
+  if (!roster || roster.active === false) return { required: true, ok: false, status: 403, error: 'Student is not on the class roster' };
+  if (policy.pin_required && !verifyPin(pin, roster.pin_salt, roster.pin_hash)) {
+    return { required: true, ok: false, status: 403, error: 'Invalid student PIN' };
+  }
+  return { required: true, ok: true, roster };
 }
 
 async function validateStudentToken({ token, userId, activityId }) {
@@ -231,10 +365,7 @@ app.post('/api/activities', async (req, res) => {
 
 app.get('/api/activities/code/:code', async (req, res) => {
   try {
-    const code = normalizeInviteCode(req.params.code);
-    const { data, error } = await supabase.from('activities')
-      .select('id,course_name,class_name,activity_name,description,invite_code,upload_open,voting_open,comments_open,show_live_ranking,created_at')
-      .eq('invite_code', code).single();
+    const { data, error } = await fetchActivityByCode(req.params.code);
     if (error) throw error;
     res.json(data);
   } catch (e) { res.status(404).json({ error: 'Activity not found' }); }
@@ -245,7 +376,7 @@ app.put('/api/activities/:id', teacherAuth, async (req, res) => {
     const auth = await ensureTeacherCanAccessActivity(req, req.params.id);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
-    const allowed = ['upload_open', 'voting_open', 'comments_open', 'show_live_ranking', 'description', 'activity_name'];
+    const allowed = ['upload_open', 'voting_open', 'comments_open', 'show_live_ranking', 'roster_enabled', 'pin_required', 'description', 'activity_name'];
     const payload = {};
     for (const key of allowed) {
       if (!(key in req.body)) continue;
@@ -268,23 +399,115 @@ app.post('/api/users', async (req, res) => {
     const student_id = sanitizeText(req.body.student_id, 80);
     const class_name = sanitizeText(req.body.class_name, 80);
     const group_name = sanitizeText(req.body.group_name, 80) || null;
-    if (!activity_id || !name || !student_id || !class_name) {
+    const pin = String(req.body.pin ?? '').trim();
+    if (!activity_id || !student_id) {
       return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const rosterAuth = await validateRosterLogin(activity_id, student_id, pin);
+    if (rosterAuth.required && !rosterAuth.ok) {
+      return res.status(rosterAuth.status).json({ error: rosterAuth.error });
+    }
+
+    const finalName = rosterAuth.roster?.name || name;
+    const finalClassName = rosterAuth.roster?.class_name || class_name;
+    const finalGroupName = rosterAuth.roster?.group_name || group_name;
+    if (!finalName || !finalClassName) {
+      return res.status(400).json({ error: 'Missing name or class name' });
     }
 
     // Check if user already exists (allow re-entry)
     const { data: existing } = await supabase.from('users')
-      .select('*').eq('activity_id', activity_id).eq('student_id', student_id).single();
+      .select('*').eq('activity_id', activity_id).eq('student_id', student_id).maybeSingle();
     if (existing) {
+      const updatePayload = {};
+      if (rosterAuth.roster && (existing.name !== finalName || existing.class_name !== finalClassName || existing.group_name !== finalGroupName)) {
+        updatePayload.name = finalName;
+        updatePayload.class_name = finalClassName;
+        updatePayload.group_name = finalGroupName;
+      }
+      if (Object.keys(updatePayload).length > 0) {
+        await supabase.from('users').update(updatePayload).eq('id', existing.id);
+        Object.assign(existing, updatePayload);
+      }
       existing.token = makeStudentToken(existing.activity_id, existing.id);
       return res.json(existing);
     }
     const { data, error } = await supabase.from('users').insert([{
-      activity_id, name, student_id, class_name, group_name
+      activity_id, name: finalName, student_id, class_name: finalClassName, group_name: finalGroupName
     }]).select().single();
     if (error) throw error;
     data.token = makeStudentToken(data.activity_id, data.id);
     res.status(201).json(data);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/api/teacher/roster', teacherAuth, async (req, res) => {
+  try {
+    const { activity_id } = req.query;
+    if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
+    const auth = await ensureTeacherCanAccessActivity(req, activity_id);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const { data, error } = await supabase.from('student_roster')
+      .select('id,student_id,name,class_name,group_name,active,created_at')
+      .eq('activity_id', activity_id)
+      .order('student_id', { ascending: true });
+    if (error) {
+      if (/student_roster/i.test(error.message || '')) {
+        return res.status(500).json({ error: 'Student roster table is not ready. Run upgrade_v4.sql first.' });
+      }
+      throw error;
+    }
+    res.json(data || []);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/teacher/roster/import', teacherAuth, async (req, res) => {
+  try {
+    const activity_id = String(req.body.activity_id ?? '').trim();
+    const students = Array.isArray(req.body.students) ? req.body.students : [];
+    if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
+    if (students.length === 0) return res.status(400).json({ error: 'No students to import' });
+    if (students.length > 1000) return res.status(400).json({ error: 'Import at most 1000 students at a time' });
+
+    const auth = await ensureTeacherCanAccessActivity(req, activity_id);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const payload = [];
+    const seen = new Set();
+    for (const row of students) {
+      const student_id = sanitizeText(row.student_id, 80);
+      if (!student_id || seen.has(student_id)) continue;
+      seen.add(student_id);
+      const name = sanitizeText(row.name, 80);
+      const class_name = sanitizeText(row.class_name, 80);
+      const group_name = sanitizeText(row.group_name, 80) || null;
+      const pin = String(row.pin ?? '').trim();
+      const pinHash = pin ? hashPin(pin) : null;
+      if (!name || !class_name) continue;
+      payload.push({
+        activity_id,
+        student_id,
+        name,
+        class_name,
+        group_name,
+        active: row.active === false ? false : true,
+        pin_hash: pinHash?.hash || null,
+        pin_salt: pinHash?.salt || null
+      });
+    }
+    if (payload.length === 0) return res.status(400).json({ error: 'No valid roster rows' });
+
+    const { error } = await supabase.from('student_roster')
+      .upsert(payload, { onConflict: 'activity_id,student_id' });
+    if (error) {
+      if (/student_roster|pin_hash|pin_salt|constraint|conflict/i.test(error.message || '')) {
+        return res.status(500).json({ error: 'Student roster schema is not ready. Run upgrade_v4.sql first.' });
+      }
+      throw error;
+    }
+    res.json({ ok: true, imported: payload.length });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -316,7 +539,12 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
     
     if (error) throw error;
     const { data: urlData } = supabase.storage.from('submissions').getPublicUrl(filename);
-    res.json({ url: urlData.publicUrl, type: isVideo ? 'video' : 'image' });
+    res.json({
+      url: urlData.publicUrl,
+      path: filename,
+      type: isVideo ? 'video' : 'image',
+      size: req.file.size
+    });
   } catch (e) { 
     if (req.file && req.file.path) fs.unlink(req.file.path, () => {});
     res.status(500).json({ error: e.message }); 
@@ -330,8 +558,11 @@ app.post('/api/submissions', studentAuth, async (req, res) => {
     const user_id = String(req.body.user_id ?? '').trim();
     const title = sanitizeText(req.body.title, 140);
     const description = sanitizeText(req.body.description, 400);
-    const image_url = sanitizeMediaUrl(req.body.image_url);
-    if (!activity_id || !user_id || !title || !image_url) {
+    const storage_path = sanitizeStoragePath(req.body.storage_path) || storagePathFromPublicUrl(req.body.image_url);
+    const image_url = publicUrlForStoragePath(storage_path);
+    const media_type = isVideoFilePath(storage_path) ? 'video' : 'image';
+    const media_size = Number.isFinite(Number(req.body.media_size)) ? Number(req.body.media_size) : null;
+    if (!activity_id || !user_id || !title || !storage_path || !image_url) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
@@ -339,19 +570,37 @@ app.post('/api/submissions', studentAuth, async (req, res) => {
     const { data: existing } = await supabase.from('submissions')
       .select('*').eq('activity_id', activity_id).eq('user_id', user_id).single();
     if (existing) {
-      const { data, error } = await supabase.from('submissions').update({
-        title, description, image_url, last_modified_time: new Date().toISOString(),
+      const payload = {
+        title, description, image_url, storage_path, media_type, media_size, last_modified_time: new Date().toISOString(),
         edit_count: existing.edit_count + 1
-      }).eq('id', existing.id).select().single();
+      };
+      let { data, error } = await supabase.from('submissions').update(payload).eq('id', existing.id).select().single();
+      if (error && /storage_path|media_type|media_size/i.test(error.message || '')) {
+        const legacyPayload = { ...payload };
+        delete legacyPayload.storage_path;
+        delete legacyPayload.media_type;
+        delete legacyPayload.media_size;
+        ({ data, error } = await supabase.from('submissions').update(legacyPayload).eq('id', existing.id).select().single());
+      }
       if (error) throw error;
+      const oldStoragePath = sanitizeStoragePath(existing.storage_path) || storagePathFromPublicUrl(existing.image_url);
+      if (oldStoragePath && oldStoragePath !== storage_path) {
+        await deleteStorageObject(oldStoragePath);
+      }
       return res.json(data);
     }
     // Generate anonymous code
     const { count } = await supabase.from('submissions').select('*', { count: 'exact', head: true }).eq('activity_id', activity_id);
     const code = `A${String((count || 0) + 1).padStart(3, '0')}`;
-    const { data, error } = await supabase.from('submissions').insert([{
-      activity_id, user_id, anonymous_code: code, title, description, image_url
-    }]).select().single();
+    const insertPayload = { activity_id, user_id, anonymous_code: code, title, description, image_url, storage_path, media_type, media_size };
+    let { data, error } = await supabase.from('submissions').insert([insertPayload]).select().single();
+    if (error && /storage_path|media_type|media_size/i.test(error.message || '')) {
+      const legacyPayload = { ...insertPayload };
+      delete legacyPayload.storage_path;
+      delete legacyPayload.media_type;
+      delete legacyPayload.media_size;
+      ({ data, error } = await supabase.from('submissions').insert([legacyPayload]).select().single());
+    }
     if (error) throw error;
     res.status(201).json(data);
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -438,10 +687,7 @@ app.get('/api/teacher/submissions', teacherAuth, async (req, res) => {
 
 app.put('/api/teacher/submissions/:id', teacherAuth, async (req, res) => {
   try {
-    const { data: sub, error: subErr } = await supabase.from('submissions')
-      .select('id, activity_id')
-      .eq('id', req.params.id)
-      .single();
+    const { data: sub, error: subErr } = await fetchSubmissionWithMedia(req.params.id, 'id,activity_id');
     if (subErr || !sub) return res.status(404).json({ error: 'Submission not found' });
 
     const auth = await ensureTeacherCanAccessActivity(req, sub.activity_id);
@@ -473,6 +719,7 @@ app.delete('/api/teacher/submissions/:id', teacherAuth, async (req, res) => {
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
     await supabase.from('submissions').delete().eq('id', req.params.id);
+    await deleteSubmissionMedia(sub);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -483,11 +730,12 @@ app.delete('/api/submissions/:id', studentAuth, async (req, res) => {
     const { user_id, activity_id } = req.body;
     if (!user_id) return res.status(400).json({ error: 'Missing user_id' });
     // Verify ownership
-    const { data: sub } = await supabase.from('submissions').select('user_id, activity_id').eq('id', req.params.id).single();
+    const { data: sub } = await fetchSubmissionWithMedia(req.params.id, 'user_id,activity_id');
     if (!sub || sub.user_id !== user_id) return res.status(403).json({ error: 'Unauthorized' });
     if (String(sub.activity_id) !== String(activity_id)) return res.status(403).json({ error: 'Activity mismatch' });
     
     await supabase.from('submissions').delete().eq('id', req.params.id);
+    await deleteSubmissionMedia(sub);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -506,15 +754,33 @@ app.post('/api/ratings', studentAuth, async (req, res) => {
     if (!sub || String(sub.activity_id) !== String(activity_id)) {
       return res.status(400).json({ error: 'Submission/activity mismatch' });
     }
-    if (sub && sub.user_id === rater_user_id) return res.status(403).json({ error: 'Cannot rate your own work' });
-    // Upsert rating
-    const { data: existing } = await supabase.from('ratings')
-      .select('id').eq('submission_id', submission_id).eq('rater_user_id', rater_user_id).single();
-    if (existing) {
-      await supabase.from('ratings').update({ score: scoreNum, updated_at: new Date().toISOString() }).eq('id', existing.id);
-    } else {
-      await supabase.from('ratings').insert([{ activity_id, submission_id, rater_user_id, score: scoreNum }]);
+    if (sub && String(sub.user_id) === String(rater_user_id)) return res.status(403).json({ error: 'Cannot rate your own work' });
+
+    const { data: act } = await supabase.from('activities').select('voting_open').eq('id', activity_id).single();
+    if (act && act.voting_open === false) return res.status(403).json({ error: 'Voting is closed by teacher' });
+
+    const upsertPayload = {
+      activity_id,
+      submission_id,
+      rater_user_id,
+      score: scoreNum,
+      updated_at: new Date().toISOString()
+    };
+    let { error: upsertError } = await supabase.from('ratings')
+      .upsert([upsertPayload], { onConflict: 'submission_id,rater_user_id' });
+    if (upsertError && /unique|constraint|conflict/i.test(upsertError.message || '')) {
+      const { data: existing } = await supabase.from('ratings')
+        .select('id').eq('submission_id', submission_id).eq('rater_user_id', rater_user_id).maybeSingle();
+      if (existing) {
+        const { error } = await supabase.from('ratings').update({ score: scoreNum, updated_at: new Date().toISOString() }).eq('id', existing.id);
+        upsertError = error;
+      } else {
+        const { error } = await supabase.from('ratings').insert([{ activity_id, submission_id, rater_user_id, score: scoreNum }]);
+        upsertError = error;
+      }
     }
+    if (upsertError) throw upsertError;
+
     // Recalculate average
     const { data: allRatings } = await supabase.from('ratings').select('score').eq('submission_id', submission_id);
     const avg = allRatings.reduce((s, r) => s + r.score, 0) / allRatings.length;
@@ -615,11 +881,9 @@ app.get('/api/rankings', async (req, res) => {
     // Calculate composite scores
     if (data.length > 0) {
       const maxRC = Math.max(...data.map(d => d.rating_count), 1);
-      const maxVC = Math.max(...data.map(d => d.view_count), 1);
       data.forEach((d, i) => {
         const normRC = d.rating_count / maxRC * 5;
-        const normVC = d.view_count / maxVC * 5;
-        d.composite_score = Math.round((d.average_rating * 0.7 + normRC * 0.2 + normVC * 0.1) * 100) / 100;
+        d.composite_score = Math.round(((Number(d.average_rating) || 0) * 0.8 + normRC * 0.2) * 100) / 100;
         d.rank = i + 1;
       });
       data.sort((a, b) => b.composite_score - a.composite_score || b.rating_count - a.rating_count || b.average_rating - a.average_rating);
@@ -642,16 +906,20 @@ app.post('/api/views', studentAuth, async (req, res) => {
       return res.status(400).json({ error: 'Submission/activity mismatch' });
     }
 
-    // Check 10-min duplicate
-    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    // Count one valid view per logged-in viewer per work. This keeps refresh/scripts from inflating rankings.
     const { data: recent } = await supabase.from('views').select('id')
       .eq('submission_id', submission_id).eq('viewer_user_id', viewer_user_id)
-      .gte('viewed_at', tenMinAgo).limit(1);
+      .limit(1);
     if (recent && recent.length > 0) return res.json({ ok: true, duplicate: true });
-    await supabase.from('views').insert([{ submission_id, viewer_user_id, is_valid: true }]);
-    // Increment view count
-    await supabase.from('submissions').update({ view_count: (sub?.view_count || 0) + 1 }).eq('id', submission_id);
-    res.json({ ok: true });
+    const { error: insertError } = await supabase.from('views').insert([{ submission_id, viewer_user_id, is_valid: true }]);
+    if (insertError && !/duplicate|unique/i.test(insertError.message || '')) throw insertError;
+
+    const { count } = await supabase.from('views')
+      .select('id', { count: 'exact', head: true })
+      .eq('submission_id', submission_id)
+      .eq('is_valid', true);
+    await supabase.from('submissions').update({ view_count: count || 0 }).eq('id', submission_id);
+    res.json({ ok: true, duplicate: !!insertError });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

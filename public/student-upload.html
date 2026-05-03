@@ -163,10 +163,14 @@
 
         btn.textContent = '提交中...';
         let url = existingWork ? existingWork.image_url : null;
+        let storagePath = existingWork ? existingWork.storage_path : null;
+        let mediaSize = null;
         if (file) {
           btn.textContent = '上传中，请稍候...';
           const uploadRes = await uploadMedia(file);
           url = uploadRes.url;
+          storagePath = uploadRes.path;
+          mediaSize = uploadRes.size;
         }
         if (!url) throw new Error('请选择作品文件');
 
@@ -174,7 +178,9 @@
           activity_id: actId, user_id: user.id,
           title: document.getElementById('title').value.trim(),
           description: document.getElementById('desc').value.trim(),
-          image_url: url
+          image_url: url,
+          storage_path: storagePath,
+          media_size: mediaSize
         })});
         toast('作品上传成功！', 'success');
         setTimeout(() => location.href = 'student-gallery.html', 1000);

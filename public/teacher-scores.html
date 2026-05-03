@@ -43,11 +43,9 @@
         allData = await api('/teacher/submissions?activity_id=' + actId);
         // Calculate composite scores
         const maxRC = Math.max(...allData.map(d => d.rating_count), 1);
-        const maxVC = Math.max(...allData.map(d => d.view_count), 1);
         allData.forEach(d => {
           const normRC = d.rating_count / maxRC * 5;
-          const normVC = d.view_count / maxVC * 5;
-          d.composite_score = Math.round((d.average_rating * 0.7 + normRC * 0.2 + normVC * 0.1) * 100) / 100;
+          d.composite_score = Math.round(((Number(d.average_rating) || 0) * 0.8 + normRC * 0.2) * 100) / 100;
         });
         allData.sort((a, b) => b.composite_score - a.composite_score || b.rating_count - a.rating_count || b.average_rating - a.average_rating);
         allData.forEach((d, i) => d.rank = i + 1);

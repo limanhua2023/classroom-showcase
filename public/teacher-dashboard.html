@@ -42,6 +42,32 @@
         <div>
           匿名评论：<button class="btn btn-sm" id="toggleComments" onclick="toggleSetting('comments_open')"></button>
         </div>
+        <div>
+          名单限制：<button class="btn btn-sm" id="toggleRoster" onclick="toggleSetting('roster_enabled')"></button>
+        </div>
+        <div>
+          PIN登录：<button class="btn btn-sm" id="togglePin" onclick="toggleSetting('pin_required')"></button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Student roster -->
+    <div class="card" style="margin:20px 0;">
+      <div class="card-body">
+        <h3 style="margin-bottom:12px;">🔐 学生名单 / PIN</h3>
+        <p class="form-hint" style="margin-bottom:10px;">每行一名学生：学号,姓名,班级,小组,PIN。小组和 PIN 可留空；开启 PIN 登录前建议全部填写 PIN。</p>
+        <textarea id="rosterText" rows="6" style="width:100%;font-family:monospace;" placeholder="2026001,张三,AIOT 59-1,A组,1234&#10;2026002,李四,AIOT 59-1,A组,5678"></textarea>
+        <div style="display:flex;gap:10px;align-items:center;margin-top:10px;">
+          <button class="btn btn-primary" onclick="importRoster()">导入/更新名单</button>
+          <button class="btn btn-secondary" onclick="loadRoster()">刷新名单</button>
+          <span id="rosterStatus" style="color:var(--text-muted);font-size:0.9rem;"></span>
+        </div>
+        <div class="table-wrap" style="margin-top:12px;max-height:260px;overflow:auto;">
+          <table>
+            <thead><tr><th>学号</th><th>姓名</th><th>班级</th><th>小组</th><th>状态</th></tr></thead>
+            <tbody id="rosterBody"><tr><td colspan="5" style="color:var(--text-muted);">尚未加载</td></tr></tbody>
+          </table>
+        </div>
       </div>
     </div>
 
@@ -87,6 +113,8 @@
     updateToggleBtn('toggleVoting', act.voting_open);
     updateToggleBtn('toggleRanking', act.show_live_ranking);
     updateToggleBtn('toggleComments', act.comments_open);
+    updateToggleBtn('toggleRoster', act.roster_enabled);
+    updateToggleBtn('togglePin', act.pin_required);
 
     // Generate QR Code
     async function loadQrCode() {
@@ -122,7 +150,52 @@
         updateToggleBtn('toggleVoting', act.voting_open);
         updateToggleBtn('toggleRanking', act.show_live_ranking);
         updateToggleBtn('toggleComments', act.comments_open);
+        updateToggleBtn('toggleRoster', act.roster_enabled);
+        updateToggleBtn('togglePin', act.pin_required);
       } catch (e) { toast('操作失败', 'error'); }
+    }
+
+    function parseRosterRows(text) {
+      return text.split(/\r?\n/)
+        .map(line => line.trim())
+        .filter(line => line && !line.startsWith('#'))
+        .map(line => {
+          const [student_id, name, class_name, group_name, pin] = line.split(',').map(v => (v || '').trim());
+          return { student_id, name, class_name, group_name, pin };
+        })
+        .filter(row => row.student_id && row.name && row.class_name);
+    }
+
+    async function importRoster() {
+      const students = parseRosterRows(document.getElementById('rosterText').value);
+      if (students.length === 0) return toast('没有有效名单行', 'error');
+      try {
+        const res = await api('/teacher/roster/import', {
+          method: 'POST',
+          body: JSON.stringify({ activity_id: actId, students })
+        });
+        toast('名单导入成功：' + res.imported + ' 人', 'success');
+        document.getElementById('rosterText').value = '';
+        loadRoster();
+      } catch (e) { toast('名单导入失败: ' + e.message, 'error'); }
+    }
+
+    async function loadRoster() {
+      try {
+        const rows = await api('/teacher/roster?activity_id=' + actId);
+        document.getElementById('rosterStatus').textContent = '已导入 ' + rows.length + ' 人';
+        document.getElementById('rosterBody').innerHTML = rows.length ? rows.map(r => `
+          <tr>
+            <td>${escapeHtml(r.student_id)}</td>
+            <td>${escapeHtml(r.name)}</td>
+            <td>${escapeHtml(r.class_name)}</td>
+            <td>${escapeHtml(r.group_name || '-')}</td>
+            <td>${r.active === false ? '停用' : '启用'}</td>
+          </tr>
+        `).join('') : '<tr><td colspan="5" style="color:var(--text-muted);">暂无名单</td></tr>';
+      } catch (e) {
+        document.getElementById('rosterStatus').textContent = '名单功能未初始化';
+      }
     }
 
     async function loadStats() {
@@ -134,6 +207,7 @@
       } catch (e) {}
     }
     loadStats();
+    loadRoster();
     setInterval(loadStats, 10000);
   </script>
 </body>

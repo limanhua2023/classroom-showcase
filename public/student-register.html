@@ -14,6 +14,7 @@
       <form onsubmit="register(event)">
         <div class="form-group"><label>姓名 *</label><input type="text" id="name" placeholder="输入你的真实姓名" required></div>
         <div class="form-group"><label>学号 *</label><input type="text" id="studentId" placeholder="输入你的学号" required></div>
+        <div class="form-group" id="pinGroup" style="display:none;"><label>课堂 PIN *</label><input type="password" id="studentPin" placeholder="输入老师发放的 PIN"></div>
         <div class="form-group"><label>班级 *</label><input type="text" id="className" placeholder="例如：2026级电商1班" required></div>
         <div class="form-group"><label>小组名称</label><input type="text" id="groupName" placeholder="输入你的小组名称（选填）"></div>
         <button type="submit" class="btn btn-primary btn-block btn-lg">确认进入</button>
@@ -27,6 +28,11 @@
     if (!actId) location.href = 'index.html';
     const act = JSON.parse(sessionStorage.getItem('classshow_activity') || '{}');
     document.getElementById('activityInfo').textContent = act.activity_name || '课堂活动';
+    if (act.roster_enabled || act.pin_required) {
+      document.getElementById('activityInfo').textContent = (act.activity_name || '课堂活动') + '（名单/PIN 登录）';
+      document.getElementById('pinGroup').style.display = act.pin_required ? 'block' : 'none';
+      if (act.pin_required) document.getElementById('studentPin').required = true;
+    }
     // Pre-fill if returning
     const existing = getSession();
     if (existing) {
@@ -44,6 +50,7 @@
             activity_id: actId,
             name: document.getElementById('name').value.trim(),
             student_id: document.getElementById('studentId').value.trim(),
+            pin: document.getElementById('studentPin').value.trim(),
             class_name: document.getElementById('className').value.trim(),
             group_name: document.getElementById('groupName').value.trim() || null
           })
