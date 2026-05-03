@@ -40,22 +40,37 @@
   </div>
   <script src="js/api.js"></script>
   <script>
-    const user = getSession(); const actId = getActivityId();
+    const user = getSessionOrGuest(); const actId = getActivityId();
     if (!user || !actId) location.href = 'index.html';
     const act = JSON.parse(sessionStorage.getItem('classshow_activity') || '{}');
+    const guest = isGuest();
     let myRatings = {};
+
+    // Guest: hide upload, show banner
+    if (guest) {
+      document.getElementById('uploadBtn').style.display = 'none';
+      const banner = document.createElement('div');
+      banner.style.cssText = 'background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1;padding:10px 16px;border-radius:8px;font-size:0.88rem;margin-bottom:16px;text-align:center;';
+      banner.innerHTML = '👁 访客模式：仅浏览，不可评分或评论。<a href="index.html" style="color:#0369a1;font-weight:700;">点击登录</a>以参与互动';
+      document.querySelector('.container').prepend(banner);
+    }
 
     async function loadWorks() {
       try {
-        const [works, ratings] = await Promise.all([
-          api('/submissions?activity_id=' + actId),
-          api('/ratings/my?activity_id=' + actId + '&user_id=' + user.id)
-        ]);
+        let works, ratings = [];
+        if (guest) {
+          works = await api('/submissions?activity_id=' + actId);
+        } else {
+          [works, ratings] = await Promise.all([
+            api('/submissions?activity_id=' + actId),
+            api('/ratings/my?activity_id=' + actId + '&user_id=' + user.id)
+          ]);
+        }
         myRatings = {};
         ratings.forEach(r => myRatings[r.submission_id] = r.score);
         document.getElementById('totalWorks').textContent = works.length;
-        document.getElementById('myRated').textContent = ratings.length;
-        if (act.voting_open) { document.getElementById('rubricBox').style.display = 'block'; }
+        document.getElementById('myRated').textContent = guest ? '-' : ratings.length;
+        if (act.voting_open && !guest) { document.getElementById('rubricBox').style.display = 'block'; }
         // Separate new works (< 5 min)
         const newWorks = works.filter(w => isNewWork(w.upload_time));
         const allWorks = works.filter(w => !isNewWork(w.upload_time));

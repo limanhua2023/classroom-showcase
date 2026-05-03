@@ -61,9 +61,10 @@
   </div>
   <script src="js/api.js"></script>
   <script>
-    const user = getSession(); const actId = getActivityId();
+    const user = getSessionOrGuest(); const actId = getActivityId();
     if (!user || !actId) location.href = 'index.html';
     const act = JSON.parse(sessionStorage.getItem('classshow_activity') || '{}');
+    const guest = isGuest();
     const sid = new URLSearchParams(location.search).get('id');
     let currentRating = 0; let work = null;
 
@@ -92,15 +93,29 @@
         document.getElementById('rateCount').textContent = work.rating_count;
         if (isNewWork(work.upload_time)) document.getElementById('newBadge').style.display = 'inline';
 
-        // Record view (after 3 seconds)
-        setTimeout(() => { api('/views', { method: 'POST', body: JSON.stringify({ submission_id: sid, viewer_user_id: user.id }) }); }, 3000);
+        // Record view (after 3 seconds) — skip for guests (no user id)
+        if (!guest && user.id) {
+          setTimeout(() => { api('/views', { method: 'POST', body: JSON.stringify({ submission_id: sid, viewer_user_id: user.id }) }); }, 3000);
+        }
 
-        // Load comments section (independent of rating logic)
+        // Load comments section
         if (act.comments_open) {
           document.getElementById('commentsWrapper').style.display = 'block';
-          // Author cannot comment on own work
-          if (work.user_id !== user.id) document.getElementById('commentFormWrapper').style.display = 'flex';
           loadComments();
+          // Only show comment input for logged-in non-authors
+          if (!guest && work.user_id !== user.id) {
+            document.getElementById('commentFormWrapper').style.display = 'flex';
+          }
+        }
+
+        // ─── Guest: replace rating section with login prompt ───
+        if (guest) {
+          document.getElementById('ratingSection').innerHTML =
+            '<div style="text-align:center;padding:16px;color:var(--text-muted);">' +
+            '<p style="font-size:1.5rem;margin-bottom:8px;">👁</p>' +
+            '<p style="margin-bottom:12px;">访客模式不可评分</p>' +
+            '<a href="index.html" class="btn btn-primary btn-sm">🔑 登录以参与互动</a></div>';
+          return;
         }
 
         // ─── Rating Section ───

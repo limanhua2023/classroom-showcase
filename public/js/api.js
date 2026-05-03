@@ -35,6 +35,17 @@ function getSession() {
 }
 
 function setSession(data) { sessionStorage.setItem('classshow_user', JSON.stringify(data)); }
+
+// Guest session (read-only visitor, no rating/commenting)
+function setGuestSession(activity) {
+  sessionStorage.setItem('classshow_guest', '1');
+  sessionStorage.setItem('classshow_activity_id', activity.id);
+  sessionStorage.setItem('classshow_activity', JSON.stringify(activity));
+}
+function isGuest() { return sessionStorage.getItem('classshow_guest') === '1'; }
+// Allow gallery/detail to accept either a real user OR guest mode
+function getSessionOrGuest() { return getSession() || (isGuest() ? { id: null, name: '访客', _guest: true } : null); }
+
 function getActivityId() { return sessionStorage.getItem('classshow_activity_id'); }
 function setActivityId(id) { sessionStorage.setItem('classshow_activity_id', id); }
 

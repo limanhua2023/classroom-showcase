@@ -5,36 +5,91 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>ClassShow 课堂作品秀</title>
   <link rel="stylesheet" href="css/main.css">
+  <style>
+    .login-tabs { display:flex; gap:0; margin-bottom:24px; border-radius:var(--radius-sm); overflow:hidden; border:1px solid var(--border); }
+    .login-tab { flex:1; padding:10px 0; text-align:center; font-weight:600; cursor:pointer; background:var(--bg); color:var(--text-muted); font-size:0.95rem; transition:all 0.2s; border:none; }
+    .login-tab.active { background:var(--primary); color:#fff; }
+    .guest-badge { display:inline-flex;align-items:center;gap:6px;background:#f0fdf4;border:1px solid #bbf7d0;color:#166534;padding:8px 14px;border-radius:var(--radius-sm);font-size:0.85rem;margin-bottom:16px;width:100%;justify-content:center; }
+    .divider-line { display:flex;align-items:center;gap:10px;margin:16px 0;color:var(--text-muted);font-size:0.85rem; }
+    .divider-line::before,.divider-line::after { content:'';flex:1;height:1px;background:var(--border); }
+  </style>
 </head>
 <body>
   <div class="page-center">
     <div class="auth-box" style="text-align:center;">
       <h1>Class<span>Show</span></h1>
       <p class="subtitle">课堂作品秀 · 匿名互评 · 公平展示</p>
-      <div id="student-section">
+
+      <!-- Tabs -->
+      <div class="login-tabs">
+        <button class="login-tab active" id="tabStudent" onclick="switchLoginTab('student')">🎓 学生登录</button>
+        <button class="login-tab" id="tabGuest" onclick="switchLoginTab('guest')">👁 访客浏览</button>
+      </div>
+
+      <!-- Student Panel -->
+      <div id="panelStudent">
         <div class="form-group">
           <input type="text" id="inviteCode" placeholder="输入课堂邀请码" style="text-align:center;font-size:1.2rem;letter-spacing:2px;">
         </div>
         <button class="btn btn-primary btn-block btn-lg" onclick="joinActivity()">进入课堂</button>
       </div>
-      <div class="auth-divider">— 教师入口 —</div>
+
+      <!-- Guest Panel -->
+      <div id="panelGuest" style="display:none;">
+        <div class="guest-badge">
+          👁 访客模式：可浏览所有作品，不能评分或评论
+        </div>
+        <div class="form-group">
+          <input type="text" id="guestCode" placeholder="输入课堂邀请码" style="text-align:center;font-size:1.2rem;letter-spacing:2px;">
+        </div>
+        <button class="btn btn-block btn-lg" style="background:#6366f1;color:#fff;" onclick="joinAsGuest()">👁 访客进入</button>
+      </div>
+
+      <div class="divider-line">教师入口</div>
       <button class="btn btn-secondary btn-block" onclick="location.href='teacher-login.html'">教师登录</button>
-      <div style="margin-top:24px;">
+      <div style="margin-top:16px;">
         <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-login.html?create=1'">+ 创建新活动</button>
       </div>
     </div>
   </div>
   <script src="js/api.js"></script>
   <script>
+    // Handle ?code= query param (from QR code)
+    const urlCode = new URLSearchParams(location.search).get('code');
+    if (urlCode) { document.getElementById('inviteCode').value = urlCode; document.getElementById('guestCode').value = urlCode; }
+
     document.getElementById('inviteCode').addEventListener('keydown', e => { if (e.key === 'Enter') joinActivity(); });
+    document.getElementById('guestCode').addEventListener('keydown', e => { if (e.key === 'Enter') joinAsGuest(); });
+
+    function switchLoginTab(tab) {
+      const isStudent = tab === 'student';
+      document.getElementById('tabStudent').classList.toggle('active', isStudent);
+      document.getElementById('tabGuest').classList.toggle('active', !isStudent);
+      document.getElementById('panelStudent').style.display = isStudent ? 'block' : 'none';
+      document.getElementById('panelGuest').style.display = isStudent ? 'none' : 'block';
+    }
+
     async function joinActivity() {
       const code = document.getElementById('inviteCode').value.trim().toUpperCase();
       if (!code) return toast('请输入邀请码', 'error');
       try {
         const activity = await api('/activities/code/' + code);
+        // Clear any previous guest flag
+        sessionStorage.removeItem('classshow_guest');
         setActivityId(activity.id);
         sessionStorage.setItem('classshow_activity', JSON.stringify(activity));
         location.href = 'student-register.html';
+      } catch (e) { toast('邀请码无效，请检查后重试', 'error'); }
+    }
+
+    async function joinAsGuest() {
+      const code = document.getElementById('guestCode').value.trim().toUpperCase();
+      if (!code) return toast('请输入邀请码', 'error');
+      try {
+        const activity = await api('/activities/code/' + code);
+        setGuestSession(activity);
+        toast('以访客身份进入...', 'success');
+        setTimeout(() => location.href = 'student-gallery.html', 600);
       } catch (e) { toast('邀请码无效，请检查后重试', 'error'); }
     }
   </script>
