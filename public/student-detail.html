@@ -12,7 +12,8 @@
   <div class="container" style="max-width:700px;padding-top:24px;">
     <div id="loading" class="empty">加载中...</div>
     <div id="detail" style="display:none;">
-      <img id="workImg" style="width:100%;border-radius:var(--radius);margin-bottom:16px;max-height:500px;object-fit:contain;background:#f0f2f5;cursor:zoom-in;" onclick="openLightbox(this.src)">
+      <!-- Media: video player or image, determined by URL -->
+      <div id="mediaWrap" style="margin-bottom:16px;"></div>
       <div style="display:flex;gap:8px;margin-bottom:12px;">
         <span class="card-badge" id="workCode"></span>
         <span class="card-badge new" id="newBadge" style="display:none;">NEW</span>
@@ -71,7 +72,17 @@
         work = await api('/submissions/' + sid);
         document.getElementById('loading').style.display = 'none';
         document.getElementById('detail').style.display = 'block';
-        document.getElementById('workImg').src = work.image_url;
+        const mediaUrl = work.image_url;
+        const mediaWrap = document.getElementById('mediaWrap');
+        if (isVideo(mediaUrl)) {
+          mediaWrap.innerHTML = `
+            <video src="${mediaUrl}" controls autoplay muted playsinline
+              style="width:100%;border-radius:var(--radius);max-height:520px;background:#0f172a;display:block;"
+              oncanplay="this.muted=false"></video>
+            <p style="text-align:center;font-size:0.8rem;color:var(--text-muted);margin-top:6px;">🎬 点击播放完整视频</p>`;
+        } else {
+          mediaWrap.innerHTML = `<img src="${mediaUrl}" style="width:100%;border-radius:var(--radius);max-height:500px;object-fit:contain;background:#f0f2f5;cursor:zoom-in;" onclick="openLightbox('${mediaUrl}')">` ;
+        }
         document.getElementById('workCode').textContent = work.anonymous_code;
         document.getElementById('workTitle').textContent = work.title;
         document.getElementById('workDesc').textContent = work.description || '';

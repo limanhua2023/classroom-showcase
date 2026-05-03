@@ -25,8 +25,16 @@ if (supabaseUrl && supabaseKey) {
   console.error('WARNING: Supabase credentials missing!');
 }
 
-// Multer for image upload (memory storage)
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 5 * 1024 * 1024 } });
+// Multer for media upload (images + video, memory storage)
+const ALLOWED_MIME = ['image/jpeg','image/png','image/webp','image/gif','video/mp4','video/quicktime'];
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 200 * 1024 * 1024 }, // 200MB for ~1-min video
+  fileFilter: (req, file, cb) => {
+    if (ALLOWED_MIME.includes(file.mimetype)) cb(null, true);
+    else cb(new Error('仅支持图片（JPG/PNG/WebP）和 MP4 视频'));
+  }
+});
 
 // Middleware
 app.use(cors());
@@ -93,19 +101,20 @@ app.post('/api/users', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
-// ─── IMAGE UPLOAD ───
+// ─── MEDIA UPLOAD (image + video) ───
 app.post('/api/upload', upload.single('image'), async (req, res) => {
   try {
-    if (!req.file) return res.status(400).json({ error: 'No image' });
-    const ext = req.file.originalname.split('.').pop() || 'jpg';
-    const filename = `${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
-    const filePath = `uploads/${filename}`;
-    const { error } = await supabase.storage.from('submissions').upload(filePath, req.file.buffer, {
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+    const isVideo = req.file.mimetype.startsWith('video/');
+    const ext = req.file.originalname.split('.').pop().toLowerCase() || (isVideo ? 'mp4' : 'jpg');
+    const folder = isVideo ? 'videos' : 'uploads';
+    const filename = `${folder}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
+    const { error } = await supabase.storage.from('submissions').upload(filename, req.file.buffer, {
       contentType: req.file.mimetype, upsert: false
     });
     if (error) throw error;
-    const { data: urlData } = supabase.storage.from('submissions').getPublicUrl(filePath);
-    res.json({ url: urlData.publicUrl });
+    const { data: urlData } = supabase.storage.from('submissions').getPublicUrl(filename);
+    res.json({ url: urlData.publicUrl, type: isVideo ? 'video' : 'image' });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

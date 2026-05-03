@@ -11,12 +11,22 @@ async function api(path, opts = {}) {
   return res.json();
 }
 
-async function uploadImage(file) {
+// Upload any media file (image or video)
+async function uploadMedia(file) {
   const fd = new FormData();
-  fd.append('image', file);
+  fd.append('image', file); // field name kept as 'image' for multer compat
   const res = await fetch(API + '/upload', { method: 'POST', body: fd });
-  if (!res.ok) throw new Error('Upload failed');
-  return res.json();
+  if (!res.ok) { const e = await res.json().catch(() => ({})); throw new Error(e.error || 'Upload failed'); }
+  return res.json(); // { url, type: 'image'|'video' }
+}
+
+// Alias for backward compat
+async function uploadImage(file) { return uploadMedia(file); }
+
+// Helper: check if a URL is a video
+function isVideo(url) {
+  if (!url) return false;
+  return /\.(mp4|webm|mov|ogg)$/i.test(url.split('?')[0]);
 }
 
 function getSession() {

@@ -76,16 +76,29 @@
       const isOwn = w.user_id === user.id;
       const rated = myRatings[w.id];
       const isNew = isNewWork(w.upload_time);
+      const vid = isVideo(w.image_url);
+
+      // Media element: 5-second autoplay preview for videos
+      const mediaEl = vid
+        ? `<div style="position:relative;overflow:hidden;min-height:160px;background:#0f172a;border-radius:var(--radius) var(--radius) 0 0;">
+             <video src="${w.image_url}" muted playsinline loop preload="metadata"
+               style="width:100%;max-height:260px;object-fit:cover;display:block;"
+               oncanplay="startFiveSecPreview(this)"></video>
+             <div style="position:absolute;top:8px;left:8px;background:rgba(0,0,0,0.6);color:#fff;padding:2px 8px;border-radius:999px;font-size:0.75rem;font-weight:700;">🎬 视频</div>
+           </div>`
+        : `<div class="skeleton" style="min-height:200px;display:flex;align-items:center;justify-content:center;overflow:hidden;">
+             <img class="card-img" style="opacity:0;transition:opacity 0.5s;" onload="this.style.opacity=1;this.parentElement.classList.remove('skeleton')" src="${w.image_url}" alt="${w.title}" loading="lazy" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 1 1%22><rect fill=%22%23e2e8f0%22 width=%221%22 height=%221%22/></svg>'">
+           </div>`;
+
       return `<div class="card" onclick="location.href='student-detail.html?id=${w.id}'">
-        <div class="skeleton" style="min-height: 200px; display: flex; align-items: center; justify-content: center; overflow: hidden;">
-          <img class="card-img" style="opacity:0; transition: opacity 0.5s;" onload="this.style.opacity=1; this.parentElement.classList.remove('skeleton')" src="${w.image_url}" alt="${w.title}" loading="lazy" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 1 1%22><rect fill=%22%23e2e8f0%22 width=%221%22 height=%221%22/></svg>'">
-        </div>
+        ${mediaEl}
         <div class="card-body">
           <div style="display:flex;gap:6px;margin-bottom:8px;">
             <span class="card-badge">${w.anonymous_code}</span>
             ${isNew ? '<span class="card-badge new">NEW</span>' : ''}
             ${w.is_pinned ? '<span class="card-badge pinned">置顶</span>' : ''}
             ${w.is_teacher_selected ? '<span class="card-badge" style="background:#fef3c7;color:#b45309;">⭐ 精选</span>' : ''}
+            ${vid ? '<span class="card-badge" style="background:#e0e7ff;color:#4338ca;">🎥 MP4</span>' : ''}
           </div>
           <div class="card-title">${w.title}</div>
           <div class="card-meta">
@@ -98,6 +111,20 @@
         </div>
       </div>`;
     }
+
+    // Play video for exactly 5 seconds then loop back
+    function startFiveSecPreview(vid) {
+      if (vid._previewSetup) return;
+      vid._previewSetup = true;
+      vid.play().catch(() => {});
+      vid.addEventListener('timeupdate', () => {
+        if (vid.currentTime >= 5) {
+          vid.currentTime = 0;
+          vid.play().catch(() => {});
+        }
+      });
+    }
+
     loadWorks();
     setInterval(loadWorks, 15000);
   </script>
