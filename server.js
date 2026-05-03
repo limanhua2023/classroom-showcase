@@ -226,10 +226,21 @@ app.get('/api/ratings/my', async (req, res) => {
 app.post('/api/comments', async (req, res) => {
   try {
     const { activity_id, submission_id, user_id, content } = req.body;
-    const { data: act } = await supabase.from('activities').select('comments_open').eq('id', activity_id).single();
-    if (!act || !act.comments_open) return res.status(403).json({ error: 'Comments are closed' });
+    if (!activity_id || !submission_id || !user_id || !content?.trim()) {
+      return res.status(400).json({ error: '缺少必要字段' });
+    }
+    // Check if comments are open; if the column doesn't exist yet, allow it through
+    try {
+      const { data: act } = await supabase.from('activities').select('comments_open').eq('id', activity_id).single();
+      if (act && act.comments_open === false) {
+        return res.status(403).json({ error: '评论功能已关闭，请等待教师开启' });
+      }
+    } catch (checkErr) {
+      // Column may not exist yet (SQL not run) — allow through
+      console.warn('comments_open check failed, allowing comment:', checkErr.message);
+    }
     const { data, error } = await supabase.from('comments').insert([{
-      activity_id, submission_id, user_id, content
+      activity_id, submission_id, user_id, content: content.trim()
     }]).select().single();
     if (error) throw error;
     res.status(201).json(data);
@@ -239,13 +250,17 @@ app.post('/api/comments', async (req, res) => {
 app.get('/api/comments', async (req, res) => {
   try {
     const { submission_id } = req.query;
-    // return comments without real names (anonymous)
+    if (!submission_id) return res.json([]);
     const { data, error } = await supabase.from('comments')
       .select('id, content, created_at')
       .eq('submission_id', submission_id).order('created_at', { ascending: true });
-    if (error) throw error;
-    res.json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+    if (error) {
+      // Table may not exist yet — return empty gracefully
+      console.warn('Comments table error (may not exist yet):', error.message);
+      return res.json([]);
+    }
+    res.json(data || []);
+  } catch (e) { res.json([]); }
 });
 
 app.delete('/api/teacher/comments/:id', teacherAuth, async (req, res) => {

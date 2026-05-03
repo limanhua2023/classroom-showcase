@@ -78,7 +78,19 @@
         document.getElementById('avgScore').textContent = work.average_rating > 0 ? Number(work.average_rating).toFixed(1) : '-';
         document.getElementById('rateCount').textContent = work.rating_count;
         if (isNewWork(work.upload_time)) document.getElementById('newBadge').style.display = 'inline';
-        // Check if own work
+
+        // Record view (after 3 seconds)
+        setTimeout(() => { api('/views', { method: 'POST', body: JSON.stringify({ submission_id: sid, viewer_user_id: user.id }) }); }, 3000);
+
+        // Load comments section (independent of rating logic)
+        if (act.comments_open) {
+          document.getElementById('commentsWrapper').style.display = 'block';
+          // Author cannot comment on own work
+          if (work.user_id !== user.id) document.getElementById('commentFormWrapper').style.display = 'flex';
+          loadComments();
+        }
+
+        // ─── Rating Section ───
         if (work.user_id === user.id) {
           document.getElementById('ratingSection').innerHTML = '<p style="color:var(--text-muted);">这是你自己的作品，不能评分。</p>';
           return;
@@ -91,14 +103,6 @@
         const myRatings = await api('/ratings/my?activity_id=' + actId + '&user_id=' + user.id);
         const existing = myRatings.find(r => r.submission_id === sid);
         if (existing) { currentRating = existing.score; updateStars(); document.getElementById('ratingHint').textContent = '你已评 ' + existing.score + ' 分（点击可修改）'; }
-        // Record view (after 3 seconds)
-        setTimeout(() => { api('/views', { method: 'POST', body: JSON.stringify({ submission_id: sid, viewer_user_id: user.id }) }); }, 3000);
-        // Load comments
-        if (act.comments_open) {
-          document.getElementById('commentsWrapper').style.display = 'block';
-          if (work.user_id !== user.id) document.getElementById('commentFormWrapper').style.display = 'flex';
-          loadComments();
-        }
       } catch (e) { document.getElementById('loading').innerHTML = '加载失败'; }
     }
 
