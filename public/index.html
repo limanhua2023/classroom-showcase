@@ -54,10 +54,6 @@
   </div>
   <script src="js/api.js"></script>
   <script>
-    // Handle ?code= query param (from QR code)
-    const urlCode = new URLSearchParams(location.search).get('code');
-    if (urlCode) { document.getElementById('inviteCode').value = urlCode; document.getElementById('guestCode').value = urlCode; }
-
     document.getElementById('inviteCode').addEventListener('keydown', e => { if (e.key === 'Enter') joinActivity(); });
     document.getElementById('guestCode').addEventListener('keydown', e => { if (e.key === 'Enter') joinAsGuest(); });
 
