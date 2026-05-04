@@ -16,6 +16,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
+const APP_TIME_ZONE = 'Asia/Bangkok';
 
 // APP_SECRET must be stable in production; otherwise all signed student/teacher tokens
 // become invalid after each deploy/restart.
@@ -45,9 +46,9 @@ function sanitizeText(input, maxLen = 200) {
   return escapeHtml(String(input ?? '').trim()).slice(0, maxLen);
 }
 
-function formatTitleTimestampCN(date = new Date()) {
+function formatAppTimestampCN(date = new Date()) {
   const parts = new Intl.DateTimeFormat('zh-CN', {
-    timeZone: 'Asia/Shanghai',
+    timeZone: APP_TIME_ZONE,
     year: 'numeric',
     month: '2-digit',
     day: '2-digit',
@@ -65,7 +66,7 @@ function withUploadTimestampTitle(rawTitle, date = new Date(), maxLen = 140) {
   const base = String(rawTitle ?? '')
     .trim()
     .replace(/\s*[（(]\d{4}年\d{2}月\d{2}日\d{2}时(?:\d{2}分)?(?:\d{2}秒)?[）)]\s*$/u, '');
-  const suffix = `（${formatTitleTimestampCN(date)}）`;
+  const suffix = `（${formatAppTimestampCN(date)}）`;
   const maxBaseLen = Math.max(1, Number(maxLen) - suffix.length);
   return `${base.slice(0, maxBaseLen)}${suffix}`;
 }
@@ -1321,7 +1322,7 @@ app.get('/api/teacher/export', teacherAuth, async (req, res) => {
     let csv = BOM + '排名,匿名编号,学生姓名,学号,班级,小组,作品标题,上传时间,浏览量,评分人数,平均分,综合分,教师评分,最终成绩\n';
     (data || []).forEach((s, i) => {
       const u = s.users || {};
-      csv += `${i+1},${s.anonymous_code},${u.name||''},${u.student_id||''},${u.class_name||''},${u.group_name||''},${s.title},${s.upload_time},${s.view_count},${s.rating_count},${s.average_rating},${s.composite_score},${s.teacher_score||''},${s.final_score||''}\n`;
+      csv += `${i+1},${s.anonymous_code},${u.name||''},${u.student_id||''},${u.class_name||''},${u.group_name||''},${s.title},${formatAppTimestampCN(new Date(s.upload_time))},${s.view_count},${s.rating_count},${s.average_rating},${s.composite_score},${s.teacher_score||''},${s.final_score||''}\n`;
     });
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', 'attachment; filename=classshow_export.csv');
