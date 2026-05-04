@@ -372,6 +372,7 @@
     let top3Timer = null;
     let top3Index = 0;
     let top3Works = [];
+    const TOP3_ROTATION_MS = 8000;
 
     function buildTop3Hero(works) {
       if (!works || works.length === 0) return;
@@ -427,12 +428,12 @@
 
       document.getElementById('top3Section').style.display = 'block';
 
-      // Start / restart 3-second rotation
+      // Start / restart 8-second rotation
       if (top3Timer) clearInterval(top3Timer);
       top3Timer = setInterval(() => {
         top3Index = (top3Index + 1) % top3Works.length;
         showTop3Slide(top3Index);
-      }, 3000);
+      }, TOP3_ROTATION_MS);
     }
 
     function showTop3Slide(idx) {
