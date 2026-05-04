@@ -54,6 +54,10 @@ where r.id = x.id and x.rn > 1;
 create unique index if not exists student_roster_activity_student_uidx
   on student_roster(activity_id, student_id);
 
+-- Ensure Data API roles can access this new table (important for projects with strict default grants).
+grant usage on schema public to anon, authenticated, service_role;
+grant select, insert, update, delete on table public.student_roster to anon, authenticated, service_role;
+
 -- Track the storage object behind each work so replaced/deleted files can be cleaned up.
 alter table submissions add column if not exists storage_path text;
 alter table submissions add column if not exists media_type text default 'image';
