@@ -1219,6 +1219,66 @@ app.get('/api/comments', async (req, res) => {
   } catch (e) { res.json([]); }
 });
 
+app.get('/api/activity-feedback', async (req, res) => {
+  try {
+    const { activity_id } = req.query;
+    if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
+    const { data, error } = await supabase.from('comments')
+      .select('id, content, created_at')
+      .eq('activity_id', activity_id)
+      .is('submission_id', null)
+      .order('created_at', { ascending: false })
+      .limit(50);
+    if (error) {
+      console.warn('Activity feedback query failed:', error.message);
+      return res.json([]);
+    }
+    res.json((data || []).map(row => ({ ...row, label: '同学建议' })));
+  } catch (e) {
+    res.json([]);
+  }
+});
+
+app.post('/api/activity-feedback', studentAuth, async (req, res) => {
+  try {
+    const activity_id = String(req.body.activity_id ?? '').trim();
+    const user_id = String(req.body.user_id ?? '').trim();
+    const safeContent = sanitizeText(req.body.content, 300);
+    if (!activity_id || !user_id || !safeContent) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const { data: recent, error: recentError } = await supabase.from('comments')
+      .select('id, created_at')
+      .eq('activity_id', activity_id)
+      .eq('user_id', user_id)
+      .is('submission_id', null)
+      .order('created_at', { ascending: false })
+      .limit(1);
+    if (recentError && !/comments/i.test(recentError.message || '')) throw recentError;
+    const lastCreatedAt = recent?.[0]?.created_at ? new Date(recent[0].created_at).getTime() : 0;
+    if (lastCreatedAt && Date.now() - lastCreatedAt < 15 * 1000) {
+      return res.status(429).json({ error: 'Please wait 15 seconds before posting another suggestion' });
+    }
+
+    const { data, error } = await supabase.from('comments').insert([{
+      activity_id,
+      submission_id: null,
+      user_id,
+      content: safeContent
+    }]).select('id, content, created_at').single();
+    if (error) {
+      if (/comments|does not exist|schema cache/i.test(error.message || '')) {
+        return res.status(500).json({ error: 'Feedback area is not ready yet. Please enable comments schema first.' });
+      }
+      throw error;
+    }
+    res.status(201).json({ ...data, label: '同学建议' });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
 app.delete('/api/teacher/comments/:id', teacherAuth, async (req, res) => {
   try {
     const { data: comment, error: commentErr } = await supabase.from('comments')
