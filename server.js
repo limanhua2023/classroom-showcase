@@ -227,6 +227,8 @@ function findRosterHeaderIndexes(row) {
   );
   row.forEach((cell, index) => {
     const header = normalizeRosterHeader(cell);
+    if (header === '\u59d3\u540d') indexes.name = index;
+    if (header === '\u5b66\u53f7' || header === '\u5b78\u865f') indexes.student_id = index;
     for (const [field, aliases] of Object.entries(normalizedAliases)) {
       if (aliases.includes(header)) indexes[field] = index;
     }
@@ -640,7 +642,13 @@ async function readRosterStudentsFromFile(file, defaultClassName) {
     const text = file.buffer.toString('utf8').replace(/^\uFEFF/, '');
     rows = text.split(/\r?\n/).map(parseCsvLine);
   } else if (filename.endsWith('.xlsx')) {
-    rows = await readXlsxFile(file.buffer);
+    const parsed = await readXlsxFile(file.buffer);
+    if (Array.isArray(parsed) && parsed[0] && Array.isArray(parsed[0].data)) {
+      const sheet = parsed.find(item => Array.isArray(item.data) && item.data.some(row => row.some(cell => cell !== null && cell !== undefined && String(cell).trim() !== ''))) || parsed[0];
+      rows = sheet.data;
+    } else {
+      rows = parsed;
+    }
   } else {
     const err = new Error('Only .xlsx and .csv roster files are supported');
     err.status = 400;
