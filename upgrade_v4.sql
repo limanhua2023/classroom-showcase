@@ -185,5 +185,25 @@ grant select, insert, update, delete on table public.activity_feedback_likes to 
 alter table public.activity_feedback_likes no force row level security;
 alter table public.activity_feedback_likes disable row level security;
 
+do $$
+begin
+  if exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'activity_feedback_likes'
+      and policyname = 'activity_feedback_likes_server_access'
+  ) then
+    drop policy activity_feedback_likes_server_access on public.activity_feedback_likes;
+  end if;
+end $$;
+
+create policy activity_feedback_likes_server_access
+  on public.activity_feedback_likes
+  for all
+  to anon, authenticated
+  using (true)
+  with check (true);
+
 alter table public.student_roster no force row level security;
 alter table public.student_roster disable row level security;

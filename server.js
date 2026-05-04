@@ -1223,6 +1223,25 @@ function normalizeFeedbackSort(input) {
   return String(input ?? '').trim().toLowerCase() === 'hot' ? 'hot' : 'latest';
 }
 
+function isFeedbackLikesSchemaError(message) {
+  return /activity_feedback_likes|does not exist|schema cache/i.test(message || '');
+}
+
+function isFeedbackLikesRlsError(message) {
+  return /row-level security|violates row-level security policy|42501/i.test(message || '');
+}
+
+function feedbackLikesWriteErrorMessage(error) {
+  const message = error?.message || '';
+  if (isFeedbackLikesRlsError(message)) {
+    return 'Feedback likes writes are blocked by Supabase RLS. Re-run the latest upgrade_v4.sql.';
+  }
+  if (isFeedbackLikesSchemaError(message)) {
+    return 'Feedback likes schema is not ready. Run upgrade_v4.sql first.';
+  }
+  return message || 'Feedback like failed';
+}
+
 async function fetchFeedbackLikeState(activityId, viewerUserId = null) {
   try {
     const { data, error } = await supabase.from('activity_feedback_likes')
@@ -1375,14 +1394,17 @@ app.post('/api/activity-feedback/:id/like', studentAuth, async (req, res) => {
       .eq('feedback_id', feedbackId)
       .eq('user_id', user_id)
       .maybeSingle();
-    if (existingResult.error && /activity_feedback_likes|does not exist|schema cache/i.test(existingResult.error.message || '')) {
-      return res.status(500).json({ error: 'Feedback likes schema is not ready. Run upgrade_v4.sql first.' });
+    if (existingResult.error && (isFeedbackLikesSchemaError(existingResult.error.message || '') || isFeedbackLikesRlsError(existingResult.error.message || ''))) {
+      return res.status(500).json({ error: feedbackLikesWriteErrorMessage(existingResult.error) });
     }
     if (existingResult.error) throw existingResult.error;
 
     let liked = false;
     if (existingResult.data?.id) {
       const { error } = await supabase.from('activity_feedback_likes').delete().eq('id', existingResult.data.id);
+      if (error && (isFeedbackLikesSchemaError(error.message || '') || isFeedbackLikesRlsError(error.message || ''))) {
+        return res.status(500).json({ error: feedbackLikesWriteErrorMessage(error) });
+      }
       if (error) throw error;
     } else {
       const { error } = await supabase.from('activity_feedback_likes').insert([{
@@ -1390,8 +1412,8 @@ app.post('/api/activity-feedback/:id/like', studentAuth, async (req, res) => {
         feedback_id: feedbackId,
         user_id
       }]);
-      if (error && /activity_feedback_likes|does not exist|schema cache/i.test(error.message || '')) {
-        return res.status(500).json({ error: 'Feedback likes schema is not ready. Run upgrade_v4.sql first.' });
+      if (error && (isFeedbackLikesSchemaError(error.message || '') || isFeedbackLikesRlsError(error.message || ''))) {
+        return res.status(500).json({ error: feedbackLikesWriteErrorMessage(error) });
       }
       if (error && !/duplicate|unique/i.test(error.message || '')) throw error;
       liked = true;
@@ -1400,8 +1422,8 @@ app.post('/api/activity-feedback/:id/like', studentAuth, async (req, res) => {
     const { count, error: countError } = await supabase.from('activity_feedback_likes')
       .select('id', { count: 'exact', head: true })
       .eq('feedback_id', feedbackId);
-    if (countError && /activity_feedback_likes|does not exist|schema cache/i.test(countError.message || '')) {
-      return res.status(500).json({ error: 'Feedback likes schema is not ready. Run upgrade_v4.sql first.' });
+    if (countError && (isFeedbackLikesSchemaError(countError.message || '') || isFeedbackLikesRlsError(countError.message || ''))) {
+      return res.status(500).json({ error: feedbackLikesWriteErrorMessage(countError) });
     }
     if (countError) throw countError;
     res.json({ ok: true, liked, like_count: count || 0 });
