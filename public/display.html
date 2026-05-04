@@ -193,9 +193,9 @@
     let activeSpotlightWork = null;
     let activeSpotlightMyRating = 0;
     let spotlightViewTimer = null;
-    const DISPLAY_NEW_WORK_WINDOW_MS = 8 * 60 * 1000;
-    const DISPLAY_NEW_WORK_LABEL_MINUTES = 8;
-    const DISPLAY_CAROUSEL_SCROLL_MS = 8000;
+    const DISPLAY_NEW_WORK_WINDOW_MS = 10 * 60 * 1000;
+    const DISPLAY_NEW_WORK_LABEL_MINUTES = 10;
+    const DISPLAY_CAROUSEL_SCROLL_MS = 60 * 1000;
     const DISPLAY_CAROUSEL_SCROLL_STEP = 260;
 
     function updateDisplayHeader() {
@@ -382,7 +382,7 @@
     let top3Timer = null;
     let top3Index = 0;
     let top3Works = [];
-    const TOP3_ROTATION_MS = 8000;
+    const TOP3_ROTATION_MS = 10 * 1000;
 
     function buildTop3Hero(works) {
       if (!works || works.length === 0) return;
@@ -438,7 +438,7 @@
 
       document.getElementById('top3Section').style.display = 'block';
 
-      // Start / restart 8-second rotation
+      // Start / restart 10-second rotation
       if (top3Timer) clearInterval(top3Timer);
       top3Timer = setInterval(() => {
         top3Index = (top3Index + 1) % top3Works.length;
