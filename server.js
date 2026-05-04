@@ -657,6 +657,17 @@ async function readRosterStudentsFromFile(file, defaultClassName) {
   return normalizeRosterRows(rows, defaultClassName);
 }
 
+function rosterImportErrorMessage(error) {
+  const message = error?.message || '';
+  if (/row-level security|RLS/i.test(message)) {
+    return 'Student roster writes are blocked by Supabase RLS. Re-run the latest upgrade_v4.sql or add SUPABASE_SERVICE_ROLE_KEY on Render.';
+  }
+  if (/student_roster|pin_hash|pin_salt|constraint|conflict|roster_enabled|pin_required/i.test(message)) {
+    return 'Student roster schema is not ready. Run upgrade_v4.sql first.';
+  }
+  return message || 'Roster import failed';
+}
+
 app.get('/api/teacher/roster', teacherAuth, async (req, res) => {
   try {
     const { activity_id } = req.query;
@@ -693,11 +704,7 @@ app.post('/api/teacher/roster/import', teacherAuth, async (req, res) => {
     });
     res.json(result);
   } catch (e) {
-    const status = e.status || (/student_roster|pin_hash|pin_salt|constraint|conflict|roster_enabled|pin_required/i.test(e.message || '') ? 500 : 500);
-    const message = status === 500 && /student_roster|pin_hash|pin_salt|constraint|conflict|roster_enabled|pin_required/i.test(e.message || '')
-      ? 'Student roster schema is not ready. Run upgrade_v4.sql first.'
-      : e.message;
-    res.status(status).json({ error: message });
+    res.status(e.status || 500).json({ error: rosterImportErrorMessage(e) });
   }
 });
 
@@ -713,11 +720,7 @@ app.post('/api/teacher/roster/import-file', teacherAuth, rosterUpload.single('ro
     });
     res.json(result);
   } catch (e) {
-    const status = e.status || (/student_roster|pin_hash|pin_salt|constraint|conflict|roster_enabled|pin_required/i.test(e.message || '') ? 500 : 500);
-    const message = status === 500 && /student_roster|pin_hash|pin_salt|constraint|conflict|roster_enabled|pin_required/i.test(e.message || '')
-      ? 'Student roster schema is not ready. Run upgrade_v4.sql first.'
-      : e.message;
-    res.status(status).json({ error: message });
+    res.status(e.status || 500).json({ error: rosterImportErrorMessage(e) });
   }
 });
 

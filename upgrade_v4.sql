@@ -58,6 +58,31 @@ create unique index if not exists student_roster_activity_student_uidx
 grant usage on schema public to anon, authenticated, service_role;
 grant select, insert, update, delete on table public.student_roster to anon, authenticated, service_role;
 
+-- The app currently writes roster rows from the Node server through Supabase REST.
+-- If Render has no SUPABASE_SERVICE_ROLE_KEY, this uses the anon role, so RLS must not block it.
+alter table public.student_roster no force row level security;
+alter table public.student_roster disable row level security;
+
+do $$
+begin
+  if exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'student_roster'
+      and policyname = 'student_roster_server_access'
+  ) then
+    drop policy student_roster_server_access on public.student_roster;
+  end if;
+end $$;
+
+create policy student_roster_server_access
+  on public.student_roster
+  for all
+  to anon, authenticated
+  using (true)
+  with check (true);
+
 -- Track the storage object behind each work so replaced/deleted files can be cleaned up.
 alter table submissions add column if not exists storage_path text;
 alter table submissions add column if not exists media_type text default 'image';
@@ -139,4 +164,5 @@ where not exists (
   select 1 from views v where v.submission_id = s.id and v.is_valid = true
 );
 
-alter table student_roster disable row level security;
+alter table public.student_roster no force row level security;
+alter table public.student_roster disable row level security;
