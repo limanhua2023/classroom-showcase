@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>作品画廊 - ClassShow</title>
   <link rel="stylesheet" href="css/main.css">
 </head>
@@ -9,51 +10,76 @@
   <div class="topbar">
     <div class="topbar-logo">Class<span>Show</span></div>
     <div class="topbar-right">
-      <button class="btn btn-sm btn-secondary" onclick="openDisplay()">🖥️ 大屏</button>
-      <button class="btn btn-sm btn-secondary" onclick="loadWorks()">🔄 刷新</button>
-      <button class="btn btn-sm btn-primary" id="uploadBtn" onclick="location.href='student-upload.html?new=1'">📤 上传作品</button>
+      <button class="btn btn-sm btn-secondary" onclick="openDisplay()">大屏</button>
+      <button class="btn btn-sm btn-secondary" onclick="loadWorks()">刷新</button>
+      <button class="btn btn-sm btn-primary" id="uploadBtn" onclick="location.href='student-upload.html?new=1'">上传作品</button>
     </div>
   </div>
+
   <div class="container">
+    <section class="gallery-hero">
+      <div class="gallery-kicker">LIVE WORK GALLERY</div>
+      <h1 id="galleryTitle">作品画廊</h1>
+      <p id="gallerySubtitle">上传作品、浏览同学创作，并为非本人作品进行评分和评论。</p>
+      <div class="gallery-actions">
+        <button class="btn btn-primary" id="heroUploadBtn" onclick="location.href='student-upload.html?new=1'">上传新作品</button>
+        <button class="btn btn-secondary" onclick="openDisplay()">打开大屏展示</button>
+      </div>
+    </section>
+
     <div class="stats-row" id="statsRow">
       <div class="stat-card"><div class="stat-value" id="totalWorks">0</div><div class="stat-label">作品总数</div></div>
       <div class="stat-card"><div class="stat-value" id="myRated">0</div><div class="stat-label">已评分数</div></div>
     </div>
-    <!-- New Works Section -->
+
     <div id="newSection" style="display:none;">
-      <div class="section-header"><h3 class="section-title">🔥 新作品展示区</h3><span class="card-badge new">5分钟内</span></div>
+      <div class="section-header">
+        <h3 class="section-title">新作品展示区</h3>
+        <span class="card-badge new">10分钟内</span>
+      </div>
       <div class="masonry" id="newGrid"></div>
     </div>
-    <!-- Rubric -->
+
     <div class="rubric" id="rubricBox" style="display:none;">
-      <h3>📋 评分标准（1-5分）</h3>
+      <h3>评分标准（1-5分）</h3>
       <ol>
-        <li><strong>内容完整性</strong>：作品是否完整、清楚、有主题</li>
-        <li><strong>视觉表达</strong>：图片、海报、图表是否清晰美观</li>
-        <li><strong>数据使用</strong>：是否使用了真实或合理的数据</li>
-        <li><strong>AI辅助质量</strong>：AI使用是否有效</li>
-        <li><strong>创意与实用性</strong>：作品是否有新意</li>
+        <li><strong>内容完整性：</strong>作品是否完整、清楚、有主题</li>
+        <li><strong>视觉表达：</strong>图片、海报、图表是否清晰美观</li>
+        <li><strong>数据使用：</strong>是否使用了真实或合理的数据</li>
+        <li><strong>AI辅助质量：</strong>AI使用是否有效</li>
+        <li><strong>创意与实用性：</strong>作品是否有新意</li>
       </ol>
     </div>
-    <!-- All Works -->
-    <div class="section-header" style="margin-top:16px;"><h3 class="section-title">🎨 全部作品</h3></div>
-    <div class="masonry" id="allGrid"><div class="empty"><div class="empty-icon">📭</div>还没有作品，快来上传第一个吧！</div></div>
+
+    <div class="section-header" style="margin-top:16px;">
+      <h3 class="section-title">全部作品</h3>
+    </div>
+    <div class="masonry" id="allGrid">
+      <div class="empty">还没有作品，快来上传第一个吧！</div>
+    </div>
   </div>
+
   <script src="js/api.js"></script>
   <script>
-    const user = getSessionOrGuest(); const actId = getActivityId();
+    const user = getSessionOrGuest();
+    const actId = getActivityId();
     if (!user || !actId) location.href = 'index.html';
+
     const act = JSON.parse(sessionStorage.getItem('classshow_activity') || '{}');
     const guest = isGuest();
     let myRatings = {};
 
-    // Guest: hide upload, show banner
+    document.getElementById('galleryTitle').textContent = act.activity_name || '作品画廊';
+    document.getElementById('gallerySubtitle').textContent =
+      [act.course_name, act.class_name].filter(Boolean).join(' · ') || '上传作品、浏览同学创作，并为非本人作品进行评分和评论。';
+
     if (guest) {
       document.getElementById('uploadBtn').style.display = 'none';
+      document.getElementById('heroUploadBtn').style.display = 'none';
       const banner = document.createElement('div');
-      banner.style.cssText = 'background:#f0f9ff;border:1px solid #bae6fd;color:#0369a1;padding:10px 16px;border-radius:8px;font-size:0.88rem;margin-bottom:16px;text-align:center;';
-      banner.innerHTML = '👁 Guest mode: browse only, no rating/comment. <a href="index.html" style="color:#0369a1;font-weight:700;">Login</a> to join interactions.';
-      document.querySelector('.container').prepend(banner);
+      banner.style.cssText = 'background:rgba(6,182,212,0.1);border:1px solid rgba(6,182,212,0.22);color:#0369a1;padding:11px 16px;border-radius:10px;font-size:0.9rem;margin:16px 0;text-align:center;font-weight:700;';
+      banner.innerHTML = '访客模式：可以浏览作品，不能评分或评论。<a href="index.html" style="color:#0369a1;font-weight:900;">登录后参与互动</a>';
+      document.querySelector('.container').insertBefore(banner, document.getElementById('statsRow'));
     }
 
     function openDisplay() {
@@ -73,25 +99,38 @@
             api('/ratings/my?activity_id=' + actId + '&user_id=' + user.id)
           ]);
         }
+
         myRatings = {};
         ratings.forEach(r => myRatings[r.submission_id] = r.score);
         document.getElementById('totalWorks').textContent = works.length;
         document.getElementById('myRated').textContent = guest ? '-' : ratings.length;
-        if (act.voting_open && !guest) { document.getElementById('rubricBox').style.display = 'block'; }
-        // Separate new works (< 5 min)
+        if (act.voting_open && !guest) document.getElementById('rubricBox').style.display = 'block';
+
         const newWorks = works.filter(w => isNewWork(w.upload_time));
         const allWorks = works.filter(w => !isNewWork(w.upload_time));
-        // Shuffle for fairness
-        for (let i = allWorks.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [allWorks[i], allWorks[j]] = [allWorks[j], allWorks[i]]; }
-        // Pinned first
+        for (let i = allWorks.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          [allWorks[i], allWorks[j]] = [allWorks[j], allWorks[i]];
+        }
         allWorks.sort((a, b) => (b.is_pinned ? 1 : 0) - (a.is_pinned ? 1 : 0));
+
         if (newWorks.length > 0) {
           document.getElementById('newSection').style.display = 'block';
           document.getElementById('newGrid').innerHTML = newWorks.map(w => workCard(w)).join('');
-        } else { document.getElementById('newSection').style.display = 'none'; }
-        document.getElementById('allGrid').innerHTML = allWorks.length ? allWorks.map(w => workCard(w)).join('') : '<div class="empty"><div class="empty-icon">📭</div>还没有作品</div>';
-        if (!act.upload_open) document.getElementById('uploadBtn').style.display = 'none';
-      } catch (e) { toast('加载失败: ' + e.message, 'error'); }
+        } else {
+          document.getElementById('newSection').style.display = 'none';
+        }
+        document.getElementById('allGrid').innerHTML = allWorks.length
+          ? allWorks.map(w => workCard(w)).join('')
+          : '<div class="empty">等待更多作品加入展示墙</div>';
+
+        if (!act.upload_open) {
+          document.getElementById('uploadBtn').style.display = 'none';
+          document.getElementById('heroUploadBtn').style.display = 'none';
+        }
+      } catch (e) {
+        toast('加载失败: ' + e.message, 'error');
+      }
     }
 
     function workCard(w) {
@@ -99,14 +138,12 @@
       const rated = myRatings[w.id];
       const isNew = isNewWork(w.upload_time);
       const vid = isVideo(w.image_url);
-
-      // Media element: 5-second autoplay preview for videos
       const mediaEl = vid
         ? `<div style="position:relative;overflow:hidden;min-height:160px;background:#0f172a;border-radius:var(--radius) var(--radius) 0 0;">
              <video src="${w.image_url}" muted playsinline loop preload="metadata"
                style="width:100%;max-height:260px;object-fit:cover;display:block;"
                oncanplay="startFiveSecPreview(this)"></video>
-             <div style="position:absolute;top:8px;left:8px;background:rgba(0,0,0,0.6);color:#fff;padding:2px 8px;border-radius:999px;font-size:0.75rem;font-weight:700;">🎬 视频</div>
+             <div style="position:absolute;top:8px;left:8px;background:rgba(0,0,0,0.62);color:#fff;padding:3px 9px;border-radius:999px;font-size:0.75rem;font-weight:900;">视频</div>
            </div>`
         : `<div class="skeleton" style="min-height:200px;display:flex;align-items:center;justify-content:center;overflow:hidden;">
              <img class="card-img" style="opacity:0;transition:opacity 0.5s;" onload="this.style.opacity=1;this.parentElement.classList.remove('skeleton')" src="${w.image_url}" alt="${escapeHtml(w.title)}" loading="lazy" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 1 1%22><rect fill=%22%23e2e8f0%22 width=%221%22 height=%221%22/></svg>'">
@@ -115,27 +152,26 @@
       return `<div class="card" onclick="location.href='student-detail.html?id=${w.id}'">
         ${mediaEl}
         <div class="card-body">
-          <div style="display:flex;gap:6px;margin-bottom:8px;">
+          <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;">
             <span class="card-badge">${escapeHtml(w.anonymous_code)}</span>
-            ${isOwn ? '<span class="card-badge" style="background:#10b981;color:#fff;">ME 我的</span>' : ''}
+            ${isOwn ? '<span class="card-badge" style="background:#10b981;color:#fff;">我的</span>' : ''}
             ${isNew ? '<span class="card-badge new">NEW</span>' : ''}
             ${w.is_pinned ? '<span class="card-badge pinned">置顶</span>' : ''}
-            ${w.is_teacher_selected ? '<span class="card-badge" style="background:#fef3c7;color:#b45309;">⭐ 精选</span>' : ''}
-            ${vid ? '<span class="card-badge" style="background:#e0e7ff;color:#4338ca;">🎥 MP4</span>' : ''}
+            ${w.is_teacher_selected ? '<span class="card-badge" style="background:#fef3c7;color:#b45309;">精选</span>' : ''}
+            ${vid ? '<span class="card-badge" style="background:#e0f2fe;color:#0369a1;">MP4</span>' : ''}
           </div>
           <div class="card-title">${escapeHtml(w.title)}</div>
           <div class="card-meta">
-            <span>👁 ${w.view_count}</span>
-            <span>💬 ${w.comment_count || 0}</span>
-            <span>⭐ ${w.average_rating > 0 ? Number(w.average_rating).toFixed(1) : '-'}</span>
-            <span>👥 ${w.rating_count}人评</span>
-            ${rated ? '<span style="color:var(--success);">✓ 已评'+rated+'分</span>' : (isOwn ? '<span style="color:var(--text-light);">我的作品</span>' : '')}
+            <span>浏览 ${w.view_count}</span>
+            <span>评论 ${w.comment_count || 0}</span>
+            <span>评分 ${w.average_rating > 0 ? Number(w.average_rating).toFixed(1) : '-'}</span>
+            <span>${w.rating_count}人评</span>
+            ${rated ? '<span style="color:var(--success);">已评'+rated+'分</span>' : (isOwn ? '<span style="color:var(--text-light);">本人作品</span>' : '')}
           </div>
         </div>
       </div>`;
     }
 
-    // Play video for exactly 5 seconds then loop back
     function startFiveSecPreview(vid) {
       if (vid._previewSetup) return;
       vid._previewSetup = true;
@@ -153,5 +189,3 @@
   </script>
 </body>
 </html>
-
-
