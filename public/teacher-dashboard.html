@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>教师后台 - ClassShow</title>
   <link rel="stylesheet" href="css/main.css">
 </head>
@@ -9,59 +10,57 @@
   <div class="topbar">
     <div class="topbar-logo">Class<span>Show</span> · 教师后台</div>
     <div class="topbar-right">
-      <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-works.html'">📋 作品管理</button>
-      <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-scores.html'">📊 评分成绩</button>
-      <button class="btn btn-sm btn-secondary" onclick="openDisplay()">🖥️ 大屏展示</button>
+      <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-works.html'">作品管理</button>
+      <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-scores.html'">评分成绩</button>
+      <button class="btn btn-sm btn-secondary" onclick="openDisplay()">大屏展示</button>
       <button class="btn btn-sm btn-danger" onclick="sessionStorage.clear();location.href='index.html'">退出</button>
     </div>
   </div>
+
   <div class="container" style="padding-top:24px;">
     <h2 id="actTitle" style="margin-bottom:4px;"></h2>
     <p id="actSubtitle" style="color:var(--text-muted);margin-bottom:20px;"></p>
 
-    <!-- Stats -->
     <div class="stats-row">
       <div class="stat-card"><div class="stat-value" id="sUsers">0</div><div class="stat-label">参与学生</div></div>
       <div class="stat-card"><div class="stat-value" id="sSubs">0</div><div class="stat-label">作品数量</div></div>
       <div class="stat-card"><div class="stat-value" id="sRatings">0</div><div class="stat-label">评分次数</div></div>
     </div>
 
-    <!-- Controls -->
     <div class="card" style="margin:20px 0;">
       <div class="card-body" style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;">
         <h3 style="margin-right:auto;">活动控制</h3>
-        <div>
-          上传：<button class="btn btn-sm" id="toggleUpload" onclick="toggleSetting('upload_open')"></button>
-        </div>
-        <div>
-          评分：<button class="btn btn-sm" id="toggleVoting" onclick="toggleSetting('voting_open')"></button>
-        </div>
-        <div>
-          实时排行：<button class="btn btn-sm" id="toggleRanking" onclick="toggleSetting('show_live_ranking')"></button>
-        </div>
-        <div>
-          匿名评论：<button class="btn btn-sm" id="toggleComments" onclick="toggleSetting('comments_open')"></button>
-        </div>
-        <div>
-          名单限制：<button class="btn btn-sm" id="toggleRoster" onclick="toggleSetting('roster_enabled')"></button>
-        </div>
-        <div>
-          PIN登录：<button class="btn btn-sm" id="togglePin" onclick="toggleSetting('pin_required')"></button>
-        </div>
+        <div>上传：<button class="btn btn-sm" id="toggleUpload" onclick="toggleSetting('upload_open')"></button></div>
+        <div>评分：<button class="btn btn-sm" id="toggleVoting" onclick="toggleSetting('voting_open')"></button></div>
+        <div>实时排名：<button class="btn btn-sm" id="toggleRanking" onclick="toggleSetting('show_live_ranking')"></button></div>
+        <div>匿名评论：<button class="btn btn-sm" id="toggleComments" onclick="toggleSetting('comments_open')"></button></div>
+        <div>名单限制：<button class="btn btn-sm" id="toggleRoster" onclick="toggleSetting('roster_enabled')"></button></div>
+        <div>PIN登录：<button class="btn btn-sm" id="togglePin" onclick="toggleSetting('pin_required')"></button></div>
       </div>
     </div>
 
-    <!-- Student roster -->
     <div class="card" style="margin:20px 0;">
       <div class="card-body">
-        <h3 style="margin-bottom:12px;">🔐 学生名单 / PIN</h3>
-        <p class="form-hint" style="margin-bottom:10px;">每行一名学生：学号,姓名,班级,小组,PIN。小组和 PIN 可留空；开启 PIN 登录前建议全部填写 PIN。</p>
+        <h3 style="margin-bottom:12px;">学生名单 / PIN</h3>
+        <p class="form-hint" style="margin-bottom:10px;">
+          支持两种导入方式：1) 手工粘贴，每行格式：学号,姓名,班级,小组,PIN；2) 上传 Excel/CSV。班级、小组、PIN 可留空。
+        </p>
         <textarea id="rosterText" rows="6" style="width:100%;font-family:monospace;" placeholder="2026001,张三,AIOT 59-1,A组,1234&#10;2026002,李四,AIOT 59-1,A组,5678"></textarea>
-        <div style="display:flex;gap:10px;align-items:center;margin-top:10px;">
-          <button class="btn btn-primary" onclick="importRoster()">导入/更新名单</button>
-          <button class="btn btn-secondary" onclick="loadRoster()">刷新名单</button>
+        <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap;">
+          <button class="btn btn-primary" type="button" onclick="importRoster()">导入/更新名单</button>
+          <button class="btn btn-secondary" type="button" onclick="loadRoster()">刷新名单</button>
           <span id="rosterStatus" style="color:var(--text-muted);font-size:0.9rem;"></span>
         </div>
+
+        <div style="margin-top:10px;padding:10px;border:1px dashed var(--border);border-radius:10px;">
+          <div style="font-weight:600;margin-bottom:6px;">Excel/CSV 导入</div>
+          <input id="rosterFile" type="file" accept=".xlsx,.xls,.csv" />
+          <p class="form-hint" style="margin-top:8px;">
+            建议至少包含列名：学号、姓名。可选列：班级、小组、PIN。若未提供班级，将自动使用当前活动班级。
+          </p>
+          <button class="btn btn-secondary" type="button" style="margin-top:8px;" onclick="importRosterFile()">从文件导入</button>
+        </div>
+
         <div class="table-wrap" style="margin-top:12px;max-height:260px;overflow:auto;">
           <table>
             <thead><tr><th>学号</th><th>姓名</th><th>班级</th><th>小组</th><th>状态</th></tr></thead>
@@ -71,10 +70,9 @@
       </div>
     </div>
 
-    <!-- Activity Info -->
     <div class="card">
       <div class="card-body">
-        <h3 style="margin-bottom:12px;">📌 活动信息</h3>
+        <h3 style="margin-bottom:12px;">活动信息</h3>
         <table style="width:100%;">
           <tr><td style="font-weight:600;width:100px;">邀请码</td><td><span id="invCode" style="font-size:1.3rem;font-weight:800;color:var(--primary);letter-spacing:2px;"></span></td></tr>
           <tr><td style="font-weight:600;">课程</td><td id="infoCourse"></td></tr>
@@ -84,17 +82,22 @@
         </table>
         <div style="margin-top:20px;text-align:center;">
           <img id="qrCode" style="width:150px;height:150px;border-radius:8px;border:1px solid var(--border);display:none;margin:0 auto 8px auto;">
-          <p style="font-size:0.85rem;color:var(--text-muted);"><a href="#" id="downloadQr" style="display:none;" download="课堂二维码.png">下载二维码图片</a></p>
+          <p style="font-size:0.85rem;color:var(--text-muted);">
+            <a href="#" id="downloadQr" style="display:none;" download="课堂二维码.png">下载二维码图片</a>
+          </p>
         </div>
       </div>
     </div>
   </div>
+
   <script src="js/api.js"></script>
+  <script type="text/javascript" src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
   <script>
     const act = JSON.parse(sessionStorage.getItem('classshow_activity') || '{}');
     const token = sessionStorage.getItem('teacherToken');
     if (!token) location.href = 'teacher-login.html';
     const actId = act.id;
+    if (!actId) location.href = 'index.html';
 
     document.getElementById('actTitle').textContent = act.activity_name || '';
     document.getElementById('actSubtitle').textContent = (act.course_name || '') + ' · ' + (act.class_name || '');
@@ -104,11 +107,29 @@
     document.getElementById('infoActivity').textContent = act.activity_name || '';
     document.getElementById('infoDesc').textContent = act.description || '无';
 
+    const settingLabels = {
+      upload_open: '上传',
+      voting_open: '评分',
+      show_live_ranking: '实时排名',
+      comments_open: '匿名评论',
+      roster_enabled: '名单限制',
+      pin_required: 'PIN登录'
+    };
+
+    const ROSTER_HEADER_ALIASES = {
+      student_id: ['学号', '学生学号', 'student_id', 'studentid', 'id', 'stuid', '学籍号'],
+      name: ['姓名', '名字', 'name', 'studentname'],
+      class_name: ['班级', 'class_name', 'classname', 'class'],
+      group_name: ['小组', '组别', 'group_name', 'group', 'team'],
+      pin: ['pin', '口令', '密码']
+    };
+
     function updateToggleBtn(id, val) {
       const btn = document.getElementById(id);
       btn.textContent = val ? '已开启 ✓' : '已关闭 ✕';
       btn.className = 'btn btn-sm ' + (val ? 'btn-success' : 'btn-danger');
     }
+
     updateToggleBtn('toggleUpload', act.upload_open);
     updateToggleBtn('toggleVoting', act.voting_open);
     updateToggleBtn('toggleRanking', act.show_live_ranking);
@@ -116,7 +137,6 @@
     updateToggleBtn('toggleRoster', act.roster_enabled);
     updateToggleBtn('togglePin', act.pin_required);
 
-    // Generate QR Code
     async function loadQrCode() {
       try {
         const url = location.origin + '/index.html?code=' + act.invite_code;
@@ -125,13 +145,12 @@
           const img = document.getElementById('qrCode');
           img.src = res.url;
           img.style.display = 'block';
-          const a = document.getElementById('downloadQr');
-          a.href = res.url;
-          a.style.display = 'inline-block';
+          const anchor = document.getElementById('downloadQr');
+          anchor.href = res.url;
+          anchor.style.display = 'inline-block';
         }
       } catch (e) {}
     }
-    loadQrCode();
 
     function openDisplay() {
       const code = (act.invite_code || '').trim();
@@ -142,17 +161,57 @@
     async function toggleSetting(key) {
       const newVal = !act[key];
       try {
-        const updated = await api('/activities/' + actId, { method: 'PUT', body: JSON.stringify({ [key]: newVal }) });
+        await api('/activities/' + actId, { method: 'PUT', body: JSON.stringify({ [key]: newVal }) });
         act[key] = newVal;
         sessionStorage.setItem('classshow_activity', JSON.stringify({ ...act, [key]: newVal }));
-        toast(key + ' → ' + (newVal ? '开启' : '关闭'), 'success');
         updateToggleBtn('toggleUpload', act.upload_open);
         updateToggleBtn('toggleVoting', act.voting_open);
         updateToggleBtn('toggleRanking', act.show_live_ranking);
         updateToggleBtn('toggleComments', act.comments_open);
         updateToggleBtn('toggleRoster', act.roster_enabled);
         updateToggleBtn('togglePin', act.pin_required);
-      } catch (e) { toast('操作失败', 'error'); }
+        toast((settingLabels[key] || key) + (newVal ? ' 已开启' : ' 已关闭'), 'success');
+      } catch (e) {
+        toast('操作失败: ' + e.message, 'error');
+      }
+    }
+
+    function normalizeRosterHeader(value) {
+      return String(value || '')
+        .trim()
+        .toLowerCase()
+        .replace(/\s+/g, '')
+        .replace(/[_-]/g, '');
+    }
+
+    function pickRosterField(row, aliases) {
+      const normalizedAliases = aliases.map(normalizeRosterHeader);
+      for (const key of Object.keys(row || {})) {
+        if (normalizedAliases.includes(normalizeRosterHeader(key))) {
+          return String(row[key] ?? '').trim();
+        }
+      }
+      return '';
+    }
+
+    function matchesAlias(value, aliases) {
+      const normalizedValue = normalizeRosterHeader(value);
+      return aliases.map(normalizeRosterHeader).includes(normalizedValue);
+    }
+
+    function isRosterHeaderRow(row) {
+      return matchesAlias(row.student_id, ROSTER_HEADER_ALIASES.student_id)
+        && matchesAlias(row.name, ROSTER_HEADER_ALIASES.name);
+    }
+
+    function normalizeRosterStudent(raw) {
+      return {
+        student_id: String(raw.student_id || '').trim(),
+        name: String(raw.name || '').trim(),
+        class_name: String(raw.class_name || '').trim(),
+        group_name: String(raw.group_name || '').trim(),
+        pin: String(raw.pin || '').trim()
+      };
     }
 
     function parseRosterRows(text) {
@@ -161,23 +220,100 @@
         .filter(line => line && !line.startsWith('#'))
         .map(line => {
           const [student_id, name, class_name, group_name, pin] = line.split(',').map(v => (v || '').trim());
-          return { student_id, name, class_name, group_name, pin };
+          return normalizeRosterStudent({ student_id, name, class_name, group_name, pin });
         })
-        .filter(row => row.student_id && row.name && row.class_name);
+        .filter(row => !isRosterHeaderRow(row))
+        .filter(row => row.student_id && row.name);
+    }
+
+    function parseRosterFromWorksheet(sheet) {
+      const objRows = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false });
+      const mappedFromHeader = objRows
+        .map(row => normalizeRosterStudent({
+          student_id: pickRosterField(row, ROSTER_HEADER_ALIASES.student_id),
+          name: pickRosterField(row, ROSTER_HEADER_ALIASES.name),
+          class_name: pickRosterField(row, ROSTER_HEADER_ALIASES.class_name),
+          group_name: pickRosterField(row, ROSTER_HEADER_ALIASES.group_name),
+          pin: pickRosterField(row, ROSTER_HEADER_ALIASES.pin)
+        }))
+        .filter(row => row.student_id && row.name);
+      if (mappedFromHeader.length > 0) return mappedFromHeader;
+
+      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
+      if (!Array.isArray(rows) || rows.length === 0) return [];
+      let startIndex = 0;
+      if (isRosterHeaderRow(normalizeRosterStudent({
+        student_id: rows[0][0],
+        name: rows[0][1]
+      }))) startIndex = 1;
+      return rows.slice(startIndex)
+        .map(cols => normalizeRosterStudent({
+          student_id: cols[0],
+          name: cols[1],
+          class_name: cols[2],
+          group_name: cols[3],
+          pin: cols[4]
+        }))
+        .filter(row => row.student_id && row.name);
+    }
+
+    async function parseRosterFile(file) {
+      const lower = (file.name || '').toLowerCase();
+      if (lower.endsWith('.csv')) {
+        const text = await file.text();
+        return parseRosterRows(text);
+      }
+      if (typeof XLSX === 'undefined') {
+        throw new Error('Excel 解析组件加载失败，请稍后重试或改用 CSV/粘贴导入');
+      }
+      const buffer = await file.arrayBuffer();
+      const workbook = XLSX.read(buffer, { type: 'array' });
+      const sheetName = workbook.SheetNames && workbook.SheetNames[0];
+      if (!sheetName) return [];
+      return parseRosterFromWorksheet(workbook.Sheets[sheetName]);
+    }
+
+    async function importRosterStudents(students) {
+      if (!students || students.length === 0) {
+        toast('没有有效名单行', 'error');
+        return;
+      }
+      const res = await api('/teacher/roster/import', {
+        method: 'POST',
+        body: JSON.stringify({
+          activity_id: actId,
+          default_class_name: act.class_name || '',
+          students
+        })
+      });
+      toast('名单导入成功：' + res.imported + ' 人', 'success');
+      loadRoster();
     }
 
     async function importRoster() {
-      const students = parseRosterRows(document.getElementById('rosterText').value);
-      if (students.length === 0) return toast('没有有效名单行', 'error');
       try {
-        const res = await api('/teacher/roster/import', {
-          method: 'POST',
-          body: JSON.stringify({ activity_id: actId, students })
-        });
-        toast('名单导入成功：' + res.imported + ' 人', 'success');
+        const students = parseRosterRows(document.getElementById('rosterText').value);
+        await importRosterStudents(students);
         document.getElementById('rosterText').value = '';
-        loadRoster();
-      } catch (e) { toast('名单导入失败: ' + e.message, 'error'); }
+      } catch (e) {
+        toast('名单导入失败: ' + e.message, 'error');
+      }
+    }
+
+    async function importRosterFile() {
+      const input = document.getElementById('rosterFile');
+      const file = input.files && input.files[0];
+      if (!file) {
+        toast('请先选择 Excel/CSV 文件', 'error');
+        return;
+      }
+      try {
+        const students = await parseRosterFile(file);
+        await importRosterStudents(students);
+        input.value = '';
+      } catch (e) {
+        toast('文件导入失败: ' + e.message, 'error');
+      }
     }
 
     async function loadRoster() {
@@ -206,6 +342,8 @@
         document.getElementById('sRatings').textContent = stats.ratings;
       } catch (e) {}
     }
+
+    loadQrCode();
     loadStats();
     loadRoster();
     setInterval(loadStats, 10000);

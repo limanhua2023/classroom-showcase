@@ -467,12 +467,19 @@ app.post('/api/teacher/roster/import', teacherAuth, async (req, res) => {
   try {
     const activity_id = String(req.body.activity_id ?? '').trim();
     const students = Array.isArray(req.body.students) ? req.body.students : [];
+    const default_class_name = sanitizeText(req.body.default_class_name, 80);
     if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
     if (students.length === 0) return res.status(400).json({ error: 'No students to import' });
     if (students.length > 1000) return res.status(400).json({ error: 'Import at most 1000 students at a time' });
 
     const auth = await ensureTeacherCanAccessActivity(req, activity_id);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    let activityDefaultClass = default_class_name;
+    if (!activityDefaultClass) {
+      const activity = await getActivitySafe(activity_id);
+      activityDefaultClass = sanitizeText(activity?.class_name, 80);
+    }
 
     const payload = [];
     const seen = new Set();
@@ -481,7 +488,7 @@ app.post('/api/teacher/roster/import', teacherAuth, async (req, res) => {
       if (!student_id || seen.has(student_id)) continue;
       seen.add(student_id);
       const name = sanitizeText(row.name, 80);
-      const class_name = sanitizeText(row.class_name, 80);
+      const class_name = sanitizeText(row.class_name, 80) || activityDefaultClass;
       const group_name = sanitizeText(row.group_name, 80) || null;
       const pin = String(row.pin ?? '').trim();
       const pinHash = pin ? hashPin(pin) : null;
