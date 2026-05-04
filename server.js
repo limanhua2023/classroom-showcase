@@ -53,17 +53,18 @@ function formatTitleTimestampCN(date = new Date()) {
     day: '2-digit',
     hour: '2-digit',
     minute: '2-digit',
+    second: '2-digit',
     hour12: false
   }).formatToParts(date);
   const map = {};
   for (const part of parts) map[part.type] = part.value;
-  return `${map.year}年${map.month}月${map.day}日${map.hour}时${map.minute}分`;
+  return `${map.year}年${map.month}月${map.day}日${map.hour}时${map.minute}分${map.second}秒`;
 }
 
 function withUploadTimestampTitle(rawTitle, date = new Date(), maxLen = 140) {
   const base = String(rawTitle ?? '')
     .trim()
-    .replace(/\s*[（(]\d{4}年\d{2}月\d{2}日\d{2}时(?:\d{2}分)?[）)]\s*$/u, '');
+    .replace(/\s*[（(]\d{4}年\d{2}月\d{2}日\d{2}时(?:\d{2}分)?(?:\d{2}秒)?[）)]\s*$/u, '');
   const suffix = `（${formatTitleTimestampCN(date)}）`;
   const maxBaseLen = Math.max(1, Number(maxLen) - suffix.length);
   return `${base.slice(0, maxBaseLen)}${suffix}`;
