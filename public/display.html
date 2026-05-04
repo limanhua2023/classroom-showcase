@@ -193,10 +193,20 @@
     let activeSpotlightWork = null;
     let activeSpotlightMyRating = 0;
     let spotlightViewTimer = null;
+    const DISPLAY_NEW_WORK_WINDOW_MS = 8 * 60 * 1000;
+    const DISPLAY_NEW_WORK_LABEL_MINUTES = 8;
+    const DISPLAY_CAROUSEL_SCROLL_MS = 8000;
+    const DISPLAY_CAROUSEL_SCROLL_STEP = 260;
 
     function updateDisplayHeader() {
       document.getElementById('displayTitle').textContent = act.activity_name || '课堂作品秀';
       document.getElementById('displaySubtitle').textContent = (act.course_name || '') + ' · ' + (act.class_name || '');
+      const newTitle = document.querySelector('#newSection .section-title');
+      if (newTitle) newTitle.textContent = `🔥 新作品（${DISPLAY_NEW_WORK_LABEL_MINUTES}分钟内）`;
+    }
+
+    function isDisplayNewWork(dateStr) {
+      return (Date.now() - new Date(dateStr).getTime()) < DISPLAY_NEW_WORK_WINDOW_MS;
     }
 
     async function resolveActivityContext() {
@@ -272,12 +282,12 @@
           document.getElementById('dStatusLabel').textContent = '已结束';
         }
 
-        // New works (< 5 min)
-        const newWorks = works.filter(w => isNewWork(w.upload_time));
+        // New works (< configured minutes for display)
+        const newWorks = works.filter(w => isDisplayNewWork(w.upload_time));
         if (newWorks.length > 0) {
           document.getElementById('newSection').style.display = 'block';
           document.getElementById('newCarousel').innerHTML = newWorks.map(w => {
-            const remaining = Math.max(0, Math.ceil((5 * 60 * 1000 - (Date.now() - new Date(w.upload_time).getTime())) / 1000));
+            const remaining = Math.max(0, Math.ceil((DISPLAY_NEW_WORK_WINDOW_MS - (Date.now() - new Date(w.upload_time).getTime())) / 1000));
             const mm = Math.floor(remaining / 60); const ss = remaining % 60;
             const vid = isVideo(w.image_url);
             return `<div class="display-card" style="cursor:pointer" onclick="openSpotlight('${w.id}')">
@@ -362,11 +372,11 @@
       if (document.getElementById('spotlightOverlay').classList.contains('active')) return;
       document.querySelectorAll('.display-carousel').forEach(c => {
         if (c.scrollWidth > c.clientWidth) {
-          c.scrollLeft += 340;
+          c.scrollLeft += DISPLAY_CAROUSEL_SCROLL_STEP;
           if (c.scrollLeft >= c.scrollWidth - c.clientWidth) c.scrollLeft = 0;
         }
       });
-    }, 4000);
+    }, DISPLAY_CAROUSEL_SCROLL_MS);
 
     // ─── Top-3 Hero Showcase ───
     let top3Timer = null;
