@@ -37,6 +37,7 @@ const FEEDBACK_MIN_MEANINGFUL_CHARS = 3;
 const DEFAULT_FEEDBACK_DAILY_LIMIT = 5;
 const MAX_FEEDBACK_DAILY_LIMIT = 20;
 const BANGKOK_UTC_OFFSET_MS = 7 * 60 * 60 * 1000;
+const WITHDRAWN_FEEDBACK_PREFIX = '__WITHDRAWN__::';
 
 function escapeHtml(input = '') {
   const str = String(input);
@@ -53,7 +54,11 @@ function sanitizeText(input, maxLen = 200) {
 }
 
 function normalizeFeedbackTextForDedup(input = '') {
-  return Array.from(String(input ?? '').trim().toLowerCase())
+  const raw = String(input ?? '').trim();
+  const normalizedSource = raw.startsWith(WITHDRAWN_FEEDBACK_PREFIX)
+    ? raw.slice(WITHDRAWN_FEEDBACK_PREFIX.length)
+    : raw;
+  return Array.from(normalizedSource.toLowerCase())
     .filter(ch => /[a-z0-9\u4e00-\u9fff]/i.test(ch))
     .join('');
 }
@@ -63,6 +68,14 @@ function isLowQualityFeedbackText(input = '') {
   if (meaningful.length < FEEDBACK_MIN_MEANINGFUL_CHARS) return true;
   if (/^(.)\1{2,}$/u.test(meaningful)) return true;
   return false;
+}
+
+function isWithdrawnFeedbackContent(input = '') {
+  return String(input ?? '').startsWith(WITHDRAWN_FEEDBACK_PREFIX);
+}
+
+function makeWithdrawnFeedbackContent(input = '') {
+  return `${WITHDRAWN_FEEDBACK_PREFIX}${String(input ?? '')}`;
 }
 
 function normalizeFeedbackDailyLimit(value) {
@@ -1426,7 +1439,9 @@ async function listActivityFeedback({ activityId, sort = 'latest', viewerUserId 
       throw rosterError;
     }
   }
-  const items = (data || []).map(row => ({
+  const items = (data || [])
+    .filter(row => !isWithdrawnFeedbackContent(row.content))
+    .map(row => ({
     ...row,
     label: '实名反馈',
     like_count: likeState.likeCountMap[row.id] || 0,
@@ -1583,8 +1598,13 @@ app.delete('/api/activity-feedback/:id', studentAuth, async (req, res) => {
     if (String(feedback.user_id) !== String(user_id)) {
       return res.status(403).json({ error: 'You can only delete your own feedback' });
     }
+    if (isWithdrawnFeedbackContent(feedback.content)) {
+      return res.status(410).json({ error: 'Feedback already withdrawn' });
+    }
 
-    const { error: deleteError } = await supabase.from('comments').delete().eq('id', req.params.id);
+    const { error: deleteError } = await supabase.from('comments')
+      .update({ content: makeWithdrawnFeedbackContent(feedback.content) })
+      .eq('id', req.params.id);
     if (deleteError) throw deleteError;
     res.json({ ok: true });
   } catch (e) {
@@ -1715,7 +1735,7 @@ app.put('/api/teacher/activity-feedback-moderation', teacherAuth, async (req, re
 app.delete('/api/teacher/activity-feedback/:id', teacherAuth, async (req, res) => {
   try {
     const { data: feedback, error: feedbackErr } = await supabase.from('comments')
-      .select('id, activity_id, submission_id')
+      .select('id, activity_id, submission_id, content')
       .eq('id', req.params.id)
       .single();
     if (feedbackErr || !feedback || feedback.submission_id) {
@@ -1725,7 +1745,12 @@ app.delete('/api/teacher/activity-feedback/:id', teacherAuth, async (req, res) =
     const auth = await ensureTeacherCanAccessActivity(req, feedback.activity_id);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
-    const { error: deleteError } = await supabase.from('comments').delete().eq('id', req.params.id);
+    const nextContent = isWithdrawnFeedbackContent(feedback.content)
+      ? feedback.content
+      : makeWithdrawnFeedbackContent(feedback.content);
+    const { error: deleteError } = await supabase.from('comments')
+      .update({ content: nextContent })
+      .eq('id', req.params.id);
     if (deleteError) throw deleteError;
     res.json({ ok: true });
   } catch (e) {
