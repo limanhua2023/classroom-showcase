@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>学生注册 - ClassShow</title>
+  <title>学生登录 - ClassShow</title>
   <link rel="stylesheet" href="css/main.css">
 </head>
 <body>
@@ -11,17 +11,17 @@
     <div class="auth-box">
       <a href="index.html" class="back-link">← 返回首页</a>
       <h1>加入<span>课堂</span></h1>
-      <p class="subtitle" id="activityInfo">请填写你的信息</p>
+      <p class="subtitle" id="activityInfo">输入姓名和学号进入课堂</p>
 
       <form onsubmit="register(event)">
         <div class="form-group">
           <label>姓名 *</label>
-          <input type="text" id="name" placeholder="输入你的真实姓名" required>
+          <input type="text" id="name" placeholder="请输入名单中的姓名" required>
         </div>
 
         <div class="form-group">
           <label>学号 *</label>
-          <input type="text" id="studentId" placeholder="输入你的学号" required>
+          <input type="text" id="studentId" placeholder="请输入名单中的学号" required>
         </div>
 
         <div class="form-group" id="pinGroup" style="display:none;">
@@ -43,7 +43,7 @@
       </form>
 
       <p class="form-hint" style="margin-top:12px;text-align:center;">
-        你的姓名和学号仅教师可见，同学之间完全匿名。
+        开启名单后，系统会校验姓名和学号是否同时匹配教师上传的名单。
       </p>
     </div>
   </div>
@@ -56,20 +56,17 @@
     const act = JSON.parse(sessionStorage.getItem('classshow_activity') || '{}');
     const rosterEnabled = !!act.roster_enabled;
     const pinRequired = !!act.pin_required;
-    const useRosterLogin = rosterEnabled || pinRequired;
 
     document.getElementById('activityInfo').textContent = act.activity_name || '课堂活动';
-    if (useRosterLogin) {
-      document.getElementById('activityInfo').textContent = (act.activity_name || '课堂活动') + '（名单/PIN 登录）';
-    }
-    if (pinRequired) {
-      document.getElementById('pinGroup').style.display = 'block';
-      document.getElementById('studentPin').required = true;
-    }
+
     if (rosterEnabled) {
+      document.getElementById('activityInfo').textContent = (act.activity_name || '课堂活动') + '（姓名 + 学号登录）';
       document.getElementById('classGroup').style.display = 'none';
       document.getElementById('groupGroup').style.display = 'none';
       document.getElementById('className').required = false;
+    } else if (pinRequired) {
+      document.getElementById('pinGroup').style.display = 'block';
+      document.getElementById('studentPin').required = true;
     }
 
     const existing = getSession();
@@ -84,13 +81,12 @@
 
     async function register(e) {
       e.preventDefault();
-      const className = document.getElementById('className').value.trim();
       const payload = {
         activity_id: actId,
         name: document.getElementById('name').value.trim(),
         student_id: document.getElementById('studentId').value.trim(),
         pin: document.getElementById('studentPin').value.trim(),
-        class_name: className || (act.class_name || '').trim(),
+        class_name: document.getElementById('className').value.trim() || (act.class_name || '').trim(),
         group_name: document.getElementById('groupName').value.trim() || null
       };
 
@@ -102,7 +98,7 @@
         setSession(user);
         location.href = 'student-gallery.html';
       } catch (err) {
-        toast('注册失败: ' + err.message, 'error');
+        toast('进入失败: ' + err.message, 'error');
       }
     }
   </script>

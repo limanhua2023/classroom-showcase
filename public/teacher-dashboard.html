@@ -41,30 +41,29 @@
 
     <div class="card" style="margin:20px 0;">
       <div class="card-body">
-        <h3 style="margin-bottom:12px;">学生名单 / PIN</h3>
+        <h3 style="margin-bottom:12px;">学生名单</h3>
         <p class="form-hint" style="margin-bottom:10px;">
-          支持两种导入方式：1) 手工粘贴，每行格式：学号,姓名,班级,小组,PIN；2) 上传 Excel/CSV。班级、小组、PIN 可留空。
+          Excel 只需要两列：姓名、学号。上传后系统会自动开启名单限制，并关闭 PIN 登录。
         </p>
-        <textarea id="rosterText" rows="6" style="width:100%;font-family:monospace;" placeholder="2026001,张三,AIOT 59-1,A组,1234&#10;2026002,李四,AIOT 59-1,A组,5678"></textarea>
-        <div style="display:flex;gap:10px;align-items:center;margin-top:10px;flex-wrap:wrap;">
-          <button class="btn btn-primary" type="button" onclick="importRoster()">导入/更新名单</button>
+
+        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
+          <input id="rosterFile" type="file" accept=".xlsx,.csv" />
+          <button class="btn btn-primary" type="button" onclick="importRosterFile()">上传名单</button>
           <button class="btn btn-secondary" type="button" onclick="loadRoster()">刷新名单</button>
           <span id="rosterStatus" style="color:var(--text-muted);font-size:0.9rem;"></span>
         </div>
 
-        <div style="margin-top:10px;padding:10px;border:1px dashed var(--border);border-radius:10px;">
-          <div style="font-weight:600;margin-bottom:6px;">Excel/CSV 导入</div>
-          <input id="rosterFile" type="file" accept=".xlsx,.xls,.csv" />
-          <p class="form-hint" style="margin-top:8px;">
-            建议至少包含列名：学号、姓名。可选列：班级、小组、PIN。若未提供班级，将自动使用当前活动班级。
-          </p>
-          <button class="btn btn-secondary" type="button" style="margin-top:8px;" onclick="importRosterFile()">从文件导入</button>
-        </div>
+        <details style="margin-bottom:12px;">
+          <summary style="cursor:pointer;font-weight:600;">手工粘贴导入</summary>
+          <p class="form-hint" style="margin:8px 0;">每行一名学生，格式：姓名,学号</p>
+          <textarea id="rosterText" rows="4" style="width:100%;font-family:monospace;" placeholder="张三,2026001&#10;李四,2026002"></textarea>
+          <button class="btn btn-secondary" type="button" style="margin-top:8px;" onclick="importRosterText()">导入粘贴名单</button>
+        </details>
 
-        <div class="table-wrap" style="margin-top:12px;max-height:260px;overflow:auto;">
+        <div class="table-wrap" style="margin-top:12px;max-height:300px;overflow:auto;">
           <table>
-            <thead><tr><th>学号</th><th>姓名</th><th>班级</th><th>小组</th><th>状态</th></tr></thead>
-            <tbody id="rosterBody"><tr><td colspan="5" style="color:var(--text-muted);">尚未加载</td></tr></tbody>
+            <thead><tr><th>姓名</th><th>学号</th><th>状态</th></tr></thead>
+            <tbody id="rosterBody"><tr><td colspan="3" style="color:var(--text-muted);">尚未加载</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -91,7 +90,6 @@
   </div>
 
   <script src="js/api.js"></script>
-  <script type="text/javascript" src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
   <script>
     const act = JSON.parse(sessionStorage.getItem('classshow_activity') || '{}');
     const token = sessionStorage.getItem('teacherToken');
@@ -116,26 +114,29 @@
       pin_required: 'PIN登录'
     };
 
-    const ROSTER_HEADER_ALIASES = {
-      student_id: ['学号', '学生学号', 'student_id', 'studentid', 'id', 'stuid', '学籍号'],
-      name: ['姓名', '名字', 'name', 'studentname'],
-      class_name: ['班级', 'class_name', 'classname', 'class'],
-      group_name: ['小组', '组别', 'group_name', 'group', 'team'],
-      pin: ['pin', '口令', '密码']
-    };
-
     function updateToggleBtn(id, val) {
       const btn = document.getElementById(id);
       btn.textContent = val ? '已开启 ✓' : '已关闭 ✕';
       btn.className = 'btn btn-sm ' + (val ? 'btn-success' : 'btn-danger');
     }
 
-    updateToggleBtn('toggleUpload', act.upload_open);
-    updateToggleBtn('toggleVoting', act.voting_open);
-    updateToggleBtn('toggleRanking', act.show_live_ranking);
-    updateToggleBtn('toggleComments', act.comments_open);
-    updateToggleBtn('toggleRoster', act.roster_enabled);
-    updateToggleBtn('togglePin', act.pin_required);
+    function updateAllToggleBtns() {
+      updateToggleBtn('toggleUpload', act.upload_open);
+      updateToggleBtn('toggleVoting', act.voting_open);
+      updateToggleBtn('toggleRanking', act.show_live_ranking);
+      updateToggleBtn('toggleComments', act.comments_open);
+      updateToggleBtn('toggleRoster', act.roster_enabled);
+      updateToggleBtn('togglePin', act.pin_required);
+    }
+
+    function applyActivityPatch(activityPatch) {
+      if (!activityPatch) return;
+      Object.assign(act, activityPatch);
+      sessionStorage.setItem('classshow_activity', JSON.stringify(act));
+      updateAllToggleBtns();
+    }
+
+    updateAllToggleBtns();
 
     async function loadQrCode() {
       try {
@@ -162,139 +163,50 @@
       const newVal = !act[key];
       try {
         await api('/activities/' + actId, { method: 'PUT', body: JSON.stringify({ [key]: newVal }) });
-        act[key] = newVal;
-        sessionStorage.setItem('classshow_activity', JSON.stringify({ ...act, [key]: newVal }));
-        updateToggleBtn('toggleUpload', act.upload_open);
-        updateToggleBtn('toggleVoting', act.voting_open);
-        updateToggleBtn('toggleRanking', act.show_live_ranking);
-        updateToggleBtn('toggleComments', act.comments_open);
-        updateToggleBtn('toggleRoster', act.roster_enabled);
-        updateToggleBtn('togglePin', act.pin_required);
+        applyActivityPatch({ [key]: newVal });
         toast((settingLabels[key] || key) + (newVal ? ' 已开启' : ' 已关闭'), 'success');
       } catch (e) {
         toast('操作失败: ' + e.message, 'error');
       }
     }
 
-    function normalizeRosterHeader(value) {
-      return String(value || '')
-        .trim()
-        .toLowerCase()
-        .replace(/\s+/g, '')
-        .replace(/[_-]/g, '');
-    }
-
-    function pickRosterField(row, aliases) {
-      const normalizedAliases = aliases.map(normalizeRosterHeader);
-      for (const key of Object.keys(row || {})) {
-        if (normalizedAliases.includes(normalizeRosterHeader(key))) {
-          return String(row[key] ?? '').trim();
-        }
-      }
-      return '';
-    }
-
-    function matchesAlias(value, aliases) {
-      const normalizedValue = normalizeRosterHeader(value);
-      return aliases.map(normalizeRosterHeader).includes(normalizedValue);
-    }
-
-    function isRosterHeaderRow(row) {
-      return matchesAlias(row.student_id, ROSTER_HEADER_ALIASES.student_id)
-        && matchesAlias(row.name, ROSTER_HEADER_ALIASES.name);
-    }
-
-    function normalizeRosterStudent(raw) {
-      return {
-        student_id: String(raw.student_id || '').trim(),
-        name: String(raw.name || '').trim(),
-        class_name: String(raw.class_name || '').trim(),
-        group_name: String(raw.group_name || '').trim(),
-        pin: String(raw.pin || '').trim()
-      };
-    }
-
-    function parseRosterRows(text) {
+    function parseRosterText(text) {
       return text.split(/\r?\n/)
         .map(line => line.trim())
-        .filter(line => line && !line.startsWith('#'))
-        .map(line => {
-          const [student_id, name, class_name, group_name, pin] = line.split(',').map(v => (v || '').trim());
-          return normalizeRosterStudent({ student_id, name, class_name, group_name, pin });
+        .filter(Boolean)
+        .map(line => line.split(',').map(v => (v || '').trim()))
+        .map(parts => {
+          let name = parts[0] || '';
+          let student_id = parts[1] || '';
+          if (/[0-9]/.test(parts[0] || '') && !/[0-9]/.test(parts[1] || '')) {
+            student_id = parts[0] || '';
+            name = parts[1] || '';
+          }
+          return { name, student_id };
         })
-        .filter(row => !isRosterHeaderRow(row))
-        .filter(row => row.student_id && row.name);
+        .filter(row => row.name && row.student_id && row.name !== '姓名' && row.student_id !== '学号');
     }
 
-    function parseRosterFromWorksheet(sheet) {
-      const objRows = XLSX.utils.sheet_to_json(sheet, { defval: '', raw: false });
-      const mappedFromHeader = objRows
-        .map(row => normalizeRosterStudent({
-          student_id: pickRosterField(row, ROSTER_HEADER_ALIASES.student_id),
-          name: pickRosterField(row, ROSTER_HEADER_ALIASES.name),
-          class_name: pickRosterField(row, ROSTER_HEADER_ALIASES.class_name),
-          group_name: pickRosterField(row, ROSTER_HEADER_ALIASES.group_name),
-          pin: pickRosterField(row, ROSTER_HEADER_ALIASES.pin)
-        }))
-        .filter(row => row.student_id && row.name);
-      if (mappedFromHeader.length > 0) return mappedFromHeader;
-
-      const rows = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '', raw: false });
-      if (!Array.isArray(rows) || rows.length === 0) return [];
-      let startIndex = 0;
-      if (isRosterHeaderRow(normalizeRosterStudent({
-        student_id: rows[0][0],
-        name: rows[0][1]
-      }))) startIndex = 1;
-      return rows.slice(startIndex)
-        .map(cols => normalizeRosterStudent({
-          student_id: cols[0],
-          name: cols[1],
-          class_name: cols[2],
-          group_name: cols[3],
-          pin: cols[4]
-        }))
-        .filter(row => row.student_id && row.name);
-    }
-
-    async function parseRosterFile(file) {
-      const lower = (file.name || '').toLowerCase();
-      if (lower.endsWith('.csv')) {
-        const text = await file.text();
-        return parseRosterRows(text);
-      }
-      if (typeof XLSX === 'undefined') {
-        throw new Error('Excel 解析组件加载失败，请稍后重试或改用 CSV/粘贴导入');
-      }
-      const buffer = await file.arrayBuffer();
-      const workbook = XLSX.read(buffer, { type: 'array' });
-      const sheetName = workbook.SheetNames && workbook.SheetNames[0];
-      if (!sheetName) return [];
-      return parseRosterFromWorksheet(workbook.Sheets[sheetName]);
-    }
-
-    async function importRosterStudents(students) {
-      if (!students || students.length === 0) {
-        toast('没有有效名单行', 'error');
-        return;
-      }
-      const res = await api('/teacher/roster/import', {
-        method: 'POST',
-        body: JSON.stringify({
-          activity_id: actId,
-          default_class_name: act.class_name || '',
-          students
-        })
-      });
+    async function handleImportResult(res) {
+      applyActivityPatch(res.activity);
       toast('名单导入成功：' + res.imported + ' 人', 'success');
-      loadRoster();
+      await loadRoster();
     }
 
-    async function importRoster() {
+    async function importRosterText() {
       try {
-        const students = parseRosterRows(document.getElementById('rosterText').value);
-        await importRosterStudents(students);
+        const students = parseRosterText(document.getElementById('rosterText').value);
+        if (students.length === 0) return toast('没有有效名单行', 'error');
+        const res = await api('/teacher/roster/import', {
+          method: 'POST',
+          body: JSON.stringify({
+            activity_id: actId,
+            default_class_name: act.class_name || '',
+            students
+          })
+        });
         document.getElementById('rosterText').value = '';
+        await handleImportResult(res);
       } catch (e) {
         toast('名单导入失败: ' + e.message, 'error');
       }
@@ -303,14 +215,23 @@
     async function importRosterFile() {
       const input = document.getElementById('rosterFile');
       const file = input.files && input.files[0];
-      if (!file) {
-        toast('请先选择 Excel/CSV 文件', 'error');
-        return;
-      }
+      if (!file) return toast('请先选择 .xlsx 或 .csv 名单文件', 'error');
+
+      const fd = new FormData();
+      fd.append('activity_id', actId);
+      fd.append('default_class_name', act.class_name || '');
+      fd.append('roster', file);
+
       try {
-        const students = await parseRosterFile(file);
-        await importRosterStudents(students);
+        const res = await fetch('/api/teacher/roster/import-file', {
+          method: 'POST',
+          headers: { 'x-teacher-auth': token },
+          body: fd
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || res.statusText);
         input.value = '';
+        await handleImportResult(data);
       } catch (e) {
         toast('文件导入失败: ' + e.message, 'error');
       }
@@ -322,13 +243,11 @@
         document.getElementById('rosterStatus').textContent = '已导入 ' + rows.length + ' 人';
         document.getElementById('rosterBody').innerHTML = rows.length ? rows.map(r => `
           <tr>
-            <td>${escapeHtml(r.student_id)}</td>
             <td>${escapeHtml(r.name)}</td>
-            <td>${escapeHtml(r.class_name)}</td>
-            <td>${escapeHtml(r.group_name || '-')}</td>
+            <td>${escapeHtml(r.student_id)}</td>
             <td>${r.active === false ? '停用' : '启用'}</td>
           </tr>
-        `).join('') : '<tr><td colspan="5" style="color:var(--text-muted);">暂无名单</td></tr>';
+        `).join('') : '<tr><td colspan="3" style="color:var(--text-muted);">暂无名单</td></tr>';
       } catch (e) {
         document.getElementById('rosterStatus').textContent = '名单功能未初始化';
       }

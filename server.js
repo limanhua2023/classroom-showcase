@@ -9,6 +9,7 @@ import archiver from 'archiver';
 import QRCode from 'qrcode';
 import fs from 'fs';
 import crypto from 'crypto';
+import readXlsxFile from 'read-excel-file/node';
 
 dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
@@ -191,6 +192,110 @@ function verifyPin(pin, salt, expectedHash) {
   return !!result && safeEqualHex(result.hash, expectedHash);
 }
 
+function normalizeRosterIdentity(input) {
+  return String(input ?? '').trim().replace(/\s+/g, '').toLowerCase();
+}
+
+function rosterNameMatches(inputName, rosterName) {
+  const input = normalizeRosterIdentity(inputName);
+  const expected = normalizeRosterIdentity(rosterName);
+  return !!input && !!expected && input === expected;
+}
+
+function looksLikeStudentId(value) {
+  const text = String(value ?? '').trim();
+  if (!text) return false;
+  return /[0-9]/.test(text) && !/[\u4e00-\u9fff]/.test(text);
+}
+
+const ROSTER_ALIASES = {
+  student_id: ['学号', '學生學號', '学生学号', 'student_id', 'studentid', 'id', 'stuid', '学籍号'],
+  name: ['姓名', '名字', 'name', 'studentname'],
+  class_name: ['班级', '班級', 'class_name', 'classname', 'class'],
+  group_name: ['小组', '小組', '组别', '組別', 'group_name', 'group', 'team'],
+  pin: ['pin', '口令', '密码', '密碼']
+};
+
+function normalizeRosterHeader(value) {
+  return String(value ?? '').trim().toLowerCase().replace(/\s+/g, '').replace(/[_-]/g, '');
+}
+
+function findRosterHeaderIndexes(row) {
+  const indexes = {};
+  const normalizedAliases = Object.fromEntries(
+    Object.entries(ROSTER_ALIASES).map(([field, aliases]) => [field, aliases.map(normalizeRosterHeader)])
+  );
+  row.forEach((cell, index) => {
+    const header = normalizeRosterHeader(cell);
+    for (const [field, aliases] of Object.entries(normalizedAliases)) {
+      if (aliases.includes(header)) indexes[field] = index;
+    }
+  });
+  return indexes;
+}
+
+function parseCsvLine(line) {
+  const cells = [];
+  let current = '';
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i += 1) {
+    const ch = line[i];
+    if (ch === '"' && line[i + 1] === '"') {
+      current += '"';
+      i += 1;
+    } else if (ch === '"') {
+      inQuotes = !inQuotes;
+    } else if (ch === ',' && !inQuotes) {
+      cells.push(current);
+      current = '';
+    } else {
+      current += ch;
+    }
+  }
+  cells.push(current);
+  return cells;
+}
+
+function normalizeRosterRows(rows, defaultClassName = '') {
+  const table = rows
+    .map(row => (Array.isArray(row) ? row : []).map(cell => String(cell ?? '').trim()))
+    .filter(row => row.some(Boolean));
+  if (table.length === 0) return [];
+
+  const headerIndexes = findRosterHeaderIndexes(table[0]);
+  const hasHeader = headerIndexes.name !== undefined && headerIndexes.student_id !== undefined;
+  const dataRows = hasHeader ? table.slice(1) : table;
+
+  return dataRows
+    .map(row => {
+      if (hasHeader) {
+        return {
+          name: row[headerIndexes.name] || '',
+          student_id: row[headerIndexes.student_id] || '',
+          class_name: headerIndexes.class_name !== undefined ? row[headerIndexes.class_name] || '' : '',
+          group_name: headerIndexes.group_name !== undefined ? row[headerIndexes.group_name] || '' : '',
+          pin: headerIndexes.pin !== undefined ? row[headerIndexes.pin] || '' : ''
+        };
+      }
+
+      let name = row[0] || '';
+      let student_id = row[1] || '';
+      if (looksLikeStudentId(row[0]) && !looksLikeStudentId(row[1])) {
+        student_id = row[0] || '';
+        name = row[1] || '';
+      }
+      return { name, student_id, class_name: row[2] || '', group_name: row[3] || '', pin: row[4] || '' };
+    })
+    .map(row => ({
+      name: String(row.name || '').trim(),
+      student_id: String(row.student_id || '').trim(),
+      class_name: String(row.class_name || defaultClassName || '').trim(),
+      group_name: String(row.group_name || '').trim(),
+      pin: String(row.pin || '').trim()
+    }))
+    .filter(row => row.name && row.student_id);
+}
+
 async function fetchActivityByCode(code) {
   const normalized = normalizeInviteCode(code);
   const fields = 'id,course_name,class_name,activity_name,description,invite_code,upload_open,voting_open,comments_open,show_live_ranking,roster_enabled,pin_required,created_at';
@@ -219,7 +324,7 @@ async function fetchActivityAccessPolicy(activityId) {
   };
 }
 
-async function validateRosterLogin(activityId, studentId, pin) {
+async function validateRosterLogin(activityId, studentId, studentName, pin) {
   const policy = await fetchActivityAccessPolicy(activityId);
   if (!policy.roster_enabled && !policy.pin_required) return { required: false };
 
@@ -230,6 +335,9 @@ async function validateRosterLogin(activityId, studentId, pin) {
     .maybeSingle();
   if (error) return { required: true, ok: false, status: 500, error: 'Student roster table is not ready. Run upgrade_v4.sql first.' };
   if (!roster || roster.active === false) return { required: true, ok: false, status: 403, error: 'Student is not on the class roster' };
+  if (policy.roster_enabled && !rosterNameMatches(studentName, roster.name)) {
+    return { required: true, ok: false, status: 403, error: 'Student name and ID do not match the class roster' };
+  }
   if (policy.pin_required && !verifyPin(pin, roster.pin_salt, roster.pin_hash)) {
     return { required: true, ok: false, status: 403, error: 'Invalid student PIN' };
   }
@@ -297,6 +405,16 @@ const upload = multer({
   fileFilter: (req, file, cb) => {
     if (ALLOWED_MIME.includes(file.mimetype)) cb(null, true);
     else cb(new Error('仅支持图片（JPG/PNG/WebP）和 MP4 视频'));
+  }
+});
+
+const rosterUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 2 * 1024 * 1024 },
+  fileFilter: (req, file, cb) => {
+    const filename = String(file.originalname || '').toLowerCase();
+    if (filename.endsWith('.xlsx') || filename.endsWith('.csv')) cb(null, true);
+    else cb(new Error('Only .xlsx and .csv roster files are supported'));
   }
 });
 
@@ -405,7 +523,7 @@ app.post('/api/users', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const rosterAuth = await validateRosterLogin(activity_id, student_id, pin);
+    const rosterAuth = await validateRosterLogin(activity_id, student_id, name, pin);
     if (rosterAuth.required && !rosterAuth.ok) {
       return res.status(rosterAuth.status).json({ error: rosterAuth.error });
     }
@@ -443,6 +561,94 @@ app.post('/api/users', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+async function getActivityDefaultClassName(activityId) {
+  const { data, error } = await supabase.from('activities').select('class_name').eq('id', activityId).single();
+  if (error) throw error;
+  return sanitizeText(data?.class_name, 80) || '未分班';
+}
+
+async function importRosterStudentsForActivity(req, { activity_id, students, default_class_name }) {
+  if (!activity_id) {
+    const err = new Error('Missing activity_id');
+    err.status = 400;
+    throw err;
+  }
+  if (!Array.isArray(students) || students.length === 0) {
+    const err = new Error('No students to import');
+    err.status = 400;
+    throw err;
+  }
+  if (students.length > 1000) {
+    const err = new Error('Import at most 1000 students at a time');
+    err.status = 400;
+    throw err;
+  }
+
+  const auth = await ensureTeacherCanAccessActivity(req, activity_id);
+  if (!auth.ok) {
+    const err = new Error(auth.error);
+    err.status = auth.status;
+    throw err;
+  }
+
+  const fallbackClassName = sanitizeText(default_class_name, 80) || await getActivityDefaultClassName(activity_id);
+  const payload = [];
+  const seen = new Set();
+  for (const row of students) {
+    const student_id = sanitizeText(row.student_id, 80);
+    const name = sanitizeText(row.name, 80);
+    if (!student_id || !name || seen.has(student_id)) continue;
+    seen.add(student_id);
+
+    payload.push({
+      activity_id,
+      student_id,
+      name,
+      class_name: sanitizeText(row.class_name, 80) || fallbackClassName,
+      group_name: sanitizeText(row.group_name, 80) || null,
+      active: row.active === false ? false : true,
+      pin_hash: null,
+      pin_salt: null
+    });
+  }
+
+  if (payload.length === 0) {
+    const err = new Error('No valid roster rows. The roster must include name and student ID.');
+    err.status = 400;
+    throw err;
+  }
+
+  const { error } = await supabase.from('student_roster')
+    .upsert(payload, { onConflict: 'activity_id,student_id' });
+  if (error) throw error;
+
+  const update = await supabase.from('activities')
+    .update({ roster_enabled: true, pin_required: false })
+    .eq('id', activity_id)
+    .select('id,roster_enabled,pin_required')
+    .single();
+  if (update.error) throw update.error;
+
+  return { ok: true, imported: payload.length, activity: update.data };
+}
+
+async function readRosterStudentsFromFile(file, defaultClassName) {
+  const filename = String(file?.originalname || '').toLowerCase();
+  if (!file?.buffer) return [];
+  let rows = [];
+  if (filename.endsWith('.csv')) {
+    const text = file.buffer.toString('utf8').replace(/^\uFEFF/, '');
+    rows = text.split(/\r?\n/).map(parseCsvLine);
+  } else if (filename.endsWith('.xlsx')) {
+    rows = await readXlsxFile(file.buffer);
+  } else {
+    const err = new Error('Only .xlsx and .csv roster files are supported');
+    err.status = 400;
+    throw err;
+  }
+  return normalizeRosterRows(rows, defaultClassName);
+}
+
 app.get('/api/teacher/roster', teacherAuth, async (req, res) => {
   try {
     const { activity_id } = req.query;
@@ -467,56 +673,44 @@ app.get('/api/teacher/roster', teacherAuth, async (req, res) => {
 app.post('/api/teacher/roster/import', teacherAuth, async (req, res) => {
   try {
     const activity_id = String(req.body.activity_id ?? '').trim();
-    const students = Array.isArray(req.body.students) ? req.body.students : [];
-    const default_class_name = sanitizeText(req.body.default_class_name, 80);
-    if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
-    if (students.length === 0) return res.status(400).json({ error: 'No students to import' });
-    if (students.length > 1000) return res.status(400).json({ error: 'Import at most 1000 students at a time' });
+    const rawStudents = Array.isArray(req.body.students) ? req.body.students : [];
+    const students = normalizeRosterRows(
+      rawStudents.map(row => [row.name, row.student_id, row.class_name, row.group_name, row.pin]),
+      req.body.default_class_name
+    );
+    const result = await importRosterStudentsForActivity(req, {
+      activity_id,
+      students,
+      default_class_name: req.body.default_class_name
+    });
+    res.json(result);
+  } catch (e) {
+    const status = e.status || (/student_roster|pin_hash|pin_salt|constraint|conflict|roster_enabled|pin_required/i.test(e.message || '') ? 500 : 500);
+    const message = status === 500 && /student_roster|pin_hash|pin_salt|constraint|conflict|roster_enabled|pin_required/i.test(e.message || '')
+      ? 'Student roster schema is not ready. Run upgrade_v4.sql first.'
+      : e.message;
+    res.status(status).json({ error: message });
+  }
+});
 
-    const auth = await ensureTeacherCanAccessActivity(req, activity_id);
-    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
-
-    let activityDefaultClass = default_class_name;
-    if (!activityDefaultClass) {
-      const activity = await getActivitySafe(activity_id);
-      activityDefaultClass = sanitizeText(activity?.class_name, 80);
-    }
-
-    const payload = [];
-    const seen = new Set();
-    for (const row of students) {
-      const student_id = sanitizeText(row.student_id, 80);
-      if (!student_id || seen.has(student_id)) continue;
-      seen.add(student_id);
-      const name = sanitizeText(row.name, 80);
-      const class_name = sanitizeText(row.class_name, 80) || activityDefaultClass;
-      const group_name = sanitizeText(row.group_name, 80) || null;
-      const pin = String(row.pin ?? '').trim();
-      const pinHash = pin ? hashPin(pin) : null;
-      if (!name || !class_name) continue;
-      payload.push({
-        activity_id,
-        student_id,
-        name,
-        class_name,
-        group_name,
-        active: row.active === false ? false : true,
-        pin_hash: pinHash?.hash || null,
-        pin_salt: pinHash?.salt || null
-      });
-    }
-    if (payload.length === 0) return res.status(400).json({ error: 'No valid roster rows' });
-
-    const { error } = await supabase.from('student_roster')
-      .upsert(payload, { onConflict: 'activity_id,student_id' });
-    if (error) {
-      if (/student_roster|pin_hash|pin_salt|constraint|conflict/i.test(error.message || '')) {
-        return res.status(500).json({ error: 'Student roster schema is not ready. Run upgrade_v4.sql first.' });
-      }
-      throw error;
-    }
-    res.json({ ok: true, imported: payload.length });
-  } catch (e) { res.status(500).json({ error: e.message }); }
+app.post('/api/teacher/roster/import-file', teacherAuth, rosterUpload.single('roster'), async (req, res) => {
+  try {
+    const activity_id = String(req.body.activity_id ?? '').trim();
+    if (!req.file) return res.status(400).json({ error: 'Missing roster file' });
+    const students = await readRosterStudentsFromFile(req.file, req.body.default_class_name);
+    const result = await importRosterStudentsForActivity(req, {
+      activity_id,
+      students,
+      default_class_name: req.body.default_class_name
+    });
+    res.json(result);
+  } catch (e) {
+    const status = e.status || (/student_roster|pin_hash|pin_salt|constraint|conflict|roster_enabled|pin_required/i.test(e.message || '') ? 500 : 500);
+    const message = status === 500 && /student_roster|pin_hash|pin_salt|constraint|conflict|roster_enabled|pin_required/i.test(e.message || '')
+      ? 'Student roster schema is not ready. Run upgrade_v4.sql first.'
+      : e.message;
+    res.status(status).json({ error: message });
+  }
 });
 
 // ─── MEDIA UPLOAD (image + video) ───
