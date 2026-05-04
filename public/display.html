@@ -54,6 +54,18 @@
     .spotlight-comment-text { color: #e2e8f0; font-size: 0.9rem; line-height: 1.5; }
     .spotlight-comment-time { color: #475569; font-size: 0.75rem; margin-top: 6px; }
     .spotlight-empty { color: #475569; text-align: center; padding: 20px; font-size: 0.9rem; }
+    .spotlight-action-box { margin-bottom: 20px; padding: 16px; border-radius: 16px; background: rgba(15,23,42,0.72); border: 1px solid rgba(99,102,241,0.2); }
+    .spotlight-action-title { font-size: 0.95rem; font-weight: 800; color: #e2e8f0; margin-bottom: 10px; }
+    .spotlight-action-hint { color: #94a3b8; font-size: 0.88rem; line-height: 1.6; }
+    .spotlight-link-btn { display:inline-flex; align-items:center; justify-content:center; margin-top:10px; padding:8px 12px; border-radius:10px; text-decoration:none; font-size:0.85rem; font-weight:700; background:#6366f1; color:#fff; }
+    .spotlight-rate-row { display:flex; gap:6px; justify-content:center; margin-bottom:8px; flex-wrap:wrap; }
+    .spotlight-rate-star-btn { background:none; border:none; color:#334155; font-size:2rem; cursor:pointer; transition:transform 0.15s ease,color 0.15s ease; padding:0; line-height:1; }
+    .spotlight-rate-star-btn.active, .spotlight-rate-star-btn:hover { color:#f59e0b; transform:scale(1.06); }
+    .spotlight-rate-hint { text-align:center; color:#94a3b8; font-size:0.82rem; margin-bottom:14px; }
+    .spotlight-comment-compose { display:flex; gap:10px; margin-top:12px; }
+    .spotlight-comment-compose input { flex:1; min-width:0; background:rgba(255,255,255,0.08); border:1px solid rgba(148,163,184,0.2); border-radius:12px; color:#f8fafc; padding:10px 12px; }
+    .spotlight-comment-compose input::placeholder { color:#64748b; }
+    .spotlight-open-detail { margin-top:14px; width:100%; }
     .spotlight-close {
       position: fixed; top: 24px; right: 32px; z-index: 600;
       background: rgba(255,255,255,0.15); border: none; color: #f1f5f9;
@@ -161,6 +173,7 @@
           <div class="spotlight-stat"><div class="spotlight-stat-val" id="spotRaters">0</div><div class="spotlight-stat-lbl">评分人数</div></div>
         </div>
         <div class="spotlight-stars" id="spotStars"></div>
+        <div id="spotActionBox" class="spotlight-action-box"></div>
         <div class="spotlight-comments-title">💬 匿名评价</div>
         <div id="spotComments"><div class="spotlight-empty">暂无评价</div></div>
       </div>
@@ -174,6 +187,12 @@
     let actId = sessionStorage.getItem('classshow_activity_id');
     let act = JSON.parse(sessionStorage.getItem('classshow_activity') || '{}');
     const codeFromUrl = (new URLSearchParams(location.search).get('code') || '').trim().toUpperCase();
+    const viewerUser = getSession();
+    const viewerIsGuest = isGuest();
+    const teacherMode = !!sessionStorage.getItem('teacherToken') && !viewerUser;
+    let activeSpotlightWork = null;
+    let activeSpotlightMyRating = 0;
+    let spotlightViewTimer = null;
 
     function updateDisplayHeader() {
       document.getElementById('displayTitle').textContent = act.activity_name || '课堂作品秀';
@@ -311,7 +330,7 @@
                 ? `<video class="display-rank-img" src="${w.image_url}" preload="metadata" muted playsinline
                      style="object-fit:cover;" onloadedmetadata="this.currentTime=0.001"></video>`
                 : `<img class="display-rank-img" src="${w.image_url}" alt="">`;
-              return `<div class="display-rank-item">
+            return `<div class="display-rank-item" style="cursor:pointer;" onclick="openSpotlight('${w.id}')">
                 <span class="rank-badge ${i===0?'gold':i===1?'silver':i===2?'bronze':''}">${i+1}</span>
                 ${thumb}
                 <div class="display-rank-info">
@@ -440,8 +459,12 @@
     async function openSpotlight(submissionId) {
       const overlay = document.getElementById('spotlightOverlay');
       try {
+        clearTimeout(spotlightViewTimer);
+        const qs = viewerUser?.id ? ('?viewer_user_id=' + encodeURIComponent(viewerUser.id)) : '';
         // Fetch submission detail
-        const work = await api('/submissions/' + submissionId);
+        const work = await api('/submissions/' + submissionId + qs);
+        activeSpotlightWork = work;
+        activeSpotlightMyRating = 0;
         // Render media: video or image
         const spotMediaWrap = document.getElementById('spotMediaWrap');
         if (isVideo(work.image_url)) {
@@ -465,20 +488,20 @@
         ).join('');
 
         // Load comments
-        try {
-          const comments = await api('/comments?submission_id=' + submissionId);
-          if (comments.length > 0) {
-            document.getElementById('spotComments').innerHTML = comments.map(c => `
-              <div class="spotlight-comment">
-                <div class="spotlight-comment-text">${c.content}</div>
-                <div class="spotlight-comment-time">${timeAgo(c.created_at)}</div>
-              </div>
-            `).join('');
-          } else {
-            document.getElementById('spotComments').innerHTML = '<div class="spotlight-empty">暂无评价</div>';
-          }
-        } catch (e) {
-          document.getElementById('spotComments').innerHTML = '<div class="spotlight-empty">评论加载失败</div>';
+        await loadSpotlightComments(submissionId);
+        await renderSpotlightActions(work);
+
+        if (viewerUser?.id && !work.is_owner) {
+          spotlightViewTimer = setTimeout(() => {
+            api('/views', {
+              method: 'POST',
+              body: JSON.stringify({
+                activity_id: actId,
+                submission_id: submissionId,
+                viewer_user_id: viewerUser.id
+              })
+            }).catch(() => {});
+          }, 3000);
         }
 
         // Show overlay with animation
@@ -496,6 +519,9 @@
     function closeSpotlight(event) {
       if (event && event.target !== event.currentTarget) return;
       const overlay = document.getElementById('spotlightOverlay');
+      clearTimeout(spotlightViewTimer);
+      activeSpotlightWork = null;
+      activeSpotlightMyRating = 0;
       overlay.classList.remove('active');
       document.getElementById('spotlightClose').style.display = 'none';
       // Stop any playing video
@@ -506,6 +532,155 @@
 
     function handleEsc(e) {
       if (e.key === 'Escape') closeSpotlight();
+    }
+
+    async function loadSpotlightComments(submissionId) {
+      try {
+        const comments = await api('/comments?submission_id=' + submissionId);
+        if (comments.length > 0) {
+          document.getElementById('spotComments').innerHTML = comments.map(c => `
+            <div class="spotlight-comment">
+              <div class="spotlight-comment-text">${c.content}</div>
+              <div class="spotlight-comment-time">${timeAgo(c.created_at)}</div>
+            </div>
+          `).join('');
+        } else {
+          document.getElementById('spotComments').innerHTML = '<div class="spotlight-empty">暂无评价</div>';
+        }
+      } catch (e) {
+        document.getElementById('spotComments').innerHTML = '<div class="spotlight-empty">评论加载失败</div>';
+      }
+    }
+
+    function renderSpotlightRatingStars() {
+      const box = document.getElementById('spotActionBox');
+      box.querySelectorAll('.spotlight-rate-star-btn').forEach(el => {
+        const val = Number(el.dataset.value || 0);
+        el.classList.toggle('active', val <= activeSpotlightMyRating);
+      });
+      const hint = document.getElementById('spotRateHint');
+      if (hint) {
+        hint.textContent = activeSpotlightMyRating
+          ? `你已评 ${activeSpotlightMyRating} 分，点击星星可修改`
+          : '点击星星即可匿名评分';
+      }
+    }
+
+    async function renderSpotlightActions(work) {
+      const box = document.getElementById('spotActionBox');
+      const loginUrl = 'index.html' + ((act && act.invite_code) ? ('?code=' + encodeURIComponent(act.invite_code)) : '');
+
+      if (teacherMode) {
+        box.innerHTML = '<div class="spotlight-action-title">教师展示模式</div><div class="spotlight-action-hint">当前大屏用于展示，教师端不参与评分或评论。</div>';
+        return;
+      }
+      if (!viewerUser || viewerIsGuest) {
+        box.innerHTML = `
+          <div class="spotlight-action-title">登录后可互动</div>
+          <div class="spotlight-action-hint">学生登录后，可在大屏中直接为其他同学的作品评分和评论。</div>
+          <a class="spotlight-link-btn" href="${loginUrl}">去登录学生账号</a>
+        `;
+        return;
+      }
+      if (work.is_owner) {
+        box.innerHTML = `
+          <div class="spotlight-action-title">这是你的作品</div>
+          <div class="spotlight-action-hint">为保证公平，你不能给自己的作品评分或评论，但仍可在这里放大查看。</div>
+          <button class="btn btn-secondary spotlight-open-detail" onclick="location.href='student-detail.html?id=${encodeURIComponent(work.id)}'">打开作品详情页</button>
+        `;
+        return;
+      }
+
+      try {
+        const myRatings = await api('/ratings/my?activity_id=' + actId + '&user_id=' + viewerUser.id);
+        const existing = (myRatings || []).find(r => String(r.submission_id) === String(work.id));
+        activeSpotlightMyRating = existing ? Number(existing.score) : 0;
+      } catch (e) {
+        box.innerHTML = `
+          <div class="spotlight-action-title">学生会话已失效</div>
+          <div class="spotlight-action-hint">请重新登录后，再在大屏中进行评分和评论。</div>
+          <a class="spotlight-link-btn" href="${loginUrl}">重新登录</a>
+        `;
+        return;
+      }
+
+      box.innerHTML = `
+        <div class="spotlight-action-title">直接互动</div>
+        ${act.voting_open
+          ? `
+            <div class="spotlight-rate-row">
+              ${[1,2,3,4,5].map(i => `<button type="button" class="spotlight-rate-star-btn" data-value="${i}" onclick="rateFromSpotlight(${i})">★</button>`).join('')}
+            </div>
+            <div id="spotRateHint" class="spotlight-rate-hint"></div>
+          `
+          : '<div class="spotlight-action-hint" style="margin-bottom:10px;">教师暂未开放评分。</div>'}
+        ${act.comments_open
+          ? `
+            <div class="spotlight-action-hint">你可以直接在这里匿名评论这份作品。</div>
+            <div class="spotlight-comment-compose">
+              <input type="text" id="spotCommentInput" maxlength="100" placeholder="写下你的评价或建议...">
+              <button class="btn btn-primary" type="button" onclick="postSpotlightComment()">发送</button>
+            </div>
+          `
+          : '<div class="spotlight-action-hint">教师暂未开放评论。</div>'}
+        <button class="btn btn-secondary spotlight-open-detail" onclick="location.href='student-detail.html?id=${encodeURIComponent(work.id)}'">打开完整详情页</button>
+      `;
+
+      if (act.voting_open) renderSpotlightRatingStars();
+    }
+
+    async function rateFromSpotlight(score) {
+      if (!activeSpotlightWork || !viewerUser?.id || activeSpotlightWork.is_owner) return;
+      try {
+        const res = await api('/ratings', {
+          method: 'POST',
+          body: JSON.stringify({
+            activity_id: actId,
+            submission_id: activeSpotlightWork.id,
+            rater_user_id: viewerUser.id,
+            score
+          })
+        });
+        activeSpotlightMyRating = score;
+        renderSpotlightRatingStars();
+        document.getElementById('spotAvg').textContent = Number(res.average).toFixed(1);
+        document.getElementById('spotRaters').textContent = res.count;
+        if (activeSpotlightWork) {
+          activeSpotlightWork.average_rating = res.average;
+          activeSpotlightWork.rating_count = res.count;
+        }
+        toast('评分成功', 'success');
+        refresh();
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    }
+
+    async function postSpotlightComment() {
+      if (!activeSpotlightWork || !viewerUser?.id || activeSpotlightWork.is_owner) return;
+      const input = document.getElementById('spotCommentInput');
+      if (!input) return;
+      const content = input.value.trim();
+      if (!content) return;
+      try {
+        await api('/comments', {
+          method: 'POST',
+          body: JSON.stringify({
+            activity_id: actId,
+            submission_id: activeSpotlightWork.id,
+            user_id: viewerUser.id,
+            content
+          })
+        });
+        input.value = '';
+        const countEl = document.getElementById('spotCommentsCount');
+        countEl.textContent = Number(countEl.textContent || 0) + 1;
+        toast('评论已发送', 'success');
+        await loadSpotlightComments(activeSpotlightWork.id);
+        refresh();
+      } catch (e) {
+        toast(e.message, 'error');
+      }
     }
   </script>
 </body>
