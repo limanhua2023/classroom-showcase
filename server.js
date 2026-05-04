@@ -31,6 +31,9 @@ if (!APP_SECRET) {
 }
 const EFFECTIVE_APP_SECRET = APP_SECRET || 'classshow-local-dev-secret-change-me';
 const TEACHER_TOKEN_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+const FEEDBACK_COOLDOWN_MS = 60 * 1000;
+const FEEDBACK_HISTORY_SCAN_LIMIT = 100;
+const FEEDBACK_MIN_MEANINGFUL_CHARS = 3;
 
 function escapeHtml(input = '') {
   const str = String(input);
@@ -44,6 +47,21 @@ function escapeHtml(input = '') {
 
 function sanitizeText(input, maxLen = 200) {
   return escapeHtml(String(input ?? '').trim()).slice(0, maxLen);
+}
+
+function normalizeFeedbackTextForDedup(input = '') {
+  return String(input ?? '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/gu, '')
+    .replace(/[\p{P}\p{S}]/gu, '');
+}
+
+function isLowQualityFeedbackText(input = '') {
+  const meaningful = normalizeFeedbackTextForDedup(input);
+  if (meaningful.length < FEEDBACK_MIN_MEANINGFUL_CHARS) return true;
+  if (/^(.)\1{2,}$/u.test(meaningful)) return true;
+  return false;
 }
 
 function formatAppTimestampCN(date = new Date()) {
@@ -1331,21 +1349,32 @@ app.post('/api/activity-feedback', studentAuth, async (req, res) => {
     const activity_id = String(req.body.activity_id ?? '').trim();
     const user_id = String(req.body.user_id ?? '').trim();
     const safeContent = sanitizeText(req.body.content, 300);
+    const normalizedContent = normalizeFeedbackTextForDedup(safeContent);
     if (!activity_id || !user_id || !safeContent) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
+    if (isLowQualityFeedbackText(safeContent)) {
+      return res.status(400).json({ error: '反馈内容过短或无意义，请写清具体问题后再提交' });
+    }
 
-    const { data: recent, error: recentError } = await supabase.from('comments')
-      .select('id, created_at')
+    const { data: history, error: historyError } = await supabase.from('comments')
+      .select('id, content, created_at')
       .eq('activity_id', activity_id)
       .eq('user_id', user_id)
       .is('submission_id', null)
       .order('created_at', { ascending: false })
-      .limit(1);
-    if (recentError && !/comments/i.test(recentError.message || '')) throw recentError;
-    const lastCreatedAt = recent?.[0]?.created_at ? new Date(recent[0].created_at).getTime() : 0;
-    if (lastCreatedAt && Date.now() - lastCreatedAt < 15 * 1000) {
-      return res.status(429).json({ error: 'Please wait 15 seconds before posting another suggestion' });
+      .limit(FEEDBACK_HISTORY_SCAN_LIMIT);
+    if (historyError && !/comments/i.test(historyError.message || '')) throw historyError;
+
+    const feedbackHistory = history || [];
+    const lastCreatedAt = feedbackHistory[0]?.created_at ? new Date(feedbackHistory[0].created_at).getTime() : 0;
+    if (lastCreatedAt && Date.now() - lastCreatedAt < FEEDBACK_COOLDOWN_MS) {
+      return res.status(429).json({ error: '每位学生每 60 秒只能提交 1 条信息反馈，请稍后再试' });
+    }
+
+    const duplicateExists = feedbackHistory.some(row => normalizeFeedbackTextForDedup(row.content) === normalizedContent);
+    if (duplicateExists) {
+      return res.status(409).json({ error: '检测到重复反馈，请不要重复提交相同内容' });
     }
 
     const { data, error } = await supabase.from('comments').insert([{
