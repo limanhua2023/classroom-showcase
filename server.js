@@ -34,6 +34,9 @@ const TEACHER_TOKEN_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
 const FEEDBACK_COOLDOWN_MS = 60 * 1000;
 const FEEDBACK_HISTORY_SCAN_LIMIT = 100;
 const FEEDBACK_MIN_MEANINGFUL_CHARS = 3;
+const DEFAULT_FEEDBACK_DAILY_LIMIT = 5;
+const MAX_FEEDBACK_DAILY_LIMIT = 20;
+const BANGKOK_UTC_OFFSET_MS = 7 * 60 * 60 * 1000;
 
 function escapeHtml(input = '') {
   const str = String(input);
@@ -50,11 +53,9 @@ function sanitizeText(input, maxLen = 200) {
 }
 
 function normalizeFeedbackTextForDedup(input = '') {
-  return String(input ?? '')
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/gu, '')
-    .replace(/[\p{P}\p{S}]/gu, '');
+  return Array.from(String(input ?? '').trim().toLowerCase())
+    .filter(ch => /[a-z0-9\u4e00-\u9fff]/i.test(ch))
+    .join('');
 }
 
 function isLowQualityFeedbackText(input = '') {
@@ -62,6 +63,36 @@ function isLowQualityFeedbackText(input = '') {
   if (meaningful.length < FEEDBACK_MIN_MEANINGFUL_CHARS) return true;
   if (/^(.)\1{2,}$/u.test(meaningful)) return true;
   return false;
+}
+
+function normalizeFeedbackDailyLimit(value) {
+  const num = Number(value);
+  if (!Number.isInteger(num) || num < 0) return DEFAULT_FEEDBACK_DAILY_LIMIT;
+  return Math.min(num, MAX_FEEDBACK_DAILY_LIMIT);
+}
+
+function parseFeedbackDailyLimitInput(value) {
+  const num = Number(value);
+  if (!Number.isInteger(num) || num < 0 || num > MAX_FEEDBACK_DAILY_LIMIT) {
+    const err = new Error(`Daily feedback limit must be an integer between 0 and ${MAX_FEEDBACK_DAILY_LIMIT}`);
+    err.status = 400;
+    throw err;
+  }
+  return num;
+}
+
+function getBangkokDayRange(date = new Date()) {
+  const shifted = new Date(date.getTime() + BANGKOK_UTC_OFFSET_MS);
+  const startUtcMs = Date.UTC(
+    shifted.getUTCFullYear(),
+    shifted.getUTCMonth(),
+    shifted.getUTCDate()
+  ) - BANGKOK_UTC_OFFSET_MS;
+  const endUtcMs = startUtcMs + 24 * 60 * 60 * 1000;
+  return {
+    startIso: new Date(startUtcMs).toISOString(),
+    endIso: new Date(endUtcMs).toISOString()
+  };
 }
 
 function formatAppTimestampCN(date = new Date()) {
@@ -390,9 +421,9 @@ function normalizeRosterRows(rows, defaultClassName = '') {
 
 async function fetchActivityByCode(code) {
   const normalized = normalizeInviteCode(code);
-  const fields = 'id,course_name,class_name,activity_name,description,invite_code,upload_open,voting_open,comments_open,show_live_ranking,roster_enabled,pin_required,created_at';
+  const fields = 'id,course_name,class_name,activity_name,description,invite_code,upload_open,voting_open,comments_open,show_live_ranking,roster_enabled,pin_required,feedback_daily_limit,created_at';
   let result = await supabase.from('activities').select(fields).eq('invite_code', normalized).single();
-  if (result.error && /roster_enabled|pin_required|comments_open/i.test(result.error.message || '')) {
+  if (result.error && /roster_enabled|pin_required|comments_open|feedback_daily_limit/i.test(result.error.message || '')) {
     result = await supabase.from('activities')
       .select('id,course_name,class_name,activity_name,description,invite_code,upload_open,voting_open,comments_open,show_live_ranking,created_at')
       .eq('invite_code', normalized).single();
@@ -400,6 +431,7 @@ async function fetchActivityByCode(code) {
   if (result.data) {
     result.data.roster_enabled = !!result.data.roster_enabled;
     result.data.pin_required = !!result.data.pin_required;
+    result.data.feedback_daily_limit = normalizeFeedbackDailyLimit(result.data.feedback_daily_limit);
   }
   return result;
 }
@@ -588,19 +620,23 @@ app.put('/api/activities/:id', teacherAuth, async (req, res) => {
     const auth = await ensureTeacherCanAccessActivity(req, req.params.id);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
-    const allowed = ['upload_open', 'voting_open', 'comments_open', 'show_live_ranking', 'roster_enabled', 'pin_required', 'description', 'activity_name'];
+    const allowed = ['upload_open', 'voting_open', 'comments_open', 'show_live_ranking', 'roster_enabled', 'pin_required', 'description', 'activity_name', 'feedback_daily_limit'];
     const payload = {};
     for (const key of allowed) {
       if (!(key in req.body)) continue;
       if (key === 'description') payload[key] = sanitizeText(req.body[key], 500);
       else if (key === 'activity_name') payload[key] = sanitizeText(req.body[key], 120);
+      else if (key === 'feedback_daily_limit') payload[key] = parseFeedbackDailyLimitInput(req.body[key]);
       else payload[key] = coerceBoolean(req.body[key]);
     }
 
     const { data, error } = await supabase.from('activities').update(payload).eq('id', req.params.id).select().single();
+    if (error && /feedback_daily_limit/i.test(error.message || '')) {
+      return res.status(500).json({ error: 'Feedback moderation schema is not ready. Run upgrade_v4.sql first.' });
+    }
     if (error) throw error;
     res.json(sanitizeActivity(data));
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) { res.status(e.status || 500).json({ error: e.message }); }
 });
 
 // ─── USERS ───
@@ -766,10 +802,18 @@ app.get('/api/teacher/roster', teacherAuth, async (req, res) => {
     const auth = await ensureTeacherCanAccessActivity(req, activity_id);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
-    const { data, error } = await supabase.from('student_roster')
-      .select('id,student_id,name,class_name,group_name,active,created_at')
+    let { data, error } = await supabase.from('student_roster')
+      .select('id,student_id,name,class_name,group_name,active,feedback_muted,created_at')
       .eq('activity_id', activity_id)
       .order('student_id', { ascending: true });
+    if (error && /feedback_muted/i.test(error.message || '')) {
+      const retry = await supabase.from('student_roster')
+        .select('id,student_id,name,class_name,group_name,active,created_at')
+        .eq('activity_id', activity_id)
+        .order('student_id', { ascending: true });
+      data = (retry.data || []).map(row => ({ ...row, feedback_muted: false }));
+      error = retry.error;
+    }
     if (error) {
       if (/student_roster/i.test(error.message || '')) {
         return res.status(500).json({ error: 'Student roster table is not ready. Run upgrade_v4.sql first.' });
@@ -1260,6 +1304,82 @@ function feedbackLikesWriteErrorMessage(error) {
   return message || 'Feedback like failed';
 }
 
+function isFeedbackModerationSchemaError(message) {
+  return /feedback_muted|feedback_daily_limit/i.test(message || '');
+}
+
+function feedbackModerationWriteErrorMessage(error) {
+  const message = error?.message || '';
+  if (isFeedbackModerationSchemaError(message) || /student_roster/i.test(message)) {
+    return 'Feedback moderation schema is not ready. Run upgrade_v4.sql first.';
+  }
+  return message || 'Feedback moderation update failed';
+}
+
+async function fetchActivityFeedbackSettings(activityId) {
+  const { data, error } = await supabase.from('activities')
+    .select('id,feedback_daily_limit')
+    .eq('id', activityId)
+    .single();
+  if (error && isFeedbackModerationSchemaError(error.message || '')) {
+    return { ready: false, daily_limit: DEFAULT_FEEDBACK_DAILY_LIMIT };
+  }
+  if (error) throw error;
+  return {
+    ready: true,
+    daily_limit: normalizeFeedbackDailyLimit(data?.feedback_daily_limit)
+  };
+}
+
+async function fetchUserFeedbackPostingState(activityId, userId) {
+  const settings = await fetchActivityFeedbackSettings(activityId);
+  const { startIso, endIso } = getBangkokDayRange();
+  const [{ data: user, error: userError }, { count, error: countError }] = await Promise.all([
+    supabase.from('users')
+      .select('id,student_id')
+      .eq('id', userId)
+      .eq('activity_id', activityId)
+      .single(),
+    supabase.from('comments')
+      .select('id', { count: 'exact', head: true })
+      .eq('activity_id', activityId)
+      .eq('user_id', userId)
+      .is('submission_id', null)
+      .gte('created_at', startIso)
+      .lt('created_at', endIso)
+  ]);
+  if (userError) throw userError;
+  if (countError) throw countError;
+
+  let feedbackMuted = false;
+  let rosterReady = true;
+  if (user?.student_id) {
+    const { data: roster, error: rosterError } = await supabase.from('student_roster')
+      .select('feedback_muted')
+      .eq('activity_id', activityId)
+      .eq('student_id', user.student_id)
+      .maybeSingle();
+    if (rosterError && /student_roster/i.test(rosterError.message || '')) {
+      rosterReady = false;
+    } else if (rosterError && isFeedbackModerationSchemaError(rosterError.message || '')) {
+      rosterReady = false;
+    } else if (rosterError) {
+      throw rosterError;
+    } else {
+      feedbackMuted = !!roster?.feedback_muted;
+    }
+  }
+
+  return {
+    daily_limit: settings.daily_limit,
+    feedback_muted: feedbackMuted,
+    feedback_count_today: count || 0,
+    roster_ready: rosterReady,
+    settings_ready: settings.ready,
+    student_id: user?.student_id || null
+  };
+}
+
 async function fetchFeedbackLikeState(activityId, viewerUserId = null) {
   try {
     const { data, error } = await supabase.from('activity_feedback_likes')
@@ -1295,11 +1415,23 @@ async function listActivityFeedback({ activityId, sort = 'latest', viewerUserId 
   if (error) throw error;
 
   const likeState = await fetchFeedbackLikeState(activityId, viewerUserId);
+  let rosterMuteMap = new Map();
+  if (includeUsers) {
+    const { data: rosterRows, error: rosterError } = await supabase.from('student_roster')
+      .select('student_id,feedback_muted')
+      .eq('activity_id', activityId);
+    if (!rosterError) {
+      rosterMuteMap = new Map((rosterRows || []).map(row => [String(row.student_id || ''), !!row.feedback_muted]));
+    } else if (!/student_roster/i.test(rosterError.message || '') && !isFeedbackModerationSchemaError(rosterError.message || '')) {
+      throw rosterError;
+    }
+  }
   const items = (data || []).map(row => ({
     ...row,
     label: '实名反馈',
     like_count: likeState.likeCountMap[row.id] || 0,
-    liked_by_me: likeState.likedSet.has(String(row.id))
+    liked_by_me: likeState.likedSet.has(String(row.id)),
+    feedback_muted: includeUsers ? !!rosterMuteMap.get(String(row.users?.student_id || '')) : false
   }));
 
   items.sort((a, b) => {
@@ -1321,6 +1453,11 @@ app.get('/api/activity-feedback', async (req, res) => {
     const { activity_id } = req.query;
     if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
     let viewerUserId = null;
+    let viewerState = {
+      daily_limit: DEFAULT_FEEDBACK_DAILY_LIMIT,
+      feedback_muted: false,
+      feedback_count_today: 0
+    };
     const token = req.headers['x-user-token'];
     if (token && req.query.user_id) {
       const auth = await validateStudentToken({
@@ -1328,8 +1465,14 @@ app.get('/api/activity-feedback', async (req, res) => {
         userId: req.query.user_id,
         activityId: activity_id
       });
-      if (auth.ok) viewerUserId = String(req.query.user_id);
+      if (auth.ok) {
+        viewerUserId = String(req.query.user_id);
+        viewerState = await fetchUserFeedbackPostingState(activity_id, viewerUserId);
+      }
     }
+    const feedbackSettings = viewerUserId
+      ? { daily_limit: viewerState.daily_limit }
+      : await fetchActivityFeedbackSettings(activity_id);
     const result = await listActivityFeedback({
       activityId: activity_id,
       sort: req.query.sort,
@@ -1337,10 +1480,26 @@ app.get('/api/activity-feedback', async (req, res) => {
       includeUsers: true,
       limit: 50
     });
-    res.json(result);
+    res.json({
+      ...result,
+      daily_limit: feedbackSettings.daily_limit,
+      viewer_feedback_muted: !!viewerState.feedback_muted,
+      viewer_feedback_count_today: viewerState.feedback_count_today || 0,
+      viewer_feedback_remaining_today: feedbackSettings.daily_limit > 0
+        ? Math.max(feedbackSettings.daily_limit - (viewerState.feedback_count_today || 0), 0)
+        : null
+    });
   } catch (e) {
     console.warn('Activity feedback query failed:', e.message);
-    res.json({ sort: normalizeFeedbackSort(req.query.sort), likes_enabled: false, items: [] });
+    res.json({
+      sort: normalizeFeedbackSort(req.query.sort),
+      likes_enabled: false,
+      items: [],
+      daily_limit: DEFAULT_FEEDBACK_DAILY_LIMIT,
+      viewer_feedback_muted: false,
+      viewer_feedback_count_today: 0,
+      viewer_feedback_remaining_today: DEFAULT_FEEDBACK_DAILY_LIMIT
+    });
   }
 });
 
@@ -1355,6 +1514,14 @@ app.post('/api/activity-feedback', studentAuth, async (req, res) => {
     }
     if (isLowQualityFeedbackText(safeContent)) {
       return res.status(400).json({ error: '反馈内容过短或无意义，请写清具体问题后再提交' });
+    }
+
+    const postingState = await fetchUserFeedbackPostingState(activity_id, user_id);
+    if (postingState.feedback_muted) {
+      return res.status(403).json({ error: '你已被教师禁言反馈，当前不能继续提交信息反馈' });
+    }
+    if (postingState.daily_limit > 0 && postingState.feedback_count_today >= postingState.daily_limit) {
+      return res.status(429).json({ error: `你今天的信息反馈次数已达上限（${postingState.daily_limit} 条）` });
     }
 
     const { data: history, error: historyError } = await supabase.from('comments')
@@ -1390,6 +1557,36 @@ app.post('/api/activity-feedback', studentAuth, async (req, res) => {
       throw error;
     }
     res.status(201).json({ ...data, label: '实名反馈' });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/activity-feedback/:id', studentAuth, async (req, res) => {
+  try {
+    const activity_id = String(req.body.activity_id ?? '').trim();
+    const user_id = String(req.body.user_id ?? '').trim();
+    if (!activity_id || !user_id) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const { data: feedback, error: feedbackError } = await supabase.from('comments')
+      .select('id,activity_id,user_id,submission_id')
+      .eq('id', req.params.id)
+      .single();
+    if (feedbackError || !feedback || feedback.submission_id) {
+      return res.status(404).json({ error: 'Feedback not found' });
+    }
+    if (String(feedback.activity_id) !== String(activity_id)) {
+      return res.status(400).json({ error: 'Feedback/activity mismatch' });
+    }
+    if (String(feedback.user_id) !== String(user_id)) {
+      return res.status(403).json({ error: 'You can only delete your own feedback' });
+    }
+
+    const { error: deleteError } = await supabase.from('comments').delete().eq('id', req.params.id);
+    if (deleteError) throw deleteError;
+    res.json({ ok: true });
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message });
   }
@@ -1468,15 +1665,50 @@ app.get('/api/teacher/activity-feedback', teacherAuth, async (req, res) => {
     const auth = await ensureTeacherCanAccessActivity(req, activity_id);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
+    const feedbackSettings = await fetchActivityFeedbackSettings(activity_id);
     const result = await listActivityFeedback({
       activityId: activity_id,
       sort: req.query.sort,
       includeUsers: true,
       limit: 200
     });
-    res.json(result);
+    res.json({
+      ...result,
+      daily_limit: feedbackSettings.daily_limit
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+app.put('/api/teacher/activity-feedback-moderation', teacherAuth, async (req, res) => {
+  try {
+    const activity_id = String(req.body.activity_id ?? '').trim();
+    const student_id = sanitizeText(req.body.student_id, 80);
+    const feedback_muted = coerceBoolean(req.body.feedback_muted);
+    if (!activity_id || !student_id) {
+      return res.status(400).json({ error: 'Missing activity_id or student_id' });
+    }
+
+    const auth = await ensureTeacherCanAccessActivity(req, activity_id);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const { data, error } = await supabase.from('student_roster')
+      .update({ feedback_muted })
+      .eq('activity_id', activity_id)
+      .eq('student_id', student_id)
+      .select('id,student_id,name,feedback_muted')
+      .maybeSingle();
+    if (error && (isFeedbackModerationSchemaError(error.message || '') || /student_roster/i.test(error.message || ''))) {
+      return res.status(500).json({ error: feedbackModerationWriteErrorMessage(error) });
+    }
+    if (error) throw error;
+    if (!data) {
+      return res.status(404).json({ error: 'Student roster record not found' });
+    }
+    res.json({ ok: true, roster: data });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
   }
 });
 

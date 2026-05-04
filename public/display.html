@@ -93,10 +93,14 @@
     .feedback-item-text { color:#e2e8f0; font-size:0.94rem; line-height:1.7; white-space:pre-wrap; word-break:break-word; }
     .feedback-item-foot { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; }
     .feedback-item-meta { color:#64748b; font-size:0.78rem; }
+    .feedback-item-actions { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
     .feedback-like-btn { display:inline-flex; align-items:center; gap:6px; border:none; background:rgba(255,255,255,0.06); color:#cbd5e1; padding:7px 12px; border-radius:999px; cursor:pointer; font:inherit; font-size:0.82rem; font-weight:700; transition:all 0.2s ease; }
     .feedback-like-btn:hover:not(:disabled) { transform:translateY(-1px); background:rgba(99,102,241,0.18); color:#e0e7ff; }
     .feedback-like-btn.active { background:rgba(99,102,241,0.2); color:#c7d2fe; }
     .feedback-like-btn:disabled { opacity:0.55; cursor:not-allowed; }
+    .feedback-delete-btn { border:1px solid rgba(248,113,113,0.38); background:rgba(127,29,29,0.22); color:#fecaca; padding:7px 12px; border-radius:999px; cursor:pointer; font:inherit; font-size:0.82rem; font-weight:700; transition:all 0.2s ease; }
+    .feedback-delete-btn:hover { transform:translateY(-1px); background:rgba(127,29,29,0.35); }
+    .feedback-compose-blocked { color:#fca5a5; font-size:0.8rem; line-height:1.5; }
     .spotlight-close {
       position: fixed; top: 24px; right: 32px; z-index: 600;
       background: rgba(255,255,255,0.15); border: none; color: #f1f5f9;
@@ -253,6 +257,12 @@
     let spotlightViewTimer = null;
     let activeFeedbackSort = 'latest';
     let feedbackLikesEnabled = false;
+    let viewerFeedbackMuted = false;
+    let viewerFeedbackCountToday = 0;
+    let viewerFeedbackDailyLimit = Number.isInteger(Number(act.feedback_daily_limit)) && Number(act.feedback_daily_limit) >= 0
+      ? Number(act.feedback_daily_limit)
+      : 5;
+    let feedbackComposerStateKey = '';
     const DISPLAY_NEW_WORK_WINDOW_MS = 10 * 60 * 1000;
     const DISPLAY_NEW_WORK_LABEL_MINUTES = 10;
     const DISPLAY_CAROUSEL_SCROLL_MS = 60 * 1000;
@@ -294,9 +304,40 @@
       }
 
       updateDisplayHeader();
+      feedbackComposerStateKey = '';
       renderFeedbackComposer();
       updateFeedbackSortUi();
       return true;
+    }
+
+    function getFeedbackComposeBlockedMessage() {
+      if (viewerFeedbackMuted) return '你已被教师禁言反馈，当前不能继续提交信息反馈。';
+      if (viewerFeedbackDailyLimit > 0 && viewerFeedbackCountToday >= viewerFeedbackDailyLimit) {
+        return `你今天已达到信息反馈上限（${viewerFeedbackDailyLimit} 条）。`;
+      }
+      return '';
+    }
+
+    function buildFeedbackComposeHint() {
+      const dailyPart = viewerFeedbackDailyLimit > 0
+        ? `本活动每日最多 ${viewerFeedbackDailyLimit} 条。`
+        : '本活动当日条数不限。';
+      return `反馈会实名展示你的姓名和学号。${dailyPart} 每 60 秒最多 1 条，重复内容和无意义内容会被拦截。`;
+    }
+
+    function syncFeedbackComposerIfNeeded() {
+      const nextKey = [
+        teacherMode ? 1 : 0,
+        viewerUser?.id || '',
+        viewerIsGuest ? 1 : 0,
+        viewerFeedbackMuted ? 1 : 0,
+        viewerFeedbackCountToday,
+        viewerFeedbackDailyLimit
+      ].join(':');
+      if (nextKey !== feedbackComposerStateKey) {
+        feedbackComposerStateKey = nextKey;
+        renderFeedbackComposer();
+      }
     }
 
     async function refresh() {
@@ -639,12 +680,14 @@
         container.innerHTML = `<div class="feedback-guest-box">登录学生账号后，可在这里实名提交信息反馈。反馈会显示你的姓名和学号，便于老师核对。<a class="spotlight-link-btn" style="margin-top:10px;" href="${loginUrl}">去登录学生账号</a></div>`;
         return;
       }
+      const blockedMessage = getFeedbackComposeBlockedMessage();
       container.innerHTML = `
         <div class="feedback-compose">
           <textarea id="displayFeedbackInput" maxlength="300" placeholder="例如：优秀作品展示切换可以更慢一点；排行榜可以加作品缩略图；评论区字体可以再大一点……"></textarea>
           <div class="feedback-compose-side">
-            <button class="btn btn-primary" type="button" onclick="postDisplayFeedback()">提交反馈</button>
-            <div class="feedback-compose-hint">反馈会实名展示你的姓名和学号。每 60 秒最多 1 条，重复内容和无意义内容会被拦截。</div>
+            <button class="btn btn-primary" type="button" onclick="postDisplayFeedback()" ${blockedMessage ? 'disabled' : ''}>${viewerFeedbackMuted ? '已禁言' : (viewerFeedbackDailyLimit > 0 && viewerFeedbackCountToday >= viewerFeedbackDailyLimit ? '已达上限' : '提交反馈')}</button>
+            <div class="feedback-compose-hint">${buildFeedbackComposeHint()}</div>
+            ${blockedMessage ? `<div class="feedback-compose-blocked">${escapeHtml(blockedMessage)}</div>` : ''}
           </div>
         </div>
       `;
@@ -676,6 +719,9 @@
         const likeButton = feedbackLikesEnabled
           ? `<button class="feedback-like-btn ${item.liked_by_me ? 'active' : ''}" ${canLike ? `onclick="toggleDisplayFeedbackLike('${item.id}')"` : 'disabled'}>${item.liked_by_me ? '👍 已点赞' : '👍 点赞'} <span>${item.like_count || 0}</span></button>`
           : '';
+        const deleteButton = isOwn
+          ? `<button class="feedback-delete-btn" type="button" onclick="deleteOwnDisplayFeedback('${item.id}')">撤回反馈</button>`
+          : '';
         return `
           <div class="feedback-item">
             <div class="feedback-item-head">
@@ -687,7 +733,7 @@
             <div class="feedback-item-text">${escapeHtml(item.content || '')}</div>
             <div class="feedback-item-foot">
               <div class="feedback-item-meta">${isOwn ? '这是你实名提交的反馈' : '实名反馈，老师可直接核对并跟进'}</div>
-              ${likeButton}
+              <div class="feedback-item-actions">${deleteButton}${likeButton}</div>
             </div>
           </div>
         `;
@@ -705,9 +751,14 @@
         }
         const result = await api('/activity-feedback?' + params.toString());
         feedbackLikesEnabled = !!result.likes_enabled;
+        const nextDailyLimit = Number(result.daily_limit ?? act.feedback_daily_limit);
+        viewerFeedbackDailyLimit = Number.isInteger(nextDailyLimit) && nextDailyLimit >= 0 ? nextDailyLimit : 5;
+        viewerFeedbackMuted = !!result.viewer_feedback_muted;
+        viewerFeedbackCountToday = Number(result.viewer_feedback_count_today || 0);
         if (activeFeedbackSort === 'hot' && !feedbackLikesEnabled) {
           activeFeedbackSort = 'latest';
         }
+        syncFeedbackComposerIfNeeded();
         updateFeedbackSortUi();
         renderDisplayFeedbackList(Array.isArray(result.items) ? result.items : []);
       } catch (e) {
@@ -736,6 +787,8 @@
 
     async function postDisplayFeedback() {
       if (!viewerUser?.id || viewerIsGuest || teacherMode) return;
+      const blockedMessage = getFeedbackComposeBlockedMessage();
+      if (blockedMessage) return toast(blockedMessage, 'error');
       const input = document.getElementById('displayFeedbackInput');
       if (!input) return;
       const content = input.value.trim();
@@ -751,6 +804,24 @@
         });
         input.value = '';
         toast('信息反馈已提交', 'success');
+        await loadDisplayFeedback();
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    }
+
+    async function deleteOwnDisplayFeedback(feedbackId) {
+      if (!viewerUser?.id || viewerIsGuest || teacherMode) return;
+      if (!confirm('确定撤回你刚才提交的这条信息反馈吗？')) return;
+      try {
+        await api('/activity-feedback/' + encodeURIComponent(feedbackId), {
+          method: 'DELETE',
+          body: JSON.stringify({
+            activity_id: actId,
+            user_id: viewerUser.id
+          })
+        });
+        toast('信息反馈已撤回', 'success');
         await loadDisplayFeedback();
       } catch (e) {
         toast(e.message, 'error');

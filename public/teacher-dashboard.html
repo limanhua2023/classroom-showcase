@@ -63,8 +63,8 @@
 
         <div class="table-wrap" style="margin-top:12px;max-height:300px;overflow:auto;">
           <table>
-            <thead><tr><th>姓名</th><th>学号</th><th>状态</th></tr></thead>
-            <tbody id="rosterBody"><tr><td colspan="3" style="color:var(--text-muted);">尚未加载</td></tr></tbody>
+            <thead><tr><th>姓名</th><th>学号</th><th>状态</th><th>反馈权限</th><th>操作</th></tr></thead>
+            <tbody id="rosterBody"><tr><td colspan="5" style="color:var(--text-muted);">尚未加载</td></tr></tbody>
           </table>
         </div>
       </div>
@@ -247,10 +247,34 @@
             <td>${escapeHtml(r.name)}</td>
             <td>${escapeHtml(r.student_id)}</td>
             <td>${r.active === false ? '停用' : '启用'}</td>
+            <td>${r.feedback_muted ? '已禁言反馈' : '反馈正常'}</td>
+            <td><button class="btn btn-sm ${r.feedback_muted ? 'btn-secondary' : 'btn-danger'}" type="button" onclick="toggleRosterFeedbackMute('${encodeURIComponent(r.student_id || '')}', ${r.feedback_muted ? 'false' : 'true'}, '${encodeURIComponent(r.name || '')}')">${r.feedback_muted ? '解除禁言' : '禁言反馈'}</button></td>
           </tr>
-        `).join('') : '<tr><td colspan="3" style="color:var(--text-muted);">暂无名单</td></tr>';
+        `).join('') : '<tr><td colspan="5" style="color:var(--text-muted);">暂无名单</td></tr>';
       } catch (e) {
         document.getElementById('rosterStatus').textContent = '名单功能未初始化';
+      }
+    }
+
+    async function toggleRosterFeedbackMute(studentId, nextMuted, studentName = '') {
+      studentId = decodeURIComponent(studentId || '');
+      studentName = decodeURIComponent(studentName || '');
+      const actionText = nextMuted ? '禁言反馈' : '解除禁言';
+      const targetLabel = studentName ? `${studentName}（${studentId}）` : studentId;
+      if (!confirm(`确定要对 ${targetLabel} 执行“${actionText}”吗？`)) return;
+      try {
+        await api('/teacher/activity-feedback-moderation', {
+          method: 'PUT',
+          body: JSON.stringify({
+            activity_id: actId,
+            student_id: studentId,
+            feedback_muted: nextMuted
+          })
+        });
+        toast(`已${actionText}`, 'success');
+        await loadRoster();
+      } catch (e) {
+        toast(`${actionText}失败: ` + e.message, 'error');
       }
     }
 

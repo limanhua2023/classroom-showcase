@@ -86,9 +86,66 @@
       font: inherit;
       background: var(--surface);
     }
+    .moderation-grid {
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 16px;
+      margin-bottom: 16px;
+    }
+    .moderation-card-title {
+      font-size: 1rem;
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+    .moderation-card-hint {
+      color: var(--text-muted);
+      font-size: 0.88rem;
+      line-height: 1.6;
+    }
+    .moderation-inline {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+      flex-wrap: wrap;
+      margin-top: 14px;
+    }
+    .moderation-input {
+      width: 110px;
+      padding: 9px 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font: inherit;
+      background: var(--surface);
+    }
+    .feedback-status-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-weight: 700;
+      font-size: 0.78rem;
+    }
+    .feedback-status-badge.ok {
+      background: rgba(16, 185, 129, 0.12);
+      color: #047857;
+    }
+    .feedback-status-badge.muted {
+      background: rgba(239, 68, 68, 0.12);
+      color: #b91c1c;
+    }
+    .action-stack {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+    }
     @media (max-width: 768px) {
       .toolbar-row {
         align-items: stretch;
+      }
+      .moderation-grid {
+        grid-template-columns: 1fr;
       }
       .search-box {
         width: 100%;
@@ -117,6 +174,27 @@
     </div>
 
     <div class="feedback-note" id="likesNotice"></div>
+
+    <div class="moderation-grid">
+      <div class="card">
+        <div class="card-body">
+          <div class="moderation-card-title">每日反馈上限</div>
+          <div class="moderation-card-hint">限制同一学生在当前活动里当天最多能提交多少条信息反馈。输入 <strong>0</strong> 表示不限制；建议设置在 3-10 条之间。</div>
+          <div class="moderation-inline">
+            <input id="dailyLimitInput" class="moderation-input" type="number" min="0" max="20" step="1" value="5">
+            <button class="btn btn-primary" type="button" onclick="saveDailyLimit()">保存上限</button>
+            <span id="dailyLimitStatus" class="moderation-card-hint"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-body">
+          <div class="moderation-card-title">反馈禁言说明</div>
+          <div class="moderation-card-hint">对某位学生执行“禁言反馈”后，他仍可正常登录、浏览和上传作品，但不能再提交新的信息反馈。已经发出的旧反馈仍可由老师删除。</div>
+        </div>
+      </div>
+    </div>
 
     <div class="card" style="margin-bottom:16px;">
       <div class="card-body">
@@ -162,6 +240,9 @@
     let activeSort = 'latest';
     let allRows = [];
     let likesEnabled = false;
+    let dailyLimit = Number.isInteger(Number(act.feedback_daily_limit)) && Number(act.feedback_daily_limit) >= 0
+      ? Number(act.feedback_daily_limit)
+      : 5;
 
     function openDisplay() {
       const code = (act.invite_code || '').trim();
@@ -200,6 +281,13 @@
       note.textContent = '当前数据库还未启用“反馈点赞”表，因此“按热度”暂不可用。请在 Supabase 再运行一次最新 upgrade_v4.sql。';
     }
 
+    function updateDailyLimitUi() {
+      document.getElementById('dailyLimitInput').value = dailyLimit;
+      document.getElementById('dailyLimitStatus').textContent = dailyLimit > 0
+        ? `当前：每位学生每天最多 ${dailyLimit} 条反馈`
+        : '当前：不限制每日反馈条数';
+    }
+
     function applySearch(rows) {
       const keyword = String(document.getElementById('searchBox').value || '').trim().toLowerCase();
       if (!keyword) return rows;
@@ -225,6 +313,9 @@
       }
       tbody.innerHTML = filtered.map(item => {
         const u = item.users || {};
+        const muteButton = u.student_id
+          ? `<button class="btn btn-sm ${item.feedback_muted ? 'btn-secondary' : 'btn-danger'}" type="button" onclick="toggleFeedbackMute('${encodeURIComponent(u.student_id || '')}', ${item.feedback_muted ? 'false' : 'true'}, '${encodeURIComponent(u.name || '')}')">${item.feedback_muted ? '解除禁言' : '禁言反馈'}</button>`
+          : '';
         return `
           <tr>
             <td>${formatBangkokTime(item.created_at)}</td>
@@ -238,7 +329,11 @@
               <div class="feedback-meta">${activeSort === 'hot' ? '当前按热度排序' : '当前按时间排序'}</div>
             </td>
             <td>
-              <button class="btn btn-sm btn-danger" type="button" onclick="deleteFeedback('${item.id}')">删除</button>
+              <div class="action-stack">
+                <span class="feedback-status-badge ${item.feedback_muted ? 'muted' : 'ok'}">${item.feedback_muted ? '已禁言反馈' : '反馈正常'}</span>
+                ${muteButton}
+                <button class="btn btn-sm btn-danger" type="button" onclick="deleteFeedback('${item.id}')">删除反馈</button>
+              </div>
             </td>
           </tr>
         `;
@@ -249,10 +344,15 @@
       try {
         const result = await api('/teacher/activity-feedback?activity_id=' + encodeURIComponent(actId) + '&sort=' + encodeURIComponent(activeSort));
         likesEnabled = !!result.likes_enabled;
+        const nextDailyLimit = Number(result.daily_limit ?? act.feedback_daily_limit);
+        dailyLimit = Number.isInteger(nextDailyLimit) && nextDailyLimit >= 0 ? nextDailyLimit : 5;
+        act.feedback_daily_limit = dailyLimit;
+        sessionStorage.setItem('classshow_activity', JSON.stringify(act));
         allRows = Array.isArray(result.items) ? result.items : [];
         if (activeSort === 'hot' && !likesEnabled) activeSort = 'latest';
         updateSortButtons();
         updateNotice();
+        updateDailyLimitUi();
         render(allRows);
       } catch (e) {
         document.getElementById('tbody').innerHTML = `<tr><td colspan="8" class="feedback-empty">加载失败：${escapeHtml(e.message)}</td></tr>`;
@@ -281,8 +381,53 @@
       }
     }
 
+    async function saveDailyLimit() {
+      const value = Number(document.getElementById('dailyLimitInput').value);
+      if (!Number.isInteger(value) || value < 0 || value > 20) {
+        toast('每日反馈上限需填写 0-20 的整数', 'error');
+        return;
+      }
+      try {
+        const updated = await api('/activities/' + encodeURIComponent(actId), {
+          method: 'PUT',
+          body: JSON.stringify({ feedback_daily_limit: value })
+        });
+        const savedDailyLimit = Number(updated.feedback_daily_limit ?? value);
+        dailyLimit = Number.isInteger(savedDailyLimit) && savedDailyLimit >= 0 ? savedDailyLimit : value;
+        act.feedback_daily_limit = dailyLimit;
+        sessionStorage.setItem('classshow_activity', JSON.stringify(act));
+        updateDailyLimitUi();
+        toast('每日反馈上限已更新', 'success');
+      } catch (e) {
+        toast('保存失败：' + e.message, 'error');
+      }
+    }
+
+    async function toggleFeedbackMute(studentId, nextMuted, studentName = '') {
+      studentId = decodeURIComponent(studentId || '');
+      studentName = decodeURIComponent(studentName || '');
+      const actionText = nextMuted ? '禁言反馈' : '解除禁言';
+      const targetLabel = studentName ? `${studentName}（${studentId}）` : studentId;
+      if (!confirm(`确定要对 ${targetLabel} 执行“${actionText}”吗？`)) return;
+      try {
+        await api('/teacher/activity-feedback-moderation', {
+          method: 'PUT',
+          body: JSON.stringify({
+            activity_id: actId,
+            student_id: studentId,
+            feedback_muted: nextMuted
+          })
+        });
+        toast(`已${actionText}`, 'success');
+        await loadFeedback();
+      } catch (e) {
+        toast(`${actionText}失败：` + e.message, 'error');
+      }
+    }
+
     document.getElementById('searchBox').addEventListener('input', () => render(allRows));
     updateSortButtons();
+    updateDailyLimitUi();
     loadFeedback();
   </script>
 </body>
