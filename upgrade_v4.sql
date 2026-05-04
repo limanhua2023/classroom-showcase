@@ -116,21 +116,10 @@ where r.id = x.id and x.rn > 1;
 create unique index if not exists ratings_submission_rater_uidx
   on ratings(submission_id, rater_user_id);
 
--- One submission per student per activity; the app treats re-upload as replace/update.
-with ranked as (
-  select id,
-         row_number() over (
-           partition by activity_id, user_id
-           order by last_modified_time desc nulls last, upload_time desc nulls last, id
-         ) as rn
-  from submissions
-)
-delete from submissions s
-using ranked x
-where s.id = x.id and x.rn > 1;
-
-create unique index if not exists submissions_activity_user_uidx
-  on submissions(activity_id, user_id);
+-- Allow multiple submissions per student per activity.
+-- If older deployments created one-row-per-student uniqueness, remove it.
+alter table submissions drop constraint if exists submissions_activity_user_uidx;
+drop index if exists submissions_activity_user_uidx;
 
 -- One valid view per student per work. Recalculate denormalized view_count afterward.
 with ranked as (

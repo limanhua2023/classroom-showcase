@@ -45,6 +45,29 @@ function sanitizeText(input, maxLen = 200) {
   return escapeHtml(String(input ?? '').trim()).slice(0, maxLen);
 }
 
+function formatTitleTimestampCN(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('zh-CN', {
+    timeZone: 'Asia/Shanghai',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    hour12: false
+  }).formatToParts(date);
+  const map = {};
+  for (const part of parts) map[part.type] = part.value;
+  return `${map.year}年${map.month}月${map.day}日${map.hour}时`;
+}
+
+function withUploadTimestampTitle(rawTitle, date = new Date(), maxLen = 140) {
+  const base = String(rawTitle ?? '')
+    .trim()
+    .replace(/\s*[（(]\d{4}年\d{2}月\d{2}日\d{2}时[）)]\s*$/u, '');
+  const suffix = `（${formatTitleTimestampCN(date)}）`;
+  const maxBaseLen = Math.max(1, Number(maxLen) - suffix.length);
+  return `${base.slice(0, maxBaseLen)}${suffix}`;
+}
+
 function normalizeInviteCode(input) {
   return String(input ?? '').trim().toUpperCase().replace(/[^A-Z0-9_-]/g, '').slice(0, 24);
 }
@@ -142,6 +165,24 @@ async function clearSubmissionEngagement(submissionId) {
     if (/comments|does not exist|schema cache/i.test(result.error.message || '')) continue;
     throw result.error;
   }
+}
+
+function parseAnonymousCodeNumber(code) {
+  const match = String(code ?? '').trim().match(/^A(\d+)$/i);
+  if (!match) return 0;
+  const num = Number(match[1]);
+  return Number.isFinite(num) ? num : 0;
+}
+
+async function generateNextAnonymousCode(activityId) {
+  const { data, error } = await supabase.from('submissions')
+    .select('anonymous_code')
+    .eq('activity_id', activityId);
+  if (error) throw error;
+  const maxNum = (data || []).reduce((max, row) => {
+    return Math.max(max, parseAnonymousCodeNumber(row.anonymous_code));
+  }, 0);
+  return `A${String(maxNum + 1).padStart(3, '0')}`;
 }
 
 async function fetchSubmissionWithMedia(id, fields) {
@@ -800,24 +841,43 @@ app.post('/api/submissions', studentAuth, async (req, res) => {
   try {
     const activity_id = String(req.body.activity_id ?? '').trim();
     const user_id = String(req.body.user_id ?? '').trim();
-    const title = sanitizeText(req.body.title, 140);
+    const submission_id = String(req.body.submission_id ?? '').trim() || null;
+    const rawTitle = sanitizeText(req.body.title, 140);
+    const title = withUploadTimestampTitle(rawTitle);
     const description = sanitizeText(req.body.description, 400);
     const uploadedStoragePath = sanitizeStoragePath(req.body.storage_path);
     const storage_path = uploadedStoragePath || storagePathFromPublicUrl(req.body.image_url);
     const image_url = publicUrlForStoragePath(storage_path);
     const media_type = isVideoFilePath(storage_path) ? 'video' : 'image';
     const media_size = Number.isFinite(Number(req.body.media_size)) ? Number(req.body.media_size) : null;
-    if (!activity_id || !user_id || !title || !storage_path || !image_url) {
+    if (!activity_id || !user_id || !rawTitle || !storage_path || !image_url) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
     newStoragePath = storage_path;
     shouldCleanupNewMedia = !!uploadedStoragePath;
     await ensureUploadOpen(activity_id);
 
-    // Check if user already submitted (allow re-upload)
-    const { data: existing } = await supabase.from('submissions')
-      .select('*').eq('activity_id', activity_id).eq('user_id', user_id).single();
-    if (existing) {
+    if (submission_id) {
+      const { data: existing, error: existingError } = await fetchSubmissionWithMedia(
+        submission_id,
+        'id,activity_id,user_id,edit_count'
+      );
+      if (existingError || !existing) {
+        const err = new Error('Submission not found');
+        err.status = 404;
+        throw err;
+      }
+      if (String(existing.activity_id) !== String(activity_id)) {
+        const err = new Error('Submission/activity mismatch');
+        err.status = 400;
+        throw err;
+      }
+      if (String(existing.user_id) !== String(user_id)) {
+        const err = new Error('Unauthorized');
+        err.status = 403;
+        throw err;
+      }
+
       const now = new Date().toISOString();
       const payload = {
         title,
@@ -840,13 +900,21 @@ app.post('/api/submissions', studentAuth, async (req, res) => {
         is_teacher_selected: false,
         status: 'visible'
       };
-      let { data, error } = await supabase.from('submissions').update(payload).eq('id', existing.id).select().single();
+      let { data, error } = await supabase.from('submissions')
+        .update(payload)
+        .eq('id', existing.id)
+        .select()
+        .single();
       if (error && /storage_path|media_type|media_size/i.test(error.message || '')) {
         const legacyPayload = { ...payload };
         delete legacyPayload.storage_path;
         delete legacyPayload.media_type;
         delete legacyPayload.media_size;
-        ({ data, error } = await supabase.from('submissions').update(legacyPayload).eq('id', existing.id).select().single());
+        ({ data, error } = await supabase.from('submissions')
+          .update(legacyPayload)
+          .eq('id', existing.id)
+          .select()
+          .single());
       }
       if (error) throw error;
       shouldCleanupNewMedia = false;
@@ -857,10 +925,20 @@ app.post('/api/submissions', studentAuth, async (req, res) => {
       }
       return res.json(data);
     }
-    // Generate anonymous code
-    const { count } = await supabase.from('submissions').select('*', { count: 'exact', head: true }).eq('activity_id', activity_id);
-    const code = `A${String((count || 0) + 1).padStart(3, '0')}`;
-    const insertPayload = { activity_id, user_id, anonymous_code: code, title, description, image_url, storage_path, media_type, media_size };
+
+    const code = await generateNextAnonymousCode(activity_id);
+    const insertPayload = {
+      activity_id,
+      user_id,
+      anonymous_code: code,
+      title,
+      description,
+      image_url,
+      storage_path,
+      media_type,
+      media_size
+    };
+
     let { data, error } = await supabase.from('submissions').insert([insertPayload]).select().single();
     if (error && /storage_path|media_type|media_size/i.test(error.message || '')) {
       const legacyPayload = { ...insertPayload };
@@ -868,6 +946,13 @@ app.post('/api/submissions', studentAuth, async (req, res) => {
       delete legacyPayload.media_type;
       delete legacyPayload.media_size;
       ({ data, error } = await supabase.from('submissions').insert([legacyPayload]).select().single());
+    }
+    if (error && /submissions_activity_user_uidx|duplicate key|unique constraint/i.test(error.message || '')) {
+      if (shouldCleanupNewMedia && newStoragePath) await deleteStorageObject(newStoragePath);
+      shouldCleanupNewMedia = false;
+      return res.status(409).json({
+        error: 'Database still enforces one submission per student. Run upgrade_v4.sql to drop submissions_activity_user_uidx.'
+      });
     }
     if (error) throw error;
     shouldCleanupNewMedia = false;
@@ -891,13 +976,18 @@ app.get('/api/submissions', async (req, res) => {
       if (auth.ok) viewerUserId = String(viewer_user_id);
     }
 
-    const [subsResult, commentsResult] = await Promise.all([
-      supabase.from('submissions')
+    let subsResult = await supabase.from('submissions')
+      .select('id,anonymous_code,title,description,image_url,storage_path,media_type,upload_time,view_count,rating_count,average_rating,composite_score,is_pinned,is_teacher_selected,status,user_id')
+      .eq('activity_id', activity_id).eq('status', 'visible')
+      .order('upload_time', { ascending: false });
+    if (subsResult.error && /storage_path|media_type/i.test(subsResult.error.message || '')) {
+      subsResult = await supabase.from('submissions')
         .select('id,anonymous_code,title,description,image_url,upload_time,view_count,rating_count,average_rating,composite_score,is_pinned,is_teacher_selected,status,user_id')
         .eq('activity_id', activity_id).eq('status', 'visible')
-        .order('upload_time', { ascending: false }),
-      supabase.from('comments').select('submission_id').eq('activity_id', activity_id)
-    ]);
+        .order('upload_time', { ascending: false });
+    }
+
+    const commentsResult = await supabase.from('comments').select('submission_id').eq('activity_id', activity_id);
     if (subsResult.error) throw subsResult.error;
     // Build comment count map from live data
     const ccMap = {};

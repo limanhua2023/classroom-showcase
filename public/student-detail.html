@@ -19,7 +19,7 @@
         <span class="card-badge new" id="newBadge" style="display:none;">NEW</span>
       </div>
       <div id="ownerActions" style="display:none;margin-bottom:20px;gap:10px;">
-        <button class="btn btn-sm btn-secondary" onclick="location.href='student-upload.html'" style="flex:1;">✏️ 修改作品</button>
+        <button class="btn btn-sm btn-secondary" onclick="location.href='student-upload.html?id=' + encodeURIComponent(new URLSearchParams(location.search).get('id') || '')" style="flex:1;">✏️ 修改作品</button>
         <button class="btn btn-sm btn-danger" onclick="deleteMyWork()" style="flex:1;">🗑️ 删除作品</button>
       </div>
       <h1 id="workTitle" style="font-size:1.5rem;margin-bottom:8px;"></h1>
