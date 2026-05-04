@@ -153,5 +153,37 @@ where not exists (
   select 1 from views v where v.submission_id = s.id and v.is_valid = true
 );
 
+-- Likes for display-page feedback suggestions.
+create table if not exists activity_feedback_likes (
+  id uuid primary key default gen_random_uuid(),
+  activity_id uuid references activities(id) on delete cascade not null,
+  feedback_id uuid references comments(id) on delete cascade not null,
+  user_id uuid references users(id) on delete cascade not null,
+  created_at timestamptz default now()
+);
+
+with ranked as (
+  select id,
+         row_number() over (
+           partition by feedback_id, user_id
+           order by created_at asc nulls last, id
+         ) as rn
+  from activity_feedback_likes
+)
+delete from activity_feedback_likes l
+using ranked x
+where l.id = x.id and x.rn > 1;
+
+create unique index if not exists activity_feedback_likes_feedback_user_uidx
+  on activity_feedback_likes(feedback_id, user_id);
+
+create index if not exists activity_feedback_likes_activity_created_idx
+  on activity_feedback_likes(activity_id, created_at desc);
+
+grant select, insert, update, delete on table public.activity_feedback_likes to anon, authenticated, service_role;
+
+alter table public.activity_feedback_likes no force row level security;
+alter table public.activity_feedback_likes disable row level security;
+
 alter table public.student_roster no force row level security;
 alter table public.student_roster disable row level security;

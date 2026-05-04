@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>页面建议管理 - ClassShow</title>
+  <link rel="stylesheet" href="css/main.css">
+  <style>
+    .toolbar-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 16px;
+    }
+    .sort-pills {
+      display: inline-flex;
+      gap: 8px;
+      padding: 4px;
+      border-radius: 999px;
+      background: var(--bg);
+      border: 1px solid var(--border);
+    }
+    .sort-pill {
+      border: none;
+      background: transparent;
+      color: var(--text-muted);
+      font: inherit;
+      font-weight: 700;
+      padding: 8px 16px;
+      border-radius: 999px;
+      cursor: pointer;
+      transition: all var(--transition);
+    }
+    .sort-pill.active {
+      background: var(--primary);
+      color: #fff;
+      box-shadow: var(--shadow);
+    }
+    .sort-pill:disabled {
+      opacity: 0.55;
+      cursor: not-allowed;
+    }
+    .feedback-note {
+      padding: 12px 16px;
+      border-radius: var(--radius-sm);
+      background: var(--accent-light);
+      color: #92400e;
+      font-size: 0.9rem;
+      margin-bottom: 16px;
+      display: none;
+    }
+    .feedback-content {
+      min-width: 280px;
+      white-space: pre-wrap;
+      word-break: break-word;
+      line-height: 1.7;
+    }
+    .feedback-meta {
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      margin-top: 6px;
+    }
+    .feedback-like-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: var(--primary-light);
+      color: var(--primary-hover);
+      font-weight: 700;
+      font-size: 0.82rem;
+    }
+    .feedback-empty {
+      padding: 48px 16px;
+      text-align: center;
+      color: var(--text-muted);
+    }
+    .search-box {
+      padding: 9px 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      width: 240px;
+      font: inherit;
+      background: var(--surface);
+    }
+    @media (max-width: 768px) {
+      .toolbar-row {
+        align-items: stretch;
+      }
+      .search-box {
+        width: 100%;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <div class="topbar-logo">Class<span>Show</span> · 页面建议</div>
+    <div class="topbar-right">
+      <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-dashboard.html'">← 返回后台</button>
+      <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-works.html'">📁 作品管理</button>
+      <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-scores.html'">📊 评分成绩</button>
+      <button class="btn btn-sm btn-secondary" onclick="openDisplay()">🖥 大屏展示</button>
+    </div>
+  </div>
+
+  <div class="container" style="padding-top:24px;">
+    <div class="section-header">
+      <div>
+        <h2>📝 页面建议管理</h2>
+        <p style="color:var(--text-muted);margin-top:6px;">查看学生在大屏底部提交的页面修改意见，并可按最新/最热排序或手动删除。</p>
+      </div>
+      <div class="card-badge" id="feedbackCountBadge">0 条建议</div>
+    </div>
+
+    <div class="feedback-note" id="likesNotice"></div>
+
+    <div class="card" style="margin-bottom:16px;">
+      <div class="card-body">
+        <div class="toolbar-row">
+          <div class="sort-pills" id="sortPills">
+            <button class="sort-pill active" id="sortLatestBtn" type="button" onclick="setSort('latest')">按时间</button>
+            <button class="sort-pill" id="sortHotBtn" type="button" onclick="setSort('hot')">按热度</button>
+          </div>
+          <input id="searchBox" class="search-box" type="text" placeholder="搜索姓名 / 学号 / 建议内容">
+        </div>
+      </div>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>时间</th>
+            <th>点赞</th>
+            <th>姓名</th>
+            <th>学号</th>
+            <th>班级</th>
+            <th>小组</th>
+            <th>建议内容</th>
+            <th>操作</th>
+          </tr>
+        </thead>
+        <tbody id="tbody">
+          <tr><td colspan="8" class="feedback-empty">正在加载建议...</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <script src="js/api.js"></script>
+  <script>
+    const act = JSON.parse(sessionStorage.getItem('classshow_activity') || '{}');
+    const actId = sessionStorage.getItem('classshow_activity_id');
+    const token = sessionStorage.getItem('teacherToken');
+    if (!token) location.href = 'teacher-login.html';
+    if (!actId) location.href = 'teacher-dashboard.html';
+
+    let activeSort = 'latest';
+    let allRows = [];
+    let likesEnabled = false;
+
+    function openDisplay() {
+      const code = (act.invite_code || '').trim();
+      const url = code ? ('display.html?code=' + encodeURIComponent(code)) : 'display.html';
+      window.open(url, '_blank');
+    }
+
+    function formatBangkokTime(value) {
+      if (!value) return '-';
+      return new Intl.DateTimeFormat('zh-CN', {
+        timeZone: 'Asia/Bangkok',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: '2-digit',
+        hour12: false
+      }).format(new Date(value));
+    }
+
+    function updateSortButtons() {
+      document.getElementById('sortLatestBtn').classList.toggle('active', activeSort === 'latest');
+      document.getElementById('sortHotBtn').classList.toggle('active', activeSort === 'hot');
+      document.getElementById('sortHotBtn').disabled = !likesEnabled;
+    }
+
+    function updateNotice() {
+      const note = document.getElementById('likesNotice');
+      if (likesEnabled) {
+        note.style.display = 'none';
+        note.textContent = '';
+        return;
+      }
+      note.style.display = 'block';
+      note.textContent = '当前数据库还未启用“建议点赞”表，因此“按热度”暂不可用。请在 Supabase 再运行一次最新 upgrade_v4.sql。';
+    }
+
+    function applySearch(rows) {
+      const keyword = String(document.getElementById('searchBox').value || '').trim().toLowerCase();
+      if (!keyword) return rows;
+      return rows.filter(item => {
+        const u = item.users || {};
+        return [
+          item.content,
+          u.name,
+          u.student_id,
+          u.class_name,
+          u.group_name
+        ].some(value => String(value || '').toLowerCase().includes(keyword));
+      });
+    }
+
+    function render(rows = allRows) {
+      const tbody = document.getElementById('tbody');
+      const filtered = applySearch(rows);
+      document.getElementById('feedbackCountBadge').textContent = `${filtered.length} 条建议`;
+      if (!filtered.length) {
+        tbody.innerHTML = '<tr><td colspan="8" class="feedback-empty">暂无符合条件的建议</td></tr>';
+        return;
+      }
+      tbody.innerHTML = filtered.map(item => {
+        const u = item.users || {};
+        return `
+          <tr>
+            <td>${formatBangkokTime(item.created_at)}</td>
+            <td><span class="feedback-like-badge">👍 ${item.like_count || 0}</span></td>
+            <td>${escapeHtml(u.name || '-')}</td>
+            <td>${escapeHtml(u.student_id || '-')}</td>
+            <td>${escapeHtml(u.class_name || '-')}</td>
+            <td>${escapeHtml(u.group_name || '-')}</td>
+            <td>
+              <div class="feedback-content">${escapeHtml(item.content || '')}</div>
+              <div class="feedback-meta">${activeSort === 'hot' ? '当前按热度排序' : '当前按时间排序'}</div>
+            </td>
+            <td>
+              <button class="btn btn-sm btn-danger" type="button" onclick="deleteFeedback('${item.id}')">删除</button>
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    async function loadFeedback() {
+      try {
+        const result = await api('/teacher/activity-feedback?activity_id=' + encodeURIComponent(actId) + '&sort=' + encodeURIComponent(activeSort));
+        likesEnabled = !!result.likes_enabled;
+        allRows = Array.isArray(result.items) ? result.items : [];
+        if (activeSort === 'hot' && !likesEnabled) activeSort = 'latest';
+        updateSortButtons();
+        updateNotice();
+        render(allRows);
+      } catch (e) {
+        document.getElementById('tbody').innerHTML = `<tr><td colspan="8" class="feedback-empty">加载失败：${escapeHtml(e.message)}</td></tr>`;
+      }
+    }
+
+    function setSort(sort) {
+      const next = sort === 'hot' ? 'hot' : 'latest';
+      if (next === 'hot' && !likesEnabled) {
+        toast('请先运行最新 upgrade_v4.sql，再启用热度排序', 'error');
+        return;
+      }
+      activeSort = next;
+      updateSortButtons();
+      loadFeedback();
+    }
+
+    async function deleteFeedback(id) {
+      if (!confirm('确定删除这条页面建议吗？删除后不可恢复。')) return;
+      try {
+        await api('/teacher/activity-feedback/' + encodeURIComponent(id), { method: 'DELETE' });
+        toast('页面建议已删除', 'success');
+        await loadFeedback();
+      } catch (e) {
+        toast('删除失败：' + e.message, 'error');
+      }
+    }
+
+    document.getElementById('searchBox').addEventListener('input', () => render(allRows));
+    updateSortButtons();
+    loadFeedback();
+  </script>
+</body>
+</html>

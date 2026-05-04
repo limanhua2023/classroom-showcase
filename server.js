@@ -1219,23 +1219,91 @@ app.get('/api/comments', async (req, res) => {
   } catch (e) { res.json([]); }
 });
 
+function normalizeFeedbackSort(input) {
+  return String(input ?? '').trim().toLowerCase() === 'hot' ? 'hot' : 'latest';
+}
+
+async function fetchFeedbackLikeState(activityId, viewerUserId = null) {
+  try {
+    const { data, error } = await supabase.from('activity_feedback_likes')
+      .select('feedback_id,user_id')
+      .eq('activity_id', activityId);
+    if (error) throw error;
+    const likeCountMap = {};
+    const likedSet = new Set();
+    (data || []).forEach(row => {
+      likeCountMap[row.feedback_id] = (likeCountMap[row.feedback_id] || 0) + 1;
+      if (viewerUserId && String(row.user_id) === String(viewerUserId)) likedSet.add(String(row.feedback_id));
+    });
+    return { likes_enabled: true, likeCountMap, likedSet };
+  } catch (error) {
+    if (/activity_feedback_likes|does not exist|schema cache/i.test(error.message || '')) {
+      return { likes_enabled: false, likeCountMap: {}, likedSet: new Set() };
+    }
+    throw error;
+  }
+}
+
+async function listActivityFeedback({ activityId, sort = 'latest', viewerUserId = null, includeUsers = false, limit = 50 }) {
+  const normalizedSort = normalizeFeedbackSort(sort);
+  const selectFields = includeUsers
+    ? 'id,activity_id,user_id,content,created_at,users(name,student_id,class_name,group_name)'
+    : 'id,activity_id,user_id,content,created_at';
+  const { data, error } = await supabase.from('comments')
+    .select(selectFields)
+    .eq('activity_id', activityId)
+    .is('submission_id', null)
+    .order('created_at', { ascending: false })
+    .limit(Math.max(limit, 200));
+  if (error) throw error;
+
+  const likeState = await fetchFeedbackLikeState(activityId, viewerUserId);
+  const items = (data || []).map(row => ({
+    ...row,
+    label: '同学建议',
+    like_count: likeState.likeCountMap[row.id] || 0,
+    liked_by_me: likeState.likedSet.has(String(row.id))
+  }));
+
+  items.sort((a, b) => {
+    if (normalizedSort === 'hot') {
+      if ((b.like_count || 0) !== (a.like_count || 0)) return (b.like_count || 0) - (a.like_count || 0);
+    }
+    return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
+  });
+
+  return {
+    sort: normalizedSort,
+    likes_enabled: likeState.likes_enabled,
+    items: items.slice(0, limit)
+  };
+}
+
 app.get('/api/activity-feedback', async (req, res) => {
   try {
     const { activity_id } = req.query;
     if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
-    const { data, error } = await supabase.from('comments')
-      .select('id, content, created_at')
-      .eq('activity_id', activity_id)
-      .is('submission_id', null)
-      .order('created_at', { ascending: false })
-      .limit(50);
-    if (error) {
-      console.warn('Activity feedback query failed:', error.message);
-      return res.json([]);
+    let viewerUserId = null;
+    const token = req.headers['x-user-token'];
+    if (token && req.query.user_id) {
+      const auth = await validateStudentToken({
+        token,
+        userId: req.query.user_id,
+        activityId: activity_id
+      });
+      if (auth.ok) viewerUserId = String(req.query.user_id);
     }
-    res.json((data || []).map(row => ({ ...row, label: '同学建议' })));
+    const result = await listActivityFeedback({
+      activityId: activity_id,
+      sort: req.query.sort,
+      viewerUserId,
+      includeUsers: false,
+      limit: 50
+    });
+    res.json(result);
   } catch (e) {
-    res.json([]);
+    console.warn('Activity feedback query failed:', e.message);
+    res.json({ sort: normalizeFeedbackSort(req.query.sort), likes_enabled: false, items: [] });
   }
 });
 
@@ -1276,6 +1344,109 @@ app.post('/api/activity-feedback', studentAuth, async (req, res) => {
     res.status(201).json({ ...data, label: '同学建议' });
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+app.post('/api/activity-feedback/:id/like', studentAuth, async (req, res) => {
+  try {
+    const activity_id = String(req.body.activity_id ?? '').trim();
+    const user_id = String(req.body.user_id ?? '').trim();
+    const feedbackId = String(req.params.id ?? '').trim();
+    if (!activity_id || !user_id || !feedbackId) {
+      return res.status(400).json({ error: 'Missing required fields' });
+    }
+
+    const { data: feedback, error: feedbackError } = await supabase.from('comments')
+      .select('id,activity_id,user_id,submission_id')
+      .eq('id', feedbackId)
+      .single();
+    if (feedbackError || !feedback || feedback.submission_id) {
+      return res.status(404).json({ error: 'Feedback not found' });
+    }
+    if (String(feedback.activity_id) !== String(activity_id)) {
+      return res.status(400).json({ error: 'Feedback/activity mismatch' });
+    }
+    if (String(feedback.user_id) === String(user_id)) {
+      return res.status(403).json({ error: 'Cannot like your own suggestion' });
+    }
+
+    let existingResult = await supabase.from('activity_feedback_likes')
+      .select('id')
+      .eq('feedback_id', feedbackId)
+      .eq('user_id', user_id)
+      .maybeSingle();
+    if (existingResult.error && /activity_feedback_likes|does not exist|schema cache/i.test(existingResult.error.message || '')) {
+      return res.status(500).json({ error: 'Feedback likes schema is not ready. Run upgrade_v4.sql first.' });
+    }
+    if (existingResult.error) throw existingResult.error;
+
+    let liked = false;
+    if (existingResult.data?.id) {
+      const { error } = await supabase.from('activity_feedback_likes').delete().eq('id', existingResult.data.id);
+      if (error) throw error;
+    } else {
+      const { error } = await supabase.from('activity_feedback_likes').insert([{
+        activity_id,
+        feedback_id: feedbackId,
+        user_id
+      }]);
+      if (error && /activity_feedback_likes|does not exist|schema cache/i.test(error.message || '')) {
+        return res.status(500).json({ error: 'Feedback likes schema is not ready. Run upgrade_v4.sql first.' });
+      }
+      if (error && !/duplicate|unique/i.test(error.message || '')) throw error;
+      liked = true;
+    }
+
+    const { count, error: countError } = await supabase.from('activity_feedback_likes')
+      .select('id', { count: 'exact', head: true })
+      .eq('feedback_id', feedbackId);
+    if (countError && /activity_feedback_likes|does not exist|schema cache/i.test(countError.message || '')) {
+      return res.status(500).json({ error: 'Feedback likes schema is not ready. Run upgrade_v4.sql first.' });
+    }
+    if (countError) throw countError;
+    res.json({ ok: true, liked, like_count: count || 0 });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+app.get('/api/teacher/activity-feedback', teacherAuth, async (req, res) => {
+  try {
+    const { activity_id } = req.query;
+    if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
+    const auth = await ensureTeacherCanAccessActivity(req, activity_id);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const result = await listActivityFeedback({
+      activityId: activity_id,
+      sort: req.query.sort,
+      includeUsers: true,
+      limit: 200
+    });
+    res.json(result);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.delete('/api/teacher/activity-feedback/:id', teacherAuth, async (req, res) => {
+  try {
+    const { data: feedback, error: feedbackErr } = await supabase.from('comments')
+      .select('id, activity_id, submission_id')
+      .eq('id', req.params.id)
+      .single();
+    if (feedbackErr || !feedback || feedback.submission_id) {
+      return res.status(404).json({ error: 'Feedback not found' });
+    }
+
+    const auth = await ensureTeacherCanAccessActivity(req, feedback.activity_id);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const { error: deleteError } = await supabase.from('comments').delete().eq('id', req.params.id);
+    if (deleteError) throw deleteError;
+    res.json({ ok: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
   }
 });
 
