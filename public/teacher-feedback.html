@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>页面建议管理 - ClassShow</title>
+  <title>信息反馈管理 - ClassShow</title>
   <link rel="stylesheet" href="css/main.css">
   <style>
     .toolbar-row {
@@ -98,7 +98,7 @@
 </head>
 <body>
   <div class="topbar">
-    <div class="topbar-logo">Class<span>Show</span> · 页面建议</div>
+    <div class="topbar-logo">Class<span>Show</span> · 信息反馈</div>
     <div class="topbar-right">
       <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-dashboard.html'">← 返回后台</button>
       <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-works.html'">📁 作品管理</button>
@@ -110,10 +110,10 @@
   <div class="container" style="padding-top:24px;">
     <div class="section-header">
       <div>
-        <h2>📝 页面建议管理</h2>
-        <p style="color:var(--text-muted);margin-top:6px;">查看学生在大屏底部提交的页面修改意见，并可按最新/最热排序或手动删除。</p>
+        <h2>📝 信息反馈管理</h2>
+        <p style="color:var(--text-muted);margin-top:6px;">查看学生在大屏底部实名提交的信息反馈，并可按最新/最热排序或手动删除。</p>
       </div>
-      <div class="card-badge" id="feedbackCountBadge">0 条建议</div>
+      <div class="card-badge" id="feedbackCountBadge">0 条反馈</div>
     </div>
 
     <div class="feedback-note" id="likesNotice"></div>
@@ -125,7 +125,7 @@
             <button class="sort-pill active" id="sortLatestBtn" type="button" onclick="setSort('latest')">按时间</button>
             <button class="sort-pill" id="sortHotBtn" type="button" onclick="setSort('hot')">按热度</button>
           </div>
-          <input id="searchBox" class="search-box" type="text" placeholder="搜索姓名 / 学号 / 建议内容">
+          <input id="searchBox" class="search-box" type="text" placeholder="搜索姓名 / 学号 / 反馈内容">
         </div>
       </div>
     </div>
@@ -140,12 +140,12 @@
             <th>学号</th>
             <th>班级</th>
             <th>小组</th>
-            <th>建议内容</th>
+            <th>反馈内容</th>
             <th>操作</th>
           </tr>
         </thead>
         <tbody id="tbody">
-          <tr><td colspan="8" class="feedback-empty">正在加载建议...</td></tr>
+          <tr><td colspan="8" class="feedback-empty">正在加载反馈...</td></tr>
         </tbody>
       </table>
     </div>
@@ -197,7 +197,7 @@
         return;
       }
       note.style.display = 'block';
-      note.textContent = '当前数据库还未启用“建议点赞”表，因此“按热度”暂不可用。请在 Supabase 再运行一次最新 upgrade_v4.sql。';
+      note.textContent = '当前数据库还未启用“反馈点赞”表，因此“按热度”暂不可用。请在 Supabase 再运行一次最新 upgrade_v4.sql。';
     }
 
     function applySearch(rows) {
@@ -218,9 +218,9 @@
     function render(rows = allRows) {
       const tbody = document.getElementById('tbody');
       const filtered = applySearch(rows);
-      document.getElementById('feedbackCountBadge').textContent = `${filtered.length} 条建议`;
+      document.getElementById('feedbackCountBadge').textContent = `${filtered.length} 条反馈`;
       if (!filtered.length) {
-        tbody.innerHTML = '<tr><td colspan="8" class="feedback-empty">暂无符合条件的建议</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="feedback-empty">暂无符合条件的反馈</td></tr>';
         return;
       }
       tbody.innerHTML = filtered.map(item => {
@@ -271,10 +271,10 @@
     }
 
     async function deleteFeedback(id) {
-      if (!confirm('确定删除这条页面建议吗？删除后不可恢复。')) return;
+      if (!confirm('确定删除这条信息反馈吗？删除后不可恢复。')) return;
       try {
         await api('/teacher/activity-feedback/' + encodeURIComponent(id), { method: 'DELETE' });
-        toast('页面建议已删除', 'success');
+        toast('信息反馈已删除', 'success');
         await loadFeedback();
       } catch (e) {
         toast('删除失败：' + e.message, 'error');

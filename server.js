@@ -1279,7 +1279,7 @@ async function listActivityFeedback({ activityId, sort = 'latest', viewerUserId 
   const likeState = await fetchFeedbackLikeState(activityId, viewerUserId);
   const items = (data || []).map(row => ({
     ...row,
-    label: '同学建议',
+    label: '实名反馈',
     like_count: likeState.likeCountMap[row.id] || 0,
     liked_by_me: likeState.likedSet.has(String(row.id))
   }));
@@ -1316,7 +1316,7 @@ app.get('/api/activity-feedback', async (req, res) => {
       activityId: activity_id,
       sort: req.query.sort,
       viewerUserId,
-      includeUsers: false,
+      includeUsers: true,
       limit: 50
     });
     res.json(result);
@@ -1360,7 +1360,7 @@ app.post('/api/activity-feedback', studentAuth, async (req, res) => {
       }
       throw error;
     }
-    res.status(201).json({ ...data, label: '同学建议' });
+    res.status(201).json({ ...data, label: '实名反馈' });
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message });
   }

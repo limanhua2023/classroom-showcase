@@ -88,6 +88,8 @@
     .feedback-item-head { display:flex; justify-content:space-between; align-items:center; gap:12px; margin-bottom:8px; }
     .feedback-item-label { display:inline-flex; align-items:center; padding:4px 10px; border-radius:999px; background:rgba(99,102,241,0.14); color:#a5b4fc; font-size:0.78rem; font-weight:700; }
     .feedback-item-time { color:#64748b; font-size:0.78rem; }
+    .feedback-item-author { color:#f8fafc; font-size:0.92rem; font-weight:700; }
+    .feedback-item-author-sub { color:#94a3b8; font-size:0.8rem; margin-top:4px; }
     .feedback-item-text { color:#e2e8f0; font-size:0.94rem; line-height:1.7; white-space:pre-wrap; word-break:break-word; }
     .feedback-item-foot { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-top:12px; }
     .feedback-item-meta { color:#64748b; font-size:0.78rem; }
@@ -194,20 +196,20 @@
     <div class="feedback-panel" id="feedbackSection">
       <div class="feedback-panel-header">
         <div>
-          <div class="feedback-panel-title">📝 页面修改建议</div>
-          <div class="feedback-panel-subtitle">同学们可以在这里留言，提出对大屏页面、展示节奏、交互方式等的修改意见。</div>
+          <div class="feedback-panel-title">📝 信息反馈</div>
+          <div class="feedback-panel-subtitle">同学们可以在这里实名留言，反馈对大屏页面、展示节奏、交互方式等的意见，便于老师直接核对和跟进。</div>
         </div>
         <div class="feedback-panel-tools">
           <div class="feedback-sort">
             <button class="feedback-sort-btn active" id="feedbackSortLatest" type="button" onclick="setFeedbackSort('latest')">按时间</button>
             <button class="feedback-sort-btn" id="feedbackSortHot" type="button" onclick="setFeedbackSort('hot')">按热度</button>
           </div>
-          <div class="feedback-panel-note" id="feedbackPanelNote">最新 50 条建议</div>
+          <div class="feedback-panel-note" id="feedbackPanelNote">最新 50 条实名反馈</div>
         </div>
       </div>
       <div id="feedbackComposer"></div>
       <div class="feedback-list" id="feedbackList">
-        <div class="spotlight-empty">暂无建议，欢迎留下第一条修改意见。</div>
+        <div class="spotlight-empty">暂无信息反馈，欢迎留下第一条实名反馈。</div>
       </div>
     </div>
   </div>
@@ -618,8 +620,8 @@
       if (note) {
         if (feedbackLikesEnabled) {
           note.textContent = activeFeedbackSort === 'hot'
-            ? '按热度查看 · 学生可点赞'
-            : '最新 50 条建议';
+            ? '按热度查看 · 学生可点赞实名反馈'
+            : '最新 50 条实名反馈';
         } else {
           note.textContent = '已按时间显示 · 点赞/热度需运行最新 upgrade_v4.sql';
         }
@@ -630,19 +632,19 @@
       const container = document.getElementById('feedbackComposer');
       const loginUrl = 'index.html' + ((act && act.invite_code) ? ('?code=' + encodeURIComponent(act.invite_code)) : '');
       if (teacherMode) {
-        container.innerHTML = '<div class="feedback-guest-box">当前是教师展示模式。学生登录后可以在此留言，提出页面修改意见。</div>';
+        container.innerHTML = '<div class="feedback-guest-box">当前是教师展示模式。学生登录后可以在此实名提交信息反馈，老师可直接按姓名和学号核对。</div>';
         return;
       }
       if (!viewerUser || viewerIsGuest) {
-        container.innerHTML = `<div class="feedback-guest-box">登录学生账号后，可在这里留下对大屏展示页面的修改建议。<a class="spotlight-link-btn" style="margin-top:10px;" href="${loginUrl}">去登录学生账号</a></div>`;
+        container.innerHTML = `<div class="feedback-guest-box">登录学生账号后，可在这里实名提交信息反馈。反馈会显示你的姓名和学号，便于老师核对。<a class="spotlight-link-btn" style="margin-top:10px;" href="${loginUrl}">去登录学生账号</a></div>`;
         return;
       }
       container.innerHTML = `
         <div class="feedback-compose">
           <textarea id="displayFeedbackInput" maxlength="300" placeholder="例如：优秀作品展示切换可以更慢一点；排行榜可以加作品缩略图；评论区字体可以再大一点……"></textarea>
           <div class="feedback-compose-side">
-            <button class="btn btn-primary" type="button" onclick="postDisplayFeedback()">提交建议</button>
-            <div class="feedback-compose-hint">建议会展示在本页底部，供老师和同学们一起参考。</div>
+            <button class="btn btn-primary" type="button" onclick="postDisplayFeedback()">提交反馈</button>
+            <div class="feedback-compose-hint">反馈会实名展示你的姓名和学号，老师可直接核对，请勿灌水。</div>
           </div>
         </div>
       `;
@@ -662,24 +664,29 @@
     function renderDisplayFeedbackList(items) {
       const box = document.getElementById('feedbackList');
       if (!items.length) {
-        box.innerHTML = '<div class="spotlight-empty">暂无建议，欢迎留下第一条修改意见。</div>';
+        box.innerHTML = '<div class="spotlight-empty">暂无信息反馈，欢迎留下第一条实名反馈。</div>';
         return;
       }
       box.innerHTML = items.map(item => {
         const isOwn = !!viewerUser?.id && String(item.user_id || '') === String(viewerUser.id);
         const canLike = feedbackLikesEnabled && !!viewerUser?.id && !viewerIsGuest && !teacherMode && !isOwn;
+        const userInfo = item.users || {};
+        const authorName = userInfo.name || '未实名学生';
+        const authorSub = [userInfo.student_id, userInfo.class_name].filter(Boolean).join(' · ');
         const likeButton = feedbackLikesEnabled
           ? `<button class="feedback-like-btn ${item.liked_by_me ? 'active' : ''}" ${canLike ? `onclick="toggleDisplayFeedbackLike('${item.id}')"` : 'disabled'}>${item.liked_by_me ? '👍 已点赞' : '👍 点赞'} <span>${item.like_count || 0}</span></button>`
           : '';
         return `
           <div class="feedback-item">
             <div class="feedback-item-head">
-              <span class="feedback-item-label">同学建议</span>
+              <span class="feedback-item-label">实名反馈</span>
               <span class="feedback-item-time">${timeAgo(item.created_at)}</span>
             </div>
+            <div class="feedback-item-author">${escapeHtml(authorName)}</div>
+            <div class="feedback-item-author-sub">${escapeHtml(authorSub || '已实名登记')}</div>
             <div class="feedback-item-text">${escapeHtml(item.content || '')}</div>
             <div class="feedback-item-foot">
-              <div class="feedback-item-meta">${isOwn ? '这是你提交的建议' : '欢迎为别人的建议点赞或参考'}</div>
+              <div class="feedback-item-meta">${isOwn ? '这是你实名提交的反馈' : '实名反馈，老师可直接核对并跟进'}</div>
               ${likeButton}
             </div>
           </div>
@@ -704,7 +711,7 @@
         updateFeedbackSortUi();
         renderDisplayFeedbackList(Array.isArray(result.items) ? result.items : []);
       } catch (e) {
-        document.getElementById('feedbackList').innerHTML = '<div class="spotlight-empty">建议区加载失败</div>';
+        document.getElementById('feedbackList').innerHTML = '<div class="spotlight-empty">信息反馈区加载失败</div>';
       }
     }
 
@@ -732,7 +739,7 @@
       const input = document.getElementById('displayFeedbackInput');
       if (!input) return;
       const content = input.value.trim();
-      if (!content) return toast('请输入修改建议', 'error');
+      if (!content) return toast('请输入信息反馈内容', 'error');
       try {
         await api('/activity-feedback', {
           method: 'POST',
@@ -743,7 +750,7 @@
           })
         });
         input.value = '';
-        toast('建议已提交', 'success');
+        toast('信息反馈已提交', 'success');
         await loadDisplayFeedback();
       } catch (e) {
         toast(e.message, 'error');
