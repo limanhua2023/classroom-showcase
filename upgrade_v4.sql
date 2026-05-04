@@ -23,6 +23,37 @@ create table if not exists student_roster (
   unique(activity_id, student_id)
 );
 
+-- If student_roster already existed from an old version, ensure required columns exist.
+alter table student_roster add column if not exists name text;
+alter table student_roster add column if not exists class_name text;
+alter table student_roster add column if not exists group_name text;
+alter table student_roster add column if not exists pin_hash text;
+alter table student_roster add column if not exists pin_salt text;
+alter table student_roster add column if not exists active boolean default true;
+alter table student_roster add column if not exists created_at timestamptz default now();
+alter table student_roster add column if not exists updated_at timestamptz default now();
+
+-- Backfill safe defaults for legacy rows so import/upsert won't fail.
+update student_roster set name = coalesce(nullif(trim(name), ''), student_id) where name is null or trim(name) = '';
+update student_roster set class_name = coalesce(nullif(trim(class_name), ''), '未分班') where class_name is null or trim(class_name) = '';
+update student_roster set active = true where active is null;
+
+-- Remove historical duplicate roster rows before enforcing unique upsert target.
+with ranked as (
+  select id,
+         row_number() over (
+           partition by activity_id, student_id
+           order by updated_at desc nulls last, created_at desc nulls last, id
+         ) as rn
+  from student_roster
+)
+delete from student_roster r
+using ranked x
+where r.id = x.id and x.rn > 1;
+
+create unique index if not exists student_roster_activity_student_uidx
+  on student_roster(activity_id, student_id);
+
 -- Track the storage object behind each work so replaced/deleted files can be cleaned up.
 alter table submissions add column if not exists storage_path text;
 alter table submissions add column if not exists media_type text default 'image';
