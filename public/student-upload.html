@@ -29,12 +29,17 @@
   <div class="topbar">
     <div class="topbar-logo">Class<span>Show</span></div>
     <div class="topbar-right">
+      <button class="btn btn-sm btn-primary" id="newUploadBtn" onclick="openNewUpload()" style="display:none;">上传新作品</button>
       <button class="btn btn-sm btn-secondary" onclick="location.href='student-gallery.html'">返回画廊</button>
     </div>
   </div>
 
   <div class="container" style="max-width:600px;padding-top:24px;">
     <h2 id="pageTitle" style="margin-bottom:20px;">上传你的作品</h2>
+    <div id="editNotice" class="rubric" style="display:none;margin-bottom:16px;background:#fff7ed;border-color:#fdba74;color:#9a3412;">
+      你当前正在修改一份已有作品。保存后，这一份作品会被覆盖，且它的评分、评论、浏览量会重新计算。
+      如果你是想新增一份作品，请点击上方“上传新作品”。
+    </div>
     <form onsubmit="submitWork(event)">
       <div class="form-group">
         <label>作品标题 *</label>
@@ -99,14 +104,26 @@
     const actId = getActivityId();
     if (!user || !actId) location.href = 'index.html';
 
-    const editId = new URLSearchParams(location.search).get('id');
+    const params = new URLSearchParams(location.search);
+    const forceNew = params.get('new') === '1';
+    const editId = forceNew ? null : params.get('id');
     let currentTab = 'image';
     let editingWork = null;
 
+    function openNewUpload() {
+      location.href = 'student-upload.html?new=1';
+    }
+
     async function init() {
       try {
-        if (!editId) return;
+        if (!editId) {
+          document.title = '上传作品 - ClassShow';
+          return;
+        }
+        document.title = '修改作品 - ClassShow';
         document.getElementById('pageTitle').textContent = '修改你的作品';
+        document.getElementById('editNotice').style.display = 'block';
+        document.getElementById('newUploadBtn').style.display = 'inline-flex';
         const works = await api('/submissions?activity_id=' + actId + '&viewer_user_id=' + user.id);
         editingWork = works.find(w => w.is_owner && String(w.id) === String(editId));
         if (!editingWork) {
@@ -190,7 +207,7 @@
       e.preventDefault();
       const btn = document.getElementById('submitBtn');
       btn.disabled = true;
-      btn.textContent = editId ? '保存中...' : '上传中...';
+      btn.textContent = editingWork ? '保存中...' : '上传中...';
 
       try {
         let file;
