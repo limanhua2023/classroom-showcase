@@ -116,6 +116,34 @@ async function deleteSubmissionMedia(submission) {
   return deleteStorageObject(storagePath);
 }
 
+async function ensureUploadOpen(activityId) {
+  const { data, error } = await supabase.from('activities')
+    .select('upload_open')
+    .eq('id', activityId)
+    .single();
+  if (error) throw error;
+  if (data && data.upload_open === false) {
+    const err = new Error('Upload is closed by teacher');
+    err.status = 403;
+    throw err;
+  }
+}
+
+async function clearSubmissionEngagement(submissionId) {
+  const deletions = [
+    supabase.from('ratings').delete().eq('submission_id', submissionId),
+    supabase.from('views').delete().eq('submission_id', submissionId),
+    supabase.from('comments').delete().eq('submission_id', submissionId)
+  ];
+
+  const results = await Promise.all(deletions);
+  for (const result of results) {
+    if (!result.error) continue;
+    if (/comments|does not exist|schema cache/i.test(result.error.message || '')) continue;
+    throw result.error;
+  }
+}
+
 async function fetchSubmissionWithMedia(id, fields) {
   const baseFields = fields || 'id,activity_id,user_id';
   let result = await supabase.from('submissions')
@@ -736,6 +764,7 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
       if (req.file.path) fs.unlink(req.file.path, () => {});
       return res.status(auth.status).json({ error: auth.error });
     }
+    await ensureUploadOpen(activityId);
 
     const isVideo = req.file.mimetype.startsWith('video/');
     const ext = req.file.originalname.split('.').pop().toLowerCase() || (isVideo ? 'mp4' : 'jpg');
@@ -760,32 +789,56 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
     });
   } catch (e) { 
     if (req.file && req.file.path) fs.unlink(req.file.path, () => {});
-    res.status(500).json({ error: e.message }); 
+    res.status(e.status || 500).json({ error: e.message }); 
   }
 });
 
 // ─── SUBMISSIONS ───
 app.post('/api/submissions', studentAuth, async (req, res) => {
+  let newStoragePath = null;
+  let shouldCleanupNewMedia = false;
   try {
     const activity_id = String(req.body.activity_id ?? '').trim();
     const user_id = String(req.body.user_id ?? '').trim();
     const title = sanitizeText(req.body.title, 140);
     const description = sanitizeText(req.body.description, 400);
-    const storage_path = sanitizeStoragePath(req.body.storage_path) || storagePathFromPublicUrl(req.body.image_url);
+    const uploadedStoragePath = sanitizeStoragePath(req.body.storage_path);
+    const storage_path = uploadedStoragePath || storagePathFromPublicUrl(req.body.image_url);
     const image_url = publicUrlForStoragePath(storage_path);
     const media_type = isVideoFilePath(storage_path) ? 'video' : 'image';
     const media_size = Number.isFinite(Number(req.body.media_size)) ? Number(req.body.media_size) : null;
     if (!activity_id || !user_id || !title || !storage_path || !image_url) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
+    newStoragePath = storage_path;
+    shouldCleanupNewMedia = !!uploadedStoragePath;
+    await ensureUploadOpen(activity_id);
 
     // Check if user already submitted (allow re-upload)
     const { data: existing } = await supabase.from('submissions')
       .select('*').eq('activity_id', activity_id).eq('user_id', user_id).single();
     if (existing) {
+      const now = new Date().toISOString();
       const payload = {
-        title, description, image_url, storage_path, media_type, media_size, last_modified_time: new Date().toISOString(),
-        edit_count: existing.edit_count + 1
+        title,
+        description,
+        image_url,
+        storage_path,
+        media_type,
+        media_size,
+        upload_time: now,
+        last_modified_time: now,
+        edit_count: (existing.edit_count || 0) + 1,
+        view_count: 0,
+        rating_count: 0,
+        average_rating: 0,
+        composite_score: 0,
+        teacher_score: null,
+        final_score: null,
+        rank: null,
+        is_pinned: false,
+        is_teacher_selected: false,
+        status: 'visible'
       };
       let { data, error } = await supabase.from('submissions').update(payload).eq('id', existing.id).select().single();
       if (error && /storage_path|media_type|media_size/i.test(error.message || '')) {
@@ -796,6 +849,8 @@ app.post('/api/submissions', studentAuth, async (req, res) => {
         ({ data, error } = await supabase.from('submissions').update(legacyPayload).eq('id', existing.id).select().single());
       }
       if (error) throw error;
+      shouldCleanupNewMedia = false;
+      await clearSubmissionEngagement(existing.id);
       const oldStoragePath = sanitizeStoragePath(existing.storage_path) || storagePathFromPublicUrl(existing.image_url);
       if (oldStoragePath && oldStoragePath !== storage_path) {
         await deleteStorageObject(oldStoragePath);
@@ -815,8 +870,12 @@ app.post('/api/submissions', studentAuth, async (req, res) => {
       ({ data, error } = await supabase.from('submissions').insert([legacyPayload]).select().single());
     }
     if (error) throw error;
+    shouldCleanupNewMedia = false;
     res.status(201).json(data);
-  } catch (e) { res.status(500).json({ error: e.message }); }
+  } catch (e) {
+    if (shouldCleanupNewMedia && newStoragePath) await deleteStorageObject(newStoragePath);
+    res.status(e.status || 500).json({ error: e.message });
+  }
 });
 
 // Student: get anonymous submissions
@@ -922,10 +981,7 @@ app.put('/api/teacher/submissions/:id', teacherAuth, async (req, res) => {
 
 app.delete('/api/teacher/submissions/:id', teacherAuth, async (req, res) => {
   try {
-    const { data: sub, error: subErr } = await supabase.from('submissions')
-      .select('id, activity_id')
-      .eq('id', req.params.id)
-      .single();
+    const { data: sub, error: subErr } = await fetchSubmissionWithMedia(req.params.id, 'id,activity_id');
     if (subErr || !sub) return res.status(404).json({ error: 'Submission not found' });
 
     const auth = await ensureTeacherCanAccessActivity(req, sub.activity_id);
@@ -1026,9 +1082,12 @@ app.post('/api/comments', studentAuth, async (req, res) => {
     if (!activity_id || !submission_id || !user_id || !content?.trim()) {
       return res.status(400).json({ error: '缂哄皯蹇呰瀛楁' });
     }
-    const { data: sub } = await supabase.from('submissions').select('id, activity_id').eq('id', submission_id).single();
+    const { data: sub } = await supabase.from('submissions').select('id,activity_id,user_id').eq('id', submission_id).single();
     if (!sub || String(sub.activity_id) !== String(activity_id)) {
       return res.status(400).json({ error: 'Submission/activity mismatch' });
+    }
+    if (String(sub.user_id) === String(user_id)) {
+      return res.status(403).json({ error: 'Cannot comment on your own work' });
     }
 
     // Check if comments are open; if the column doesn't exist yet, allow it through
@@ -1114,9 +1173,12 @@ app.post('/api/views', studentAuth, async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const { data: sub } = await supabase.from('submissions').select('id,activity_id,view_count').eq('id', submission_id).single();
+    const { data: sub } = await supabase.from('submissions').select('id,activity_id,user_id,view_count').eq('id', submission_id).single();
     if (!sub || String(sub.activity_id) !== String(activity_id)) {
       return res.status(400).json({ error: 'Submission/activity mismatch' });
+    }
+    if (String(sub.user_id) === String(viewer_user_id)) {
+      return res.json({ ok: true, owner: true });
     }
 
     // Count one valid view per logged-in viewer per work. This keeps refresh/scripts from inflating rankings.
