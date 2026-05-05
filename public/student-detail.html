@@ -11,9 +11,7 @@
       padding-top: 24px;
       padding-bottom: 48px;
     }
-    .detail-hero {
-      margin-bottom: 18px;
-    }
+    .detail-hero { margin-bottom: 18px; }
     .detail-media {
       overflow: hidden;
       border-radius: 22px;
@@ -82,21 +80,13 @@
       gap: 10px;
       margin-top: 16px;
     }
-    .detail-actions .btn {
-      flex: 1 1 180px;
-    }
+    .detail-actions .btn { flex: 1 1 180px; }
     @media (max-width: 640px) {
-      .detail-meta-grid {
-        grid-template-columns: 1fr 1fr;
-      }
-      .detail-actions .btn {
-        flex-basis: 100%;
-      }
+      .detail-meta-grid { grid-template-columns: 1fr 1fr; }
+      .detail-actions .btn { flex-basis: 100%; }
     }
     @media (max-width: 480px) {
-      .detail-meta-grid {
-        grid-template-columns: 1fr;
-      }
+      .detail-meta-grid { grid-template-columns: 1fr; }
     }
   </style>
 </head>
@@ -121,7 +111,7 @@
       <div class="detail-media" id="mediaWrap"></div>
 
       <div class="detail-card">
-        <div class="detail-chip-row">
+        <div class="detail-chip-row" id="detailChips">
           <span class="card-badge" id="workCode"></span>
           <span class="card-badge new" id="newBadge" style="display:none;">NEW</span>
           <span class="card-badge" id="workTypeBadge"></span>
@@ -163,7 +153,7 @@
         </div>
         <div class="comment-input-wrap" id="commentFormWrapper" style="display:none;">
           <input type="text" id="commentInput" placeholder="写下你的鼓励、建议或评价..." maxlength="100">
-          <button class="btn btn-primary" onclick="postComment()">发送</button>
+          <button class="btn btn-primary" onclick="postComment()">发布</button>
         </div>
       </div>
     </div>
@@ -277,7 +267,7 @@
         });
         currentRating = score;
         updateStars();
-        document.getElementById('ratingHint').textContent = `你已评 ${score} 分，可重复点击修改`;
+        document.getElementById('ratingHint').textContent = `你已评 ${score} 分，可再次点击修改`;
         document.getElementById('avgScore').textContent = Number(result.average).toFixed(1);
         document.getElementById('rateCount').textContent = result.count;
         toast('评分成功', 'success');
@@ -286,17 +276,31 @@
       }
     }
 
+    function appendStatusChips(currentWork) {
+      const box = document.getElementById('detailChips');
+      if (isVideo(getWorkMediaUrl(currentWork)) && String(currentWork.transcode_status || 'ready').toLowerCase() !== 'ready') {
+        box.insertAdjacentHTML('beforeend', `<span class="card-badge" style="background:#ede9fe;color:#5b21b6;">${escapeHtml(getTranscodeStatusLabel(currentWork.transcode_status))}</span>`);
+      }
+      const archiveLabel = getArchiveStatusLabel(currentWork);
+      if (archiveLabel) {
+        box.insertAdjacentHTML('beforeend', `<span class="card-badge" style="background:#ecfccb;color:#3f6212;">${escapeHtml(archiveLabel)}</span>`);
+      }
+    }
+
     async function load() {
       try {
         const qs = (!guest && user.id) ? ('?viewer_user_id=' + encodeURIComponent(user.id)) : '';
         work = await api('/submissions/' + sid + qs);
+        const mediaUrl = getWorkMediaUrl(work);
+        const posterUrl = getWorkPosterUrl(work);
+        const vid = isVideo(mediaUrl);
+
         document.getElementById('loading').style.display = 'none';
         document.getElementById('detail').style.display = 'block';
-
         document.getElementById('heroTitle').textContent = work.title || '作品详情';
         document.getElementById('heroSubtitle').textContent = `${act.activity_name || '课堂活动'} · ${formatBangkokTime(work.upload_time)}`;
         document.getElementById('workCode').textContent = work.anonymous_code || '';
-        document.getElementById('workTypeBadge').textContent = isVideo(work.image_url) ? '视频作品' : '图片作品';
+        document.getElementById('workTypeBadge').textContent = vid ? '视频作品' : '图片作品';
         document.getElementById('workTitle').textContent = work.title || '';
         document.getElementById('workDesc').textContent = work.description || '暂无说明';
         document.getElementById('viewCount').textContent = work.view_count || 0;
@@ -304,15 +308,14 @@
         document.getElementById('avgScore').textContent = work.average_rating > 0 ? Number(work.average_rating).toFixed(1) : '-';
         document.getElementById('rateCount').textContent = work.rating_count || 0;
         if (isNewWork(work.upload_time)) document.getElementById('newBadge').style.display = 'inline-flex';
+        appendStatusChips(work);
 
         const mediaWrap = document.getElementById('mediaWrap');
-        if (isVideo(work.image_url)) {
-          mediaWrap.innerHTML = `
-            <video src="${work.image_url}" controls autoplay muted playsinline oncanplay="this.muted=false"></video>
-          `;
+        if (vid) {
+          mediaWrap.innerHTML = `<video src="${mediaUrl}" poster="${posterUrl}" controls autoplay muted playsinline oncanplay="this.muted=false"></video>`;
         } else {
-          mediaWrap.innerHTML = `<img id="detailImage" src="${work.image_url}" alt="${escapeHtml(work.title || '')}" style="cursor:zoom-in;">`;
-          document.getElementById('detailImage').addEventListener('click', () => openLightbox(work.image_url));
+          mediaWrap.innerHTML = `<img id="detailImage" src="${mediaUrl}" alt="${escapeHtml(work.title || '')}" style="cursor:zoom-in;">`;
+          document.getElementById('detailImage').addEventListener('click', () => openLightbox(mediaUrl));
         }
 
         if (!guest && user.id) {

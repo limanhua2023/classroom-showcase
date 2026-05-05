@@ -1,7 +1,8 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>作品管理 - ClassShow</title>
   <link rel="stylesheet" href="css/main.css">
 </head>
@@ -9,28 +10,44 @@
   <div class="topbar">
     <div class="topbar-logo">Class<span>Show</span> · 作品管理</div>
     <div class="topbar-right">
-      <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-dashboard.html'">← 返回后台</button>
-      <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-scores.html'">📊 评分成绩</button>
-      <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-feedback.html'">📝 信息反馈</button>
+      <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-dashboard.html'">返回后台</button>
+      <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-scores.html'">评分成绩</button>
+      <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-feedback.html'">信息反馈</button>
     </div>
   </div>
+
   <div class="container" style="padding-top:24px;">
     <div class="section-header">
-      <h2>📋 全部作品（实名）</h2>
-      <div style="display:flex;gap:12px;">
-        <input type="text" id="searchBox" placeholder="搜索姓名/学号/编号..." style="padding:8px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);width:200px;">
-        <button class="btn btn-primary" onclick="downloadAllZip()">📦 打包全班图片 (ZIP)</button>
+      <h2>全部作品（实名）</h2>
+      <div style="display:flex;gap:12px;flex-wrap:wrap;">
+        <input type="text" id="searchBox" placeholder="搜索姓名/学号/编号/标题..." style="padding:8px 14px;border:1px solid var(--border);border-radius:var(--radius-sm);width:240px;">
+        <button class="btn btn-primary" onclick="downloadAllZip()">打包全班作品 ZIP</button>
       </div>
     </div>
     <div class="table-wrap" style="margin-top:12px;">
       <table>
-        <thead><tr>
-          <th>编号</th><th>图片</th><th>标题</th><th>姓名</th><th>学号</th><th>班级</th><th>小组</th><th>浏览</th><th>评论</th><th>评分</th><th>平均分</th><th>上传时间</th><th>操作</th>
-        </tr></thead>
+        <thead>
+          <tr>
+            <th>编号</th>
+            <th>封面</th>
+            <th>标题</th>
+            <th>姓名</th>
+            <th>学号</th>
+            <th>班级</th>
+            <th>小组</th>
+            <th>浏览</th>
+            <th>评论</th>
+            <th>评分</th>
+            <th>均分</th>
+            <th>上传时间</th>
+            <th>操作</th>
+          </tr>
+        </thead>
         <tbody id="tbody"></tbody>
       </table>
     </div>
   </div>
+
   <script src="js/api.js"></script>
   <script>
     const actId = sessionStorage.getItem('classshow_activity_id');
@@ -38,51 +55,52 @@
     if (!token) location.href = 'teacher-login.html';
     let allData = [];
 
-    function formatBangkokTime(value) {
-      if (!value) return '-';
-      return new Intl.DateTimeFormat('zh-CN', {
-        timeZone: 'Asia/Bangkok',
-        year: 'numeric',
-        month: '2-digit',
-        day: '2-digit',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-        hour12: false
-      }).format(new Date(value));
-    }
-
     async function loadWorks() {
       try {
         allData = await api('/teacher/submissions?activity_id=' + actId);
         render(allData);
-      } catch (e) { toast('加载失败', 'error'); }
+      } catch (e) {
+        toast('加载失败', 'error');
+      }
     }
 
     function render(data) {
-      document.getElementById('tbody').innerHTML = data.map(s => {
-        const u = s.users || {};
-        return `<tr>
-          <td><span class="card-badge">${escapeHtml(s.anonymous_code)}</span></td>
-          <td>${isVideo(s.image_url)
-            ? `<video src="${s.image_url}" preload="metadata" muted playsinline style="width:60px;height:60px;object-fit:cover;border-radius:6px;" onloadedmetadata="this.currentTime=0.001"></video>`
-            : `<img src="${s.image_url}" alt="" onerror="this.style.display='none'" style="width:60px;height:60px;object-fit:cover;border-radius:6px;">`
-          }</td>
-          <td><strong>${escapeHtml(s.title)}</strong></td>
-          <td>${escapeHtml(u.name||'-')}</td><td>${escapeHtml(u.student_id||'-')}</td><td>${escapeHtml(u.class_name||'-')}</td><td>${escapeHtml(u.group_name||'-')}</td>
-          <td>${s.view_count}</td><td>${s.comment_count || 0}</td><td>${s.rating_count}</td><td>${s.average_rating > 0 ? Number(s.average_rating).toFixed(1) : '-'}</td>
-          <td style="font-size:0.8rem;">${formatBangkokTime(s.upload_time)}</td>
-          <td style="white-space:nowrap;">
-            <button class="btn btn-sm btn-primary" onclick="downloadImage(decodeURIComponent('${encodeURIComponent(s.image_url)}'), decodeURIComponent('${encodeURIComponent(u.student_id||s.anonymous_code)}'), decodeURIComponent('${encodeURIComponent(s.title)}'))">⬇️ 下载</button>
-            <button class="btn btn-sm ${s.is_pinned?'btn-success':'btn-secondary'}" onclick="toggleField('${s.id}','is_pinned',${!s.is_pinned})">${s.is_pinned?'取消置顶':'置顶'}</button>
-            <button class="btn btn-sm ${s.is_teacher_selected?'btn-success':'btn-secondary'}" onclick="toggleField('${s.id}','is_teacher_selected',${!s.is_teacher_selected})">${s.is_teacher_selected?'取消精选':'精选'}</button>
-            <button class="btn btn-sm btn-danger" onclick="deleteWork('${s.id}')">删除</button>
-          </td>
-        </tr>`;
+      document.getElementById('tbody').innerHTML = data.map(work => {
+        const user = work.users || {};
+        const mediaUrl = getWorkMediaUrl(work);
+        const thumbUrl = getWorkThumbnailUrl(work) || mediaUrl;
+        const isVideoWork = isVideo(mediaUrl);
+        const archiveLabel = getArchiveStatusLabel(work);
+        const preferredExt = isVideoWork ? 'mp4' : '';
+        return `
+          <tr>
+            <td><span class="card-badge">${escapeHtml(work.anonymous_code || '')}</span></td>
+            <td><img src="${thumbUrl}" alt="" onerror="this.style.display='none'" style="width:60px;height:60px;object-fit:cover;border-radius:6px;background:#0f172a;"></td>
+            <td>
+              <strong>${escapeHtml(work.title || '')}</strong>
+              <div class="form-hint">${isVideoWork ? '视频' : '图片'}${archiveLabel ? ` · ${archiveLabel}` : ''}</div>
+            </td>
+            <td>${escapeHtml(user.name || '-')}</td>
+            <td>${escapeHtml(user.student_id || '-')}</td>
+            <td>${escapeHtml(user.class_name || '-')}</td>
+            <td>${escapeHtml(user.group_name || '-')}</td>
+            <td>${work.view_count || 0}</td>
+            <td>${work.comment_count || 0}</td>
+            <td>${work.rating_count || 0}</td>
+            <td>${work.average_rating > 0 ? Number(work.average_rating).toFixed(1) : '-'}</td>
+            <td style="font-size:0.8rem;">${formatBangkokTime(work.upload_time)}</td>
+            <td style="white-space:nowrap;">
+              <button class="btn btn-sm btn-primary" onclick="downloadMedia(decodeURIComponent('${encodeURIComponent(mediaUrl)}'), decodeURIComponent('${encodeURIComponent(user.student_id || work.anonymous_code || 'student')}'), decodeURIComponent('${encodeURIComponent(work.title || 'work')}'), '${preferredExt}')">下载</button>
+              <button class="btn btn-sm ${work.is_pinned ? 'btn-success' : 'btn-secondary'}" onclick="toggleField('${work.id}','is_pinned',${!work.is_pinned})">${work.is_pinned ? '取消置顶' : '置顶'}</button>
+              <button class="btn btn-sm ${work.is_teacher_selected ? 'btn-success' : 'btn-secondary'}" onclick="toggleField('${work.id}','is_teacher_selected',${!work.is_teacher_selected})">${work.is_teacher_selected ? '取消精选' : '精选'}</button>
+              <button class="btn btn-sm btn-danger" onclick="deleteWork('${work.id}')">删除</button>
+            </td>
+          </tr>
+        `;
       }).join('');
     }
 
-    async function downloadImage(url, studentId, title) {
+    async function downloadMedia(url, studentId, title, preferredExt = '') {
       try {
         toast('正在处理下载...', 'success');
         const res = await fetch(url);
@@ -90,17 +108,17 @@
         const blobUrl = URL.createObjectURL(blob);
         const a = document.createElement('a');
         a.href = blobUrl;
-        const ext = url.split('.').pop() || 'jpg';
+        const ext = preferredExt || url.split('.').pop()?.split('?')[0] || 'jpg';
         a.download = `${studentId}_${title}.${ext}`;
         a.click();
         URL.revokeObjectURL(blobUrl);
-      } catch(e) {
-        toast('下载失败，您可以右键图片另存为', 'error');
+      } catch (e) {
+        toast('下载失败，请稍后重试', 'error');
       }
     }
 
     function downloadAllZip() {
-      toast('正在打包下载中，请稍候...', 'success');
+      toast('正在打包下载，请稍候...', 'success');
       const url = '/api/teacher/export-zip?activity_id=' + actId;
       const headers = new Headers();
       headers.append('x-teacher-auth', token);
@@ -124,26 +142,41 @@
         .catch(e => toast(e.message, 'error'));
     }
 
-    document.getElementById('searchBox').addEventListener('input', e => {
-      const q = e.target.value.toLowerCase();
-      render(allData.filter(s => {
-        const u = s.users || {};
-        return (s.anonymous_code||'').toLowerCase().includes(q) || (u.name||'').toLowerCase().includes(q) || (u.student_id||'').toLowerCase().includes(q) || (s.title||'').toLowerCase().includes(q);
+    document.getElementById('searchBox').addEventListener('input', event => {
+      const q = event.target.value.toLowerCase();
+      render(allData.filter(work => {
+        const user = work.users || {};
+        return (work.anonymous_code || '').toLowerCase().includes(q)
+          || (user.name || '').toLowerCase().includes(q)
+          || (user.student_id || '').toLowerCase().includes(q)
+          || (work.title || '').toLowerCase().includes(q);
       }));
     });
 
-    async function toggleField(id, field, val) {
+    async function toggleField(id, field, value) {
       try {
-        await api('/teacher/submissions/' + id, { method: 'PUT', body: JSON.stringify({ [field]: val }) });
-        toast('更新成功', 'success'); loadWorks();
-      } catch (e) { toast('操作失败', 'error'); }
+        await api('/teacher/submissions/' + id, {
+          method: 'PUT',
+          body: JSON.stringify({ [field]: value })
+        });
+        toast('更新成功', 'success');
+        loadWorks();
+      } catch (e) {
+        toast('操作失败', 'error');
+      }
     }
 
     async function deleteWork(id) {
-      if (!confirm('确定删除这份作品？')) return;
-      try { await api('/teacher/submissions/' + id, { method: 'DELETE' }); toast('已删除', 'success'); loadWorks(); }
-      catch (e) { toast('删除失败', 'error'); }
+      if (!confirm('确定删除这份作品吗？')) return;
+      try {
+        await api('/teacher/submissions/' + id, { method: 'DELETE' });
+        toast('已删除', 'success');
+        loadWorks();
+      } catch (e) {
+        toast('删除失败', 'error');
+      }
     }
+
     loadWorks();
   </script>
 </body>

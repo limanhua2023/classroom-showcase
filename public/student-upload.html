@@ -35,7 +35,8 @@
     }
     .video-rules ul { margin:8px 0 0 18px; }
     .upload-preview video,
-    .upload-preview img {
+    .upload-preview img,
+    .upload-preview {
       max-height:320px;
       border-radius:var(--radius-sm);
       margin:16px auto 0;
@@ -43,9 +44,7 @@
       width:100%;
       object-fit:cover;
     }
-    .upload-shell {
-      margin-bottom: 28px;
-    }
+    .upload-shell { margin-bottom:28px; }
   </style>
 </head>
 <body>
@@ -61,21 +60,21 @@
     <section class="gallery-hero upload-shell">
       <div class="gallery-kicker">Student Studio</div>
       <h1 id="pageTitle" style="font-size:clamp(1.9rem,4vw,3rem);">上传你的作品</h1>
-      <p>标题保存后会自动追加曼谷当地上传时间，精确到秒；图片会自动压缩，视频会自动做课堂展示优化。</p>
+      <p>标题保存后会自动追加曼谷当地上传时间，精确到秒。图片会自动压缩并生成缩略图；视频会先生成封面，再进入后台异步转码。</p>
     </section>
 
     <div class="rubric" style="margin-bottom:16px;">
       <h3>上传说明</h3>
       <ol>
-        <li>提交后作品将直接进入作品展陈卡片，并同步出现在大屏展示区。</li>
-        <li>图片会优先压缩成更适合课堂浏览的格式；视频会自动规范为更稳定的播放版本。</li>
-        <li>如果你在修改旧作品，原来的评分、评论和浏览量会清零后重新计算。</li>
+        <li>提交后作品会立即出现在作品展中，大屏也会同步可见。</li>
+        <li>图片会自动压缩；视频会先可用，再在后台转成更适合课堂播放的版本。</li>
+        <li>如果你修改旧作品，旧作品的评分、评论和浏览量会清零后重新统计。</li>
       </ol>
     </div>
 
     <div id="editNotice" class="rubric" style="display:none;margin-bottom:16px;background:#fff7ed;border-color:#fdba74;color:#9a3412;">
       你当前正在修改一份已有作品。保存后，这一份作品会被覆盖，原有评分、评论和浏览量会被重置并重新统计。
-      如果你想保留旧作品并新上传一份，请点击右上角“上传新作品”。
+      如果你想保留旧作品并新增一份，请点击右上角“上传新作品”。
     </div>
 
     <form onsubmit="submitWork(event)">
@@ -120,11 +119,11 @@
             </ul>
           </div>
           <div class="upload-area">
-            <input type="file" id="videoFile" accept="video/mp4,video/quicktime" onchange="previewFile(this,'video')">
+            <input type="file" id="videoFile" accept="video/mp4,video/quicktime,video/webm" onchange="previewFile(this,'video')">
             <div id="uploadPromptVid">
               <div class="upload-icon">🎬</div>
               <div>点击选择视频文件</div>
-              <div class="form-hint">系统会自动做课堂播放优化</div>
+              <div class="form-hint">系统会自动生成封面，并在后台继续优化课堂播放版</div>
             </div>
             <video id="previewVid" class="upload-preview" style="display:none;" muted playsinline controls></video>
             <div id="vidInfo" class="form-hint" style="text-align:center;margin-top:10px;"></div>
@@ -163,15 +162,28 @@
     }
 
     function showPreview(url, type) {
+      if (!url) return;
       if (type === 'video') {
-        document.getElementById('previewVid').src = url;
-        document.getElementById('previewVid').style.display = 'block';
+        const video = document.getElementById('previewVid');
+        video.src = url;
+        video.style.display = 'block';
         document.getElementById('uploadPromptVid').style.display = 'none';
       } else {
-        document.getElementById('previewImg').src = url;
-        document.getElementById('previewImg').style.display = 'block';
+        const image = document.getElementById('previewImg');
+        image.src = url;
+        image.style.display = 'block';
         document.getElementById('uploadPromptImg').style.display = 'none';
       }
+    }
+
+    function clearVideoPreview() {
+      const video = document.getElementById('previewVid');
+      video.pause();
+      video.removeAttribute('src');
+      video.load();
+      video.style.display = 'none';
+      document.getElementById('uploadPromptVid').style.display = 'block';
+      document.getElementById('vidInfo').textContent = '';
     }
 
     function previewFile(input, type) {
@@ -193,16 +205,13 @@
         if (duration > 60) {
           toast(`视频时长 ${Math.ceil(duration)} 秒，超过 60 秒限制`, 'error');
           input.value = '';
-          video.src = '';
-          video.style.display = 'none';
-          document.getElementById('uploadPromptVid').style.display = 'block';
-          document.getElementById('vidInfo').textContent = '';
+          clearVideoPreview();
           URL.revokeObjectURL(objectUrl);
           return;
         }
         video.style.display = 'block';
         document.getElementById('uploadPromptVid').style.display = 'none';
-        document.getElementById('vidInfo').textContent = `时长 ${Math.ceil(duration)} 秒 · 文件大小 ${formatBytes(file.size)}`;
+        document.getElementById('vidInfo').textContent = `时长 ${Math.ceil(duration)} 秒 · 文件大小 ${formatBytes(file.size)} · 上传后会自动生成封面并进入后台转码`;
       };
     }
 
@@ -226,12 +235,14 @@
         document.getElementById('title').value = editingWork.title || '';
         document.getElementById('desc').value = editingWork.description || '';
         document.getElementById('charCount').textContent = (editingWork.description || '').length;
-        if (isVideo(editingWork.image_url)) {
+        const mediaUrl = getWorkMediaUrl(editingWork);
+        if (isVideo(mediaUrl)) {
           switchTab('video');
-          showPreview(editingWork.image_url, 'video');
+          showPreview(mediaUrl, 'video');
+          document.getElementById('vidInfo').textContent = `当前作品状态：${getTranscodeStatusLabel(editingWork.transcode_status)}`;
         } else {
           switchTab('image');
-          showPreview(editingWork.image_url, 'image');
+          showPreview(mediaUrl, 'image');
         }
       } catch (e) {
         toast('加载作品失败：' + e.message, 'error');
@@ -252,28 +263,44 @@
 
       try {
         let file;
+        const currentMediaUrl = editingWork ? getWorkMediaUrl(editingWork) : '';
         if (currentTab === 'image') {
           file = document.getElementById('imageFile').files[0];
           if (!file && !editingWork) throw new Error('请选择图片文件');
-          if (!file && editingWork && isVideo(editingWork.image_url)) throw new Error('请重新选择图片文件');
+          if (!file && editingWork && isVideo(currentMediaUrl)) throw new Error('请重新选择图片文件');
           if (file && file.size > 10 * 1024 * 1024) throw new Error('图片不能超过 10MB');
         } else {
           file = document.getElementById('videoFile').files[0];
           if (!file && !editingWork) throw new Error('请选择视频文件');
-          if (!file && editingWork && !isVideo(editingWork.image_url)) throw new Error('请重新选择视频文件');
+          if (!file && editingWork && !isVideo(currentMediaUrl)) throw new Error('请重新选择视频文件');
           if (file && file.size > 200 * 1024 * 1024) throw new Error('视频不能超过 200MB');
         }
 
-        let imageUrl = editingWork ? editingWork.image_url : null;
+        let imageUrl = editingWork ? getWorkMediaUrl(editingWork) : null;
         let storagePath = editingWork ? editingWork.storage_path : null;
         let mediaSize = editingWork ? (editingWork.media_size || null) : null;
+        let thumbnailUrl = editingWork ? getWorkThumbnailUrl(editingWork) : null;
+        let thumbnailPath = editingWork ? (editingWork.thumbnail_path || null) : null;
+        let originalMediaSize = editingWork ? Number(editingWork.original_media_size || editingWork.media_size || 0) : 0;
+        let compressed = editingWork ? Number(editingWork.compression_saved_bytes || 0) > 0 : false;
+        let savedBytes = editingWork ? Number(editingWork.compression_saved_bytes || 0) : 0;
+        let savedPercent = editingWork ? Number(editingWork.compression_saved_percent || 0) : 0;
+        let transcodeStatus = editingWork ? String(editingWork.transcode_status || 'ready') : 'ready';
+        const mediaChanged = !!file;
 
         if (file) {
-          btn.textContent = '处理与上传中...';
+          btn.textContent = '处理中并上传...';
           const uploadResult = await uploadMedia(file);
           imageUrl = uploadResult.url;
           storagePath = uploadResult.path;
           mediaSize = uploadResult.size;
+          thumbnailUrl = uploadResult.thumbnail_url || imageUrl;
+          thumbnailPath = uploadResult.thumbnail_path || null;
+          originalMediaSize = Number(uploadResult.original_size || uploadResult.size || 0);
+          compressed = !!uploadResult.compressed;
+          savedBytes = Number(uploadResult.saved_bytes || 0);
+          savedPercent = Number(uploadResult.saved_percent || 0);
+          transcodeStatus = String(uploadResult.transcode_status || 'ready');
           note.textContent = buildCompressionNote(uploadResult);
         }
 
@@ -289,11 +316,22 @@
             description: document.getElementById('desc').value.trim(),
             image_url: imageUrl,
             storage_path: storagePath,
-            media_size: mediaSize
+            media_size: mediaSize,
+            thumbnail_url: thumbnailUrl,
+            thumbnail_path: thumbnailPath,
+            original_media_size: originalMediaSize,
+            compressed,
+            saved_bytes: savedBytes,
+            saved_percent: savedPercent,
+            transcode_status: transcodeStatus,
+            media_changed: mediaChanged
           })
         });
 
-        toast(editingWork ? '作品修改成功' : '作品上传成功', 'success');
+        const successMessage = mediaChanged && currentTab === 'video' && ['pending', 'processing', 'retry'].includes(transcodeStatus.toLowerCase())
+          ? '作品已上传，视频正在后台优化'
+          : (editingWork ? '作品修改成功' : '作品上传成功');
+        toast(successMessage, 'success');
         setTimeout(() => location.href = 'student-gallery.html', 900);
       } catch (e) {
         toast(e.message, 'error');

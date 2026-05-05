@@ -280,15 +280,12 @@
     }
 
     function buildDisplayShowcaseCard(w, mode = 'all') {
-      const vid = isVideo(w.image_url);
+      const mediaUrl = getWorkMediaUrl(w);
+      const thumbUrl = getWorkThumbnailUrl(w) || mediaUrl;
+      const vid = isVideo(mediaUrl);
       const template = pickWorkTemplate(`${w.id || w.anonymous_code}-${mode}`);
-      const media = vid
-        ? `<div class="exhibit-media" style="background:#020617;">
-             <video src="${w.image_url}" muted playsinline preload="metadata" style="width:100%;height:100%;object-fit:cover;display:block;" oncanplay="startFiveSecPreview(this)"></video>
-             <div class="exhibit-overlay"><span class="exhibit-template-label">${mode === 'new' ? 'Fresh Drop' : 'Screen Focus'}</span></div>
-           </div>`
-        : `<div class="exhibit-media">
-             <img src="${w.image_url}" alt="">
+      const media = `<div class="exhibit-media" style="background:${vid ? '#020617' : ''};">
+             <img src="${thumbUrl}" alt="${escapeHtml(w.title || '')}" style="width:100%;height:100%;object-fit:cover;display:block;">
              <div class="exhibit-overlay"><span class="exhibit-template-label">${mode === 'new' ? 'Fresh Drop' : 'Screen Focus'}</span></div>
            </div>`;
       let countdown = '';
@@ -308,6 +305,8 @@
               ${countdown}
               ${w.is_teacher_selected ? '<span class="card-badge" style="background:#fef3c7;color:#b45309;">精选</span>' : ''}
               ${vid ? '<span class="card-badge" style="background:#e0e7ff;color:#4338ca;">MP4</span>' : ''}
+              ${vid && String(w.transcode_status || 'ready').toLowerCase() !== 'ready' ? `<span class="card-badge" style="background:#ede9fe;color:#5b21b6;">${escapeHtml(getTranscodeStatusLabel(w.transcode_status))}</span>` : ''}
+              ${getArchiveStatusLabel(w) ? `<span class="card-badge" style="background:#ecfccb;color:#3f6212;">${escapeHtml(getArchiveStatusLabel(w))}</span>` : ''}
             </div>
             <div class="exhibit-kicker">${mode === 'new' ? 'Live Upload Window' : 'Class Showcase'}</div>
             <div class="exhibit-title">${escapeHtml(w.title || '')}</div>
@@ -466,12 +465,9 @@
             }
             rankSec.style.display = 'block';
             document.getElementById('rankList').innerHTML = top.map((w, i) => {
-              const vid = isVideo(w.image_url);
-              // Video thumbnail: use <video> with preload="metadata" — browser renders first frame automatically
-              const thumb = vid
-                ? `<video class="display-rank-img" src="${w.image_url}" preload="metadata" muted playsinline
-                     style="object-fit:cover;" onloadedmetadata="this.currentTime=0.001"></video>`
-                : `<img class="display-rank-img" src="${w.image_url}" alt="">`;
+              const mediaUrl = getWorkMediaUrl(w);
+              const vid = isVideo(mediaUrl);
+              const thumb = `<img class="display-rank-img" src="${getWorkThumbnailUrl(w) || mediaUrl}" alt="${escapeHtml(w.title || '')}">`;
             return `<div class="display-rank-item" style="cursor:pointer;" onclick="openSpotlight('${w.id}')">
                 <span class="rank-badge ${i===0?'gold':i===1?'silver':i===2?'bronze':''}">${i+1}</span>
                 ${thumb}
@@ -531,10 +527,11 @@
 
       // Build slides
       const slidesHtml = works.map((w, i) => {
-        const vid = isVideo(w.image_url);
+        const mediaUrl = getWorkMediaUrl(w);
+        const vid = isVideo(mediaUrl);
         const media = vid
-          ? `<video src="${w.image_url}" muted playsinline preload="metadata" onloadedmetadata="this.currentTime=0.001" style="width:100%;height:100%;object-fit:cover;display:block;"></video>`
-          : `<img src="${w.image_url}" alt="${w.title}" style="width:100%;height:100%;object-fit:cover;display:block;">`;
+          ? `<video src="${mediaUrl}" poster="${getWorkPosterUrl(w)}" muted playsinline preload="metadata" style="width:100%;height:100%;object-fit:cover;display:block;"></video>`
+          : `<img src="${getWorkThumbnailUrl(w) || mediaUrl}" alt="${w.title}" style="width:100%;height:100%;object-fit:cover;display:block;">`;
         return `
           <div class="top3-slide ${i === 0 ? 'active' : ''}" data-idx="${i}" onclick="openSpotlight('${w.id}')" style="cursor:pointer">
             ${media}
@@ -606,15 +603,17 @@
         const qs = viewerUser?.id ? ('?viewer_user_id=' + encodeURIComponent(viewerUser.id)) : '';
         // Fetch submission detail
         const work = await api('/submissions/' + submissionId + qs);
+        const mediaUrl = getWorkMediaUrl(work);
+        const posterUrl = getWorkPosterUrl(work);
         activeSpotlightWork = work;
         activeSpotlightMyRating = 0;
         // Render media: video or image
         const spotMediaWrap = document.getElementById('spotMediaWrap');
-        if (isVideo(work.image_url)) {
-          spotMediaWrap.innerHTML = `<video src="${work.image_url}" controls autoplay muted playsinline
+        if (isVideo(mediaUrl)) {
+          spotMediaWrap.innerHTML = `<video src="${mediaUrl}" poster="${posterUrl}" controls autoplay muted playsinline
             style="max-width:100%;max-height:85vh;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.5);display:block;" oncanplay="this.muted=false"></video>`;
         } else {
-          spotMediaWrap.innerHTML = `<img src="${work.image_url}" style="max-width:100%;max-height:85vh;object-fit:contain;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.5);animation:spotlightZoom 0.5s ease forwards;">` ;
+          spotMediaWrap.innerHTML = `<img src="${mediaUrl}" style="max-width:100%;max-height:85vh;object-fit:contain;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.5);animation:spotlightZoom 0.5s ease forwards;">` ;
         }
         document.getElementById('spotBadge').textContent = work.anonymous_code;
         document.getElementById('spotTitle').textContent = work.title;

@@ -53,6 +53,38 @@ function isVideo(url) {
   return /\.(mp4|webm|mov|ogg)$/i.test(String(url).split('?')[0]);
 }
 
+function getWorkMediaUrl(work) {
+  return String(work?.image_url || '').trim();
+}
+
+function getWorkThumbnailUrl(work) {
+  return String(work?.thumbnail_url || work?.poster_url || work?.image_url || '').trim();
+}
+
+function getWorkPosterUrl(work) {
+  return String(work?.poster_url || work?.thumbnail_url || work?.image_url || '').trim();
+}
+
+function getTranscodeStatusLabel(status) {
+  const value = String(status || 'ready').toLowerCase();
+  if (value === 'pending') return '转码排队';
+  if (value === 'processing') return '转码中';
+  if (value === 'retry') return '等待重试';
+  if (value === 'failed') return '转码失败';
+  return '已优化';
+}
+
+function getArchiveStatusLabel(work) {
+  const tier = String(work?.archive_tier || '').toLowerCase();
+  const status = String(work?.archive_status || '').toLowerCase();
+  if (tier === 'cold') return '冷归档';
+  if (status === 'mirrored') return '已归档';
+  if (status === 'processing') return '归档中';
+  if (status === 'pending') return '待归档';
+  if (status === 'failed') return '归档失败';
+  return '';
+}
+
 function getSession() {
   const raw = sessionStorage.getItem('classshow_user');
   return raw ? JSON.parse(raw) : null;
@@ -143,9 +175,15 @@ function formatBangkokTime(value, options = {}) {
 
 function buildCompressionNote(uploadResult) {
   if (!uploadResult) return '';
-  if (!uploadResult.compressed) return '已按原文件保留';
+  const processing = !!uploadResult.processing || ['pending', 'processing', 'retry'].includes(String(uploadResult.transcode_status || '').toLowerCase());
+  if (!uploadResult.compressed) {
+    return processing ? '文件已上传，视频课堂优化版正在后台生成。' : '已按原文件保留';
+  }
   const savedBytes = Number(uploadResult.saved_bytes) || 0;
   const savedPercent = Number(uploadResult.saved_percent) || 0;
+  if (processing) {
+    return `已完成首轮压缩，节省 ${formatBytes(savedBytes)}（${savedPercent}%），视频高清版会继续在后台转码。`;
+  }
   return `已自动压缩，节省 ${formatBytes(savedBytes)}（${savedPercent}%）`;
 }
 

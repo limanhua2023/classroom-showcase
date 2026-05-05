@@ -13,6 +13,8 @@ import readXlsxFile from 'read-excel-file/node';
 import sharp from 'sharp';
 import ffmpegStatic from 'ffmpeg-static';
 import { spawn } from 'child_process';
+import { google } from 'googleapis';
+import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
 
 dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
@@ -50,6 +52,31 @@ const VIDEO_CRF = 30;
 const VIDEO_PRESET = 'veryfast';
 const VIDEO_AUDIO_BITRATE = '96k';
 const VIDEO_MAXRATE = '1600k';
+const MEDIA_MANIFEST_FOLDER = 'manifests';
+const MEDIA_THUMBNAIL_FOLDER = 'thumbs';
+const IMAGE_THUMB_MAX_DIMENSION = 720;
+const IMAGE_THUMB_QUALITY = 76;
+const VIDEO_THUMB_MAX_WIDTH = 960;
+const VIDEO_THUMB_CAPTURE_SECOND = 0.8;
+const TRANSCODE_LOOP_INTERVAL_MS = 45 * 1000;
+const TRANSCODE_BATCH_SIZE = 2;
+const TRANSCODE_MAX_ATTEMPTS = 3;
+const ASYNC_VIDEO_TRANSCODE = !/^false$/i.test(String(process.env.ASYNC_VIDEO_TRANSCODE || 'true'));
+const ARCHIVE_LOOP_INTERVAL_MS = 15 * 60 * 1000;
+const ARCHIVE_BATCH_SIZE = 2;
+const ARCHIVE_MAX_ATTEMPTS = 3;
+const ARCHIVE_AFTER_DAYS = Math.max(0, Number(process.env.ARCHIVE_AFTER_DAYS || 30));
+const ARCHIVE_PROVIDER = String(process.env.ARCHIVE_PROVIDER || 'none').trim().toLowerCase();
+const ARCHIVE_DELETE_PRIMARY_AFTER_SUCCESS = /^true$/i.test(String(process.env.ARCHIVE_DELETE_PRIMARY_AFTER_SUCCESS || 'false'));
+const GOOGLE_DRIVE_FOLDER_ID = String(process.env.GOOGLE_DRIVE_FOLDER_ID || '').trim();
+const GOOGLE_DRIVE_PUBLIC_LINKS = /^true$/i.test(String(process.env.GOOGLE_DRIVE_PUBLIC_LINKS || 'false'));
+const ARCHIVE_S3_BUCKET = String(process.env.ARCHIVE_S3_BUCKET || '').trim();
+const ARCHIVE_S3_REGION = String(process.env.ARCHIVE_S3_REGION || 'auto').trim();
+const ARCHIVE_S3_ENDPOINT = String(process.env.ARCHIVE_S3_ENDPOINT || '').trim();
+const ARCHIVE_S3_ACCESS_KEY_ID = String(process.env.ARCHIVE_S3_ACCESS_KEY_ID || '').trim();
+const ARCHIVE_S3_SECRET_ACCESS_KEY = String(process.env.ARCHIVE_S3_SECRET_ACCESS_KEY || '').trim();
+const ARCHIVE_S3_FORCE_PATH_STYLE = /^true$/i.test(String(process.env.ARCHIVE_S3_FORCE_PATH_STYLE || 'true'));
+const ARCHIVE_S3_PUBLIC_BASE_URL = String(process.env.ARCHIVE_S3_PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
 
 function escapeHtml(input = '') {
   const str = String(input);
@@ -168,7 +195,7 @@ function sanitizeMediaUrl(input) {
 function sanitizeStoragePath(input) {
   const value = String(input ?? '').trim().replace(/^\/+/, '');
   if (!value) return null;
-  if (!/^(uploads|videos)\/[A-Za-z0-9._-]+$/.test(value)) return null;
+  if (!/^(uploads|videos|thumbs|manifests)\/[A-Za-z0-9._-]+$/.test(value)) return null;
   return value;
 }
 
@@ -199,6 +226,36 @@ function isVideoFilePath(storagePath) {
   return /\.(mp4|mov|webm|ogg)$/i.test(String(storagePath || '').split('?')[0]);
 }
 
+function contentTypeForExtension(ext, fallback = 'application/octet-stream') {
+  const normalized = String(ext || '').replace(/^\./, '').toLowerCase();
+  const map = {
+    webp: 'image/webp',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    png: 'image/png',
+    gif: 'image/gif',
+    mp4: 'video/mp4',
+    mov: 'video/quicktime',
+    webm: 'video/webm',
+    ogg: 'video/ogg',
+    json: 'application/json'
+  };
+  return map[normalized] || fallback;
+}
+
+function createSidecarStoragePath(storagePath, folder, ext) {
+  const safePath = sanitizeStoragePath(storagePath);
+  if (!safePath) return null;
+  const baseName = path.posix.basename(safePath).replace(/\.[^.]+$/, '');
+  return `${folder}/${baseName}.${String(ext || '').replace(/^\./, '')}`;
+}
+
+function createMediaManifestStoragePath(submissionId) {
+  const safeId = String(submissionId || '').trim();
+  if (!safeId) return null;
+  return `${MEDIA_MANIFEST_FOLDER}/${safeId}.json`;
+}
+
 async function deleteStorageObject(storagePath) {
   const safePath = sanitizeStoragePath(storagePath);
   if (!safePath) return false;
@@ -210,10 +267,379 @@ async function deleteStorageObject(storagePath) {
   return true;
 }
 
+const mediaManifestCache = new Map();
+let googleDriveClientPromise = null;
+let s3ArchiveClient = null;
+
+function submissionManifestNotFound(error) {
+  const message = String(error?.message || error || '');
+  return /not found|404|Object not found|The resource was not found/i.test(message);
+}
+
+function isStorageRlsError(error) {
+  const message = String(error?.message || error || '');
+  return /row-level security|violates row-level security policy|new row violates/i.test(message);
+}
+
+function cacheSubmissionMediaManifest(submissionId, manifest) {
+  if (!submissionId) return;
+  mediaManifestCache.set(String(submissionId), {
+    expiresAt: Date.now() + 30 * 1000,
+    manifest: manifest ? JSON.parse(JSON.stringify(manifest)) : null
+  });
+}
+
+function getCachedSubmissionMediaManifest(submissionId) {
+  const cached = mediaManifestCache.get(String(submissionId || ''));
+  if (!cached) return null;
+  if (cached.expiresAt <= Date.now()) {
+    mediaManifestCache.delete(String(submissionId || ''));
+    return null;
+  }
+  return cached.manifest ? JSON.parse(JSON.stringify(cached.manifest)) : null;
+}
+
+async function uploadLocalFileToPrimaryStorage(localPath, storagePath, contentType) {
+  const stream = fs.createReadStream(localPath);
+  const { error } = await supabase.storage.from('submissions').upload(storagePath, stream, {
+    contentType,
+    upsert: true,
+    duplex: 'half'
+  });
+  if (error) throw error;
+}
+
+async function uploadBufferToPrimaryStorage(storagePath, buffer, contentType) {
+  const { error } = await supabase.storage.from('submissions').upload(storagePath, buffer, {
+    contentType,
+    upsert: true
+  });
+  if (error) throw error;
+}
+
+async function replaceBufferInPrimaryStorage(storagePath, buffer, contentType) {
+  const bucket = supabase.storage.from('submissions');
+  let { error } = await bucket.update(storagePath, buffer, { contentType, upsert: true });
+  if (!error) return;
+  if (submissionManifestNotFound(error)) {
+    ({ error } = await bucket.upload(storagePath, buffer, { contentType, upsert: true }));
+    if (!error) return;
+  }
+  if (isStorageRlsError(error)) {
+    await bucket.remove([storagePath]).catch(() => {});
+    ({ error } = await bucket.upload(storagePath, buffer, { contentType, upsert: true }));
+    if (!error) return;
+  }
+  throw error;
+}
+
+function buildDefaultSubmissionMediaManifest(submission = {}) {
+  const mediaType = submission.media_type || (isVideoFilePath(submission.storage_path || submission.image_url) ? 'video' : 'image');
+  return {
+    version: 1,
+    media_type: mediaType,
+    thumbnail_path: null,
+    thumbnail_url: null,
+    poster_url: null,
+    transcode_status: 'ready',
+    transcode_attempts: 0,
+    transcode_error: null,
+    transcoded_at: null,
+    original_media_size: Number(submission.media_size) || 0,
+    compressed: false,
+    saved_bytes: 0,
+    saved_percent: 0,
+    archive_tier: 'hot',
+    archive_status: ARCHIVE_PROVIDER === 'none' ? 'disabled' : 'pending',
+    archive_provider: null,
+    archive_key: null,
+    archive_url: null,
+    archive_thumbnail_key: null,
+    archive_thumbnail_url: null,
+    archive_attempts: 0,
+    archive_error: null,
+    archived_at: null,
+    updated_at: new Date().toISOString()
+  };
+}
+
+function normalizeSubmissionMediaManifest(submission = {}, manifest = null) {
+  const base = buildDefaultSubmissionMediaManifest(submission);
+  const merged = {
+    ...base,
+    ...(manifest || {})
+  };
+  merged.media_type = merged.media_type || base.media_type;
+  merged.thumbnail_path = sanitizeStoragePath(merged.thumbnail_path) || null;
+  merged.thumbnail_url = sanitizeMediaUrl(merged.thumbnail_url) || publicUrlForStoragePath(merged.thumbnail_path) || null;
+  merged.poster_url = sanitizeMediaUrl(merged.poster_url) || merged.thumbnail_url || null;
+  merged.transcode_status = String(merged.transcode_status || base.transcode_status);
+  merged.transcode_attempts = Number(merged.transcode_attempts || 0);
+  merged.original_media_size = Number(merged.original_media_size || submission.media_size || 0);
+  merged.saved_bytes = Number(merged.saved_bytes || 0);
+  merged.saved_percent = Number(merged.saved_percent || 0);
+  merged.archive_tier = String(merged.archive_tier || 'hot');
+  merged.archive_status = String(merged.archive_status || (ARCHIVE_PROVIDER === 'none' ? 'disabled' : 'pending'));
+  merged.archive_provider = merged.archive_provider ? String(merged.archive_provider) : null;
+  merged.archive_key = merged.archive_key ? String(merged.archive_key) : null;
+  merged.archive_url = sanitizeMediaUrl(merged.archive_url) || null;
+  merged.archive_thumbnail_key = merged.archive_thumbnail_key ? String(merged.archive_thumbnail_key) : null;
+  merged.archive_thumbnail_url = sanitizeMediaUrl(merged.archive_thumbnail_url) || null;
+  merged.archive_attempts = Number(merged.archive_attempts || 0);
+  merged.updated_at = merged.updated_at || new Date().toISOString();
+  return merged;
+}
+
+function resolveSubmissionMediaUrl(submission = {}, manifest = null) {
+  const normalized = normalizeSubmissionMediaManifest(submission, manifest);
+  if (normalized.archive_tier === 'cold' && normalized.archive_url) return normalized.archive_url;
+  return sanitizeMediaUrl(submission.image_url) || publicUrlForStoragePath(submission.storage_path) || '';
+}
+
+function resolveSubmissionThumbnailUrl(submission = {}, manifest = null) {
+  const normalized = normalizeSubmissionMediaManifest(submission, manifest);
+  if (normalized.archive_tier === 'cold' && normalized.archive_thumbnail_url) return normalized.archive_thumbnail_url;
+  return normalized.thumbnail_url || resolveSubmissionMediaUrl(submission, normalized);
+}
+
+function mergeSubmissionWithManifest(submission = {}, manifest = null) {
+  const normalized = normalizeSubmissionMediaManifest(submission, manifest);
+  return {
+    ...submission,
+    image_url: resolveSubmissionMediaUrl(submission, normalized) || '',
+    thumbnail_url: resolveSubmissionThumbnailUrl(submission, normalized) || '',
+    poster_url: normalized.poster_url || resolveSubmissionThumbnailUrl(submission, normalized) || '',
+    transcode_status: normalized.transcode_status,
+    transcode_error: normalized.transcode_error || null,
+    transcode_attempts: normalized.transcode_attempts,
+    transcoded_at: normalized.transcoded_at || null,
+    archive_tier: normalized.archive_tier,
+    archive_status: normalized.archive_status,
+    archive_provider: normalized.archive_provider,
+    archived_at: normalized.archived_at || null,
+    original_media_size: normalized.original_media_size,
+    compression_saved_bytes: normalized.saved_bytes,
+    compression_saved_percent: normalized.saved_percent,
+    thumbnail_path: normalized.thumbnail_path
+  };
+}
+
+async function readSubmissionMediaManifest(submissionId, { force = false } = {}) {
+  if (!submissionId) return null;
+  if (!force) {
+    const cached = getCachedSubmissionMediaManifest(submissionId);
+    if (cached) return cached;
+  }
+  const storagePath = createMediaManifestStoragePath(submissionId);
+  if (!storagePath) return null;
+  const { data, error } = await supabase.storage.from('submissions').download(storagePath);
+  if (error) {
+    if (submissionManifestNotFound(error)) return null;
+    throw error;
+  }
+  const text = await data.text();
+  const parsed = JSON.parse(text || '{}');
+  cacheSubmissionMediaManifest(submissionId, parsed);
+  return parsed;
+}
+
+async function writeSubmissionMediaManifest(submissionId, manifest) {
+  const storagePath = createMediaManifestStoragePath(submissionId);
+  if (!storagePath) return null;
+  const normalized = normalizeSubmissionMediaManifest({}, manifest);
+  normalized.updated_at = new Date().toISOString();
+  const payload = Buffer.from(JSON.stringify(normalized, null, 2), 'utf8');
+  await replaceBufferInPrimaryStorage(storagePath, payload, contentTypeForExtension('json'));
+  cacheSubmissionMediaManifest(submissionId, normalized);
+  return normalized;
+}
+
+async function deleteSubmissionMediaManifest(submissionId) {
+  const storagePath = createMediaManifestStoragePath(submissionId);
+  if (!storagePath) return false;
+  mediaManifestCache.delete(String(submissionId || ''));
+  return deleteStorageObject(storagePath);
+}
+
+async function enrichSubmissionMediaRows(rows = []) {
+  return Promise.all((rows || []).map(async row => {
+    const manifest = await readSubmissionMediaManifest(row.id).catch(() => null);
+    return mergeSubmissionWithManifest(row, manifest);
+  }));
+}
+
+async function downloadRemoteBuffer(sourceUrl) {
+  if (!sourceUrl) throw new Error('Remote media url is unavailable');
+  const response = await fetch(sourceUrl);
+  if (!response.ok) throw new Error(`Failed to download media: ${response.status}`);
+  return Buffer.from(await response.arrayBuffer());
+}
+
+function parseGoogleDriveServiceAccount() {
+  const inline = String(process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '').trim();
+  if (!inline) return null;
+  try {
+    return JSON.parse(inline);
+  } catch {
+    return null;
+  }
+}
+
+async function getGoogleDriveClient() {
+  if (googleDriveClientPromise) return googleDriveClientPromise;
+  googleDriveClientPromise = (async () => {
+    const credentials = parseGoogleDriveServiceAccount();
+    if (!credentials || !GOOGLE_DRIVE_FOLDER_ID) return null;
+    const auth = new google.auth.GoogleAuth({
+      credentials,
+      scopes: ['https://www.googleapis.com/auth/drive']
+    });
+    return google.drive({ version: 'v3', auth });
+  })();
+  return googleDriveClientPromise;
+}
+
+function getS3ArchiveClient() {
+  if (s3ArchiveClient) return s3ArchiveClient;
+  if (!ARCHIVE_S3_BUCKET || !ARCHIVE_S3_ENDPOINT || !ARCHIVE_S3_ACCESS_KEY_ID || !ARCHIVE_S3_SECRET_ACCESS_KEY) {
+    return null;
+  }
+  s3ArchiveClient = new S3Client({
+    region: ARCHIVE_S3_REGION,
+    endpoint: ARCHIVE_S3_ENDPOINT,
+    forcePathStyle: ARCHIVE_S3_FORCE_PATH_STYLE,
+    credentials: {
+      accessKeyId: ARCHIVE_S3_ACCESS_KEY_ID,
+      secretAccessKey: ARCHIVE_S3_SECRET_ACCESS_KEY
+    }
+  });
+  return s3ArchiveClient;
+}
+
+function getArchiveProviderInfo() {
+  if (ARCHIVE_PROVIDER === 'google-drive') {
+    const credentials = parseGoogleDriveServiceAccount();
+    return {
+      name: 'google-drive',
+      configured: !!(credentials && GOOGLE_DRIVE_FOLDER_ID),
+      after_days: ARCHIVE_AFTER_DAYS,
+      delete_primary_after_success: ARCHIVE_DELETE_PRIMARY_AFTER_SUCCESS,
+      can_serve_public_url: GOOGLE_DRIVE_PUBLIC_LINKS
+    };
+  }
+  if (ARCHIVE_PROVIDER === 's3') {
+    return {
+      name: 's3',
+      configured: !!getS3ArchiveClient(),
+      after_days: ARCHIVE_AFTER_DAYS,
+      delete_primary_after_success: ARCHIVE_DELETE_PRIMARY_AFTER_SUCCESS,
+      can_serve_public_url: !!ARCHIVE_S3_PUBLIC_BASE_URL
+    };
+  }
+  return {
+    name: 'none',
+    configured: false,
+    after_days: ARCHIVE_AFTER_DAYS,
+    delete_primary_after_success: false,
+    can_serve_public_url: false
+  };
+}
+
+function buildArchiveObjectKey(submission, kind, ext) {
+  const safeActivity = String(submission.activity_id || 'activity').replace(/[^a-zA-Z0-9_-]/g, '');
+  const safeSubmission = String(submission.id || 'submission').replace(/[^a-zA-Z0-9_-]/g, '');
+  const safeKind = String(kind || 'media').replace(/[^a-zA-Z0-9_-]/g, '');
+  const suffix = String(ext || '').replace(/^\./, '').toLowerCase();
+  return `classshow/${safeActivity}/${safeSubmission}/${safeKind}.${suffix}`;
+}
+
+function buildS3ArchivePublicUrl(key) {
+  if (!ARCHIVE_S3_PUBLIC_BASE_URL) return null;
+  return `${ARCHIVE_S3_PUBLIC_BASE_URL}/${String(key || '').replace(/^\/+/, '')}`;
+}
+
+async function uploadFileToArchive(localPath, submission, kind, ext, contentType) {
+  const provider = getArchiveProviderInfo();
+  if (!provider.configured) return null;
+  const objectKey = buildArchiveObjectKey(submission, kind, ext);
+
+  if (provider.name === 'google-drive') {
+    const drive = await getGoogleDriveClient();
+    if (!drive) return null;
+    const { data } = await drive.files.create({
+      supportsAllDrives: true,
+      requestBody: {
+        name: objectKey.replace(/\//g, '__'),
+        parents: [GOOGLE_DRIVE_FOLDER_ID]
+      },
+      media: {
+        mimeType: contentType,
+        body: fs.createReadStream(localPath)
+      },
+      fields: 'id,name,webViewLink'
+    });
+    if (GOOGLE_DRIVE_PUBLIC_LINKS) {
+      await drive.permissions.create({
+        fileId: data.id,
+        requestBody: { role: 'reader', type: 'anyone' }
+      });
+    }
+    return {
+      provider: 'google-drive',
+      key: data.id,
+      url: GOOGLE_DRIVE_PUBLIC_LINKS ? `https://drive.google.com/uc?export=download&id=${data.id}` : null
+    };
+  }
+
+  if (provider.name === 's3') {
+    const client = getS3ArchiveClient();
+    if (!client) return null;
+    await client.send(new PutObjectCommand({
+      Bucket: ARCHIVE_S3_BUCKET,
+      Key: objectKey,
+      Body: fs.createReadStream(localPath),
+      ContentType: contentType
+    }));
+    return {
+      provider: 's3',
+      key: objectKey,
+      url: buildS3ArchivePublicUrl(objectKey)
+    };
+  }
+
+  return null;
+}
+
+async function deleteArchiveObject(archiveKey, providerName) {
+  if (!archiveKey || !providerName) return false;
+  if (providerName === 'google-drive') {
+    const drive = await getGoogleDriveClient();
+    if (!drive) return false;
+    await drive.files.delete({ fileId: archiveKey, supportsAllDrives: true }).catch(() => {});
+    return true;
+  }
+  if (providerName === 's3') {
+    const client = getS3ArchiveClient();
+    if (!client) return false;
+    await client.send(new DeleteObjectCommand({ Bucket: ARCHIVE_S3_BUCKET, Key: archiveKey })).catch(() => {});
+    return true;
+  }
+  return false;
+}
+
 async function deleteSubmissionMedia(submission) {
   if (!submission) return false;
   const storagePath = sanitizeStoragePath(submission.storage_path) || storagePathFromPublicUrl(submission.image_url);
-  return deleteStorageObject(storagePath);
+  const manifest = submission.id ? await readSubmissionMediaManifest(submission.id).catch(() => null) : null;
+  const normalized = normalizeSubmissionMediaManifest(submission, manifest);
+  await Promise.all([
+    deleteStorageObject(storagePath),
+    deleteStorageObject(normalized.thumbnail_path),
+    deleteSubmissionMediaManifest(submission.id),
+    deleteArchiveObject(normalized.archive_key, normalized.archive_provider),
+    deleteArchiveObject(normalized.archive_thumbnail_key, normalized.archive_provider)
+  ]);
+  return true;
 }
 
 async function ensureUploadOpen(activityId) {
@@ -631,6 +1057,10 @@ function getVideoContentType() {
   return 'video/mp4';
 }
 
+function getVideoThumbnailContentType() {
+  return 'image/jpeg';
+}
+
 async function runFfmpeg(args) {
   if (!ffmpegStatic) {
     throw new Error('ffmpeg binary is unavailable');
@@ -665,6 +1095,19 @@ async function compressImageUpload(file) {
 
   const outputStat = await fs.promises.stat(outputPath);
   const keepCompressed = outputStat.size <= (originalStat.size * 1.02);
+  const thumbnailSource = keepCompressed ? outputPath : file.path;
+  const thumbnailPath = createTempDerivedPath('webp');
+  await sharp(thumbnailSource, { animated: false })
+    .rotate()
+    .resize({
+      width: IMAGE_THUMB_MAX_DIMENSION,
+      height: IMAGE_THUMB_MAX_DIMENSION,
+      fit: 'inside',
+      withoutEnlargement: true
+    })
+    .webp({ quality: IMAGE_THUMB_QUALITY })
+    .toFile(thumbnailPath);
+  const thumbnailStat = await fs.promises.stat(thumbnailPath);
   return {
     finalPath: keepCompressed ? outputPath : file.path,
     contentType: keepCompressed ? getImageContentType() : String(file.mimetype || 'image/jpeg'),
@@ -673,60 +1116,57 @@ async function compressImageUpload(file) {
     size: keepCompressed ? outputStat.size : originalStat.size,
     originalSize: originalStat.size,
     optimized: keepCompressed,
-    tempFiles: keepCompressed ? [file.path, outputPath] : [file.path, outputPath],
-    savedBytes: keepCompressed ? Math.max(0, originalStat.size - outputStat.size) : 0
+    tempFiles: [file.path, outputPath, thumbnailPath],
+    savedBytes: keepCompressed ? Math.max(0, originalStat.size - outputStat.size) : 0,
+    asyncProcessing: false,
+    transcodeStatus: 'ready',
+    thumbnail: {
+      finalPath: thumbnailPath,
+      contentType: getImageContentType(),
+      storageExt: 'webp',
+      size: thumbnailStat.size
+    }
+  };
+}
+
+async function createVideoThumbnailFromUpload(filePath) {
+  if (!ffmpegStatic) return null;
+  const thumbnailPath = createTempDerivedPath('jpg');
+  await runFfmpeg([
+    '-y',
+    '-ss', String(VIDEO_THUMB_CAPTURE_SECOND),
+    '-i', filePath,
+    '-frames:v', '1',
+    '-vf', `scale='min(iw,${VIDEO_THUMB_MAX_WIDTH})':-2:force_original_aspect_ratio=decrease`,
+    '-q:v', '4',
+    thumbnailPath
+  ]);
+  const thumbnailStat = await fs.promises.stat(thumbnailPath);
+  return {
+    finalPath: thumbnailPath,
+    contentType: getVideoThumbnailContentType(),
+    storageExt: 'jpg',
+    size: thumbnailStat.size
   };
 }
 
 async function compressVideoUpload(file) {
   const originalStat = await fs.promises.stat(file.path);
-  if (!ffmpegStatic) {
-    return {
-      finalPath: file.path,
-      contentType: String(file.mimetype || getVideoContentType()),
-      storageExt: guessUploadExtension(file, 'mp4'),
-      mediaType: 'video',
-      size: originalStat.size,
-      originalSize: originalStat.size,
-      optimized: false,
-      tempFiles: [file.path],
-      savedBytes: 0
-    };
-  }
-
-  const outputPath = createTempDerivedPath('mp4');
-  await runFfmpeg([
-    '-y',
-    '-i', file.path,
-    '-map', '0:v:0',
-    '-map', '0:a?',
-    '-vf', `scale='min(iw,${VIDEO_MAX_WIDTH})':-2:force_original_aspect_ratio=decrease`,
-    '-c:v', 'libx264',
-    '-preset', VIDEO_PRESET,
-    '-crf', String(VIDEO_CRF),
-    '-maxrate', VIDEO_MAXRATE,
-    '-bufsize', '3200k',
-    '-pix_fmt', 'yuv420p',
-    '-movflags', '+faststart',
-    '-c:a', 'aac',
-    '-b:a', VIDEO_AUDIO_BITRATE,
-    '-ac', '2',
-    outputPath
-  ]);
-
-  const outputStat = await fs.promises.stat(outputPath);
+  const thumbnail = await createVideoThumbnailFromUpload(file.path).catch(() => null);
   const originalExt = guessUploadExtension(file, 'mp4');
-  const shouldUseCompressed = outputStat.size < (originalStat.size * 0.98) || originalExt !== 'mp4';
   return {
-    finalPath: shouldUseCompressed ? outputPath : file.path,
-    contentType: shouldUseCompressed ? getVideoContentType() : String(file.mimetype || getVideoContentType()),
-    storageExt: shouldUseCompressed ? 'mp4' : originalExt,
+    finalPath: file.path,
+    contentType: String(file.mimetype || getVideoContentType()),
+    storageExt: originalExt,
     mediaType: 'video',
-    size: shouldUseCompressed ? outputStat.size : originalStat.size,
+    size: originalStat.size,
     originalSize: originalStat.size,
-    optimized: shouldUseCompressed,
-    tempFiles: [file.path, outputPath],
-    savedBytes: shouldUseCompressed ? Math.max(0, originalStat.size - outputStat.size) : 0
+    optimized: false,
+    tempFiles: [file.path, thumbnail?.finalPath].filter(Boolean),
+    savedBytes: 0,
+    asyncProcessing: ASYNC_VIDEO_TRANSCODE,
+    transcodeStatus: ASYNC_VIDEO_TRANSCODE ? 'pending' : 'ready',
+    thumbnail
   };
 }
 
@@ -752,6 +1192,249 @@ async function prepareUploadedMedia(file) {
   };
 }
 
+async function downloadSubmissionMediaToTemp(submission) {
+  const sourceUrl = resolveSubmissionMediaUrl(submission);
+  const storagePath = sanitizeStoragePath(submission.storage_path) || storagePathFromPublicUrl(sourceUrl) || storagePathFromPublicUrl(submission.image_url);
+  const ext = guessUploadExtension({ originalname: storagePath || sourceUrl || submission.image_url }, 'mp4');
+  const tempPath = createTempDerivedPath(ext);
+  const buffer = await downloadRemoteBuffer(sourceUrl);
+  await fs.promises.writeFile(tempPath, buffer);
+  return tempPath;
+}
+
+async function transcodeSubmissionVideo(submission, manifest) {
+  const inputPath = await downloadSubmissionMediaToTemp(submission);
+  const outputPath = createTempDerivedPath('mp4');
+  const tempFiles = [inputPath, outputPath];
+  try {
+    await runFfmpeg([
+      '-y',
+      '-i', inputPath,
+      '-map', '0:v:0',
+      '-map', '0:a?',
+      '-vf', `scale='min(iw,${VIDEO_MAX_WIDTH})':-2:force_original_aspect_ratio=decrease`,
+      '-c:v', 'libx264',
+      '-preset', VIDEO_PRESET,
+      '-crf', String(VIDEO_CRF),
+      '-maxrate', VIDEO_MAXRATE,
+      '-bufsize', '3200k',
+      '-pix_fmt', 'yuv420p',
+      '-movflags', '+faststart',
+      '-c:a', 'aac',
+      '-b:a', VIDEO_AUDIO_BITRATE,
+      '-ac', '2',
+      outputPath
+    ]);
+
+    const originalSize = Number(manifest.original_media_size || submission.media_size || 0);
+    const outputStat = await fs.promises.stat(outputPath);
+    const currentStoragePath = sanitizeStoragePath(submission.storage_path) || storagePathFromPublicUrl(submission.image_url);
+    const useOptimized = outputStat.size < (originalSize * 0.98) || guessUploadExtension({ originalname: currentStoragePath }, 'mp4') !== 'mp4';
+    let nextStoragePath = currentStoragePath;
+    let nextImageUrl = sanitizeMediaUrl(submission.image_url) || publicUrlForStoragePath(currentStoragePath) || '';
+    let nextMediaSize = Number(submission.media_size) || originalSize;
+
+    if (useOptimized) {
+      nextStoragePath = `videos/${Date.now()}_${Math.random().toString(36).slice(2)}.mp4`;
+      await uploadLocalFileToPrimaryStorage(outputPath, nextStoragePath, getVideoContentType());
+      nextImageUrl = publicUrlForStoragePath(nextStoragePath) || nextImageUrl;
+      nextMediaSize = outputStat.size;
+      if (currentStoragePath && currentStoragePath !== nextStoragePath) {
+        await deleteStorageObject(currentStoragePath);
+      }
+      await supabase.from('submissions').update({
+        image_url: nextImageUrl,
+        storage_path: nextStoragePath,
+        media_size: nextMediaSize
+      }).eq('id', submission.id);
+    }
+
+    return normalizeSubmissionMediaManifest(submission, {
+      ...manifest,
+      transcode_status: 'ready',
+      transcode_error: null,
+      transcode_attempts: Number(manifest.transcode_attempts || 0) + 1,
+      transcoded_at: new Date().toISOString(),
+      compressed: useOptimized,
+      saved_bytes: useOptimized ? Math.max(0, originalSize - outputStat.size) : 0,
+      saved_percent: useOptimized && originalSize > 0
+        ? Math.round(((originalSize - outputStat.size) / originalSize) * 100)
+        : 0
+    });
+  } finally {
+    await Promise.all(tempFiles.map(filePath => safeUnlink(filePath)));
+  }
+}
+
+let videoTranscodeLoopBusy = false;
+
+async function processPendingVideoTranscodes({ activityId = null, limit = TRANSCODE_BATCH_SIZE } = {}) {
+  if (videoTranscodeLoopBusy) return { processed: 0, skipped: true, reason: 'busy' };
+  videoTranscodeLoopBusy = true;
+  let processed = 0;
+  let queued = 0;
+  try {
+    let query = supabase.from('submissions')
+      .select('id,activity_id,title,image_url,storage_path,media_type,media_size,upload_time,status')
+      .eq('media_type', 'video')
+      .order('upload_time', { ascending: true });
+    if (activityId) query = query.eq('activity_id', activityId);
+    const { data, error } = await query;
+    if (error) throw error;
+    for (const submission of (data || [])) {
+      if (processed >= limit) break;
+      const manifest = normalizeSubmissionMediaManifest(submission, await readSubmissionMediaManifest(submission.id).catch(() => null));
+      if (!['pending', 'retry'].includes(manifest.transcode_status)) continue;
+      queued += 1;
+      await writeSubmissionMediaManifest(submission.id, {
+        ...manifest,
+        transcode_status: 'processing',
+        transcode_error: null
+      });
+      try {
+        const nextManifest = await transcodeSubmissionVideo(submission, manifest);
+        await writeSubmissionMediaManifest(submission.id, nextManifest);
+      } catch (error) {
+        const attempts = Number(manifest.transcode_attempts || 0) + 1;
+        await writeSubmissionMediaManifest(submission.id, {
+          ...manifest,
+          transcode_status: attempts >= TRANSCODE_MAX_ATTEMPTS ? 'failed' : 'retry',
+          transcode_attempts: attempts,
+          transcode_error: String(error?.message || error || 'Transcode failed')
+        });
+      }
+      processed += 1;
+    }
+    return { processed, queued, skipped: false };
+  } finally {
+    videoTranscodeLoopBusy = false;
+  }
+}
+
+function startVideoTranscodeLoop() {
+  if (!ASYNC_VIDEO_TRANSCODE) return;
+  processPendingVideoTranscodes().catch(err => {
+    console.warn('Initial video transcode loop failed:', err.message);
+  });
+  setInterval(() => {
+    processPendingVideoTranscodes().catch(err => {
+      console.warn('Video transcode loop failed:', err.message);
+    });
+  }, TRANSCODE_LOOP_INTERVAL_MS).unref?.();
+}
+
+function getArchiveCutoffIso() {
+  if (ARCHIVE_AFTER_DAYS <= 0) return null;
+  return new Date(Date.now() - (ARCHIVE_AFTER_DAYS * 24 * 60 * 60 * 1000)).toISOString();
+}
+
+let archiveLoopBusy = false;
+
+async function processArchiveQueue({ activityId = null, limit = ARCHIVE_BATCH_SIZE } = {}) {
+  const provider = getArchiveProviderInfo();
+  if (!provider.configured) return { processed: 0, skipped: true, reason: 'provider-not-configured', provider };
+  if (archiveLoopBusy) return { processed: 0, skipped: true, reason: 'busy', provider };
+  const cutoffIso = getArchiveCutoffIso();
+  if (!cutoffIso) return { processed: 0, skipped: true, reason: 'archive-disabled', provider };
+  archiveLoopBusy = true;
+  let processed = 0;
+  let queued = 0;
+  try {
+    let query = supabase.from('submissions')
+      .select('id,activity_id,title,image_url,storage_path,media_type,media_size,upload_time,status')
+      .lte('upload_time', cutoffIso)
+      .order('upload_time', { ascending: true });
+    if (activityId) query = query.eq('activity_id', activityId);
+    const { data, error } = await query;
+    if (error) throw error;
+
+    for (const submission of (data || [])) {
+      if (processed >= limit) break;
+      const manifest = normalizeSubmissionMediaManifest(submission, await readSubmissionMediaManifest(submission.id).catch(() => null));
+      if (['mirrored', 'cold'].includes(manifest.archive_status)) continue;
+      if (manifest.archive_status === 'processing') continue;
+      queued += 1;
+
+      const mediaStoragePath = sanitizeStoragePath(submission.storage_path) || storagePathFromPublicUrl(submission.image_url);
+      if (!mediaStoragePath) continue;
+      const currentThumbnailPath = sanitizeStoragePath(manifest.thumbnail_path);
+      await writeSubmissionMediaManifest(submission.id, {
+        ...manifest,
+        archive_status: 'processing',
+        archive_error: null
+      });
+
+      const tempFiles = [];
+      try {
+        const mediaTempPath = await downloadSubmissionMediaToTemp(submission);
+        tempFiles.push(mediaTempPath);
+        const mediaExt = guessUploadExtension({ originalname: mediaStoragePath }, submission.media_type === 'video' ? 'mp4' : 'jpg');
+        const mediaArchive = await uploadFileToArchive(mediaTempPath, submission, 'media', mediaExt, contentTypeForExtension(mediaExt, submission.media_type === 'video' ? getVideoContentType() : getImageContentType()));
+
+        let thumbArchive = null;
+        if (currentThumbnailPath) {
+          const thumbTempPath = await downloadSubmissionMediaToTemp({
+            ...submission,
+            image_url: publicUrlForStoragePath(currentThumbnailPath),
+            storage_path: currentThumbnailPath
+          });
+          tempFiles.push(thumbTempPath);
+          const thumbExt = guessUploadExtension({ originalname: currentThumbnailPath }, 'webp');
+          thumbArchive = await uploadFileToArchive(thumbTempPath, submission, 'thumb', thumbExt, contentTypeForExtension(thumbExt, getImageContentType()));
+        }
+
+        const shouldPromoteToCold = provider.delete_primary_after_success && provider.can_serve_public_url && mediaArchive?.url;
+        if (shouldPromoteToCold && mediaStoragePath) {
+          await deleteStorageObject(mediaStoragePath);
+          if (currentThumbnailPath) await deleteStorageObject(currentThumbnailPath);
+        }
+
+        await writeSubmissionMediaManifest(submission.id, {
+          ...manifest,
+          archive_status: shouldPromoteToCold ? 'cold' : 'mirrored',
+          archive_tier: shouldPromoteToCold ? 'cold' : 'mirrored',
+          archive_provider: mediaArchive?.provider || provider.name,
+          archive_key: mediaArchive?.key || null,
+          archive_url: mediaArchive?.url || null,
+          archive_thumbnail_key: thumbArchive?.key || null,
+          archive_thumbnail_url: thumbArchive?.url || null,
+          archive_attempts: Number(manifest.archive_attempts || 0) + 1,
+          archive_error: null,
+          archived_at: new Date().toISOString()
+        });
+      } catch (error) {
+        const attempts = Number(manifest.archive_attempts || 0) + 1;
+        await writeSubmissionMediaManifest(submission.id, {
+          ...manifest,
+          archive_status: attempts >= ARCHIVE_MAX_ATTEMPTS ? 'failed' : 'pending',
+          archive_attempts: attempts,
+          archive_error: String(error?.message || error || 'Archive failed')
+        });
+      } finally {
+        await Promise.all(tempFiles.map(filePath => safeUnlink(filePath)));
+      }
+      processed += 1;
+    }
+
+    return { processed, queued, skipped: false, provider };
+  } finally {
+    archiveLoopBusy = false;
+  }
+}
+
+function startArchiveLoop() {
+  const provider = getArchiveProviderInfo();
+  if (!provider.configured) return;
+  processArchiveQueue().catch(err => {
+    console.warn('Initial archive loop failed:', err.message);
+  });
+  setInterval(() => {
+    processArchiveQueue().catch(err => {
+      console.warn('Archive loop failed:', err.message);
+    });
+  }, ARCHIVE_LOOP_INTERVAL_MS).unref?.();
+}
+
 async function listStorageFolder(folder) {
   const files = [];
   let offset = 0;
@@ -775,7 +1458,7 @@ async function listStorageFolder(folder) {
 }
 
 async function listTrackedStorageFiles() {
-  const folders = ['uploads', 'videos'];
+  const folders = ['uploads', 'videos', MEDIA_THUMBNAIL_FOLDER, MEDIA_MANIFEST_FOLDER];
   const results = await Promise.all(folders.map(folder => listStorageFolder(folder).catch(() => [])));
   return results.flat();
 }
@@ -786,12 +1469,13 @@ async function buildStorageSummary(activityId) {
     .select('id,title,upload_time,storage_path,image_url,media_type,media_size')
       .eq('activity_id', activityId),
     supabase.from('submissions')
-      .select('storage_path,image_url')
+      .select('id,storage_path,image_url,media_type')
   ]);
   if (error) throw error;
   if (allSubsError) throw allSubsError;
 
-  const referenced = (activitySubs || []).map(row => {
+  const activityRows = await Promise.all((activitySubs || []).map(async row => {
+    const manifest = normalizeSubmissionMediaManifest(row, await readSubmissionMediaManifest(row.id).catch(() => null));
     const storagePath = sanitizeStoragePath(row.storage_path) || storagePathFromPublicUrl(row.image_url);
     const size = Number(row.media_size) || 0;
     return {
@@ -800,17 +1484,39 @@ async function buildStorageSummary(activityId) {
       upload_time: row.upload_time,
       storage_path: storagePath,
       media_type: row.media_type || (isVideoFilePath(storagePath) ? 'video' : 'image'),
-      media_size: size
+      media_size: size,
+      thumbnail_path: manifest.thumbnail_path,
+      manifest_path: createMediaManifestStoragePath(row.id)
     };
-  }).filter(row => row.storage_path);
+  }));
 
-  const globallyReferencedPathSet = new Set((allSubs || [])
-    .map(row => sanitizeStoragePath(row.storage_path) || storagePathFromPublicUrl(row.image_url))
-    .filter(Boolean));
+  const referenced = activityRows.filter(row => row.storage_path);
+
+  const globallyReferencedPathSet = new Set(
+    (allSubs || []).flatMap(row => {
+      const storagePath = sanitizeStoragePath(row.storage_path) || storagePathFromPublicUrl(row.image_url);
+      const derivedThumbPath = storagePath
+        ? createSidecarStoragePath(storagePath, MEDIA_THUMBNAIL_FOLDER, (row.media_type || (isVideoFilePath(storagePath) ? 'video' : 'image')) === 'video' ? 'jpg' : 'webp')
+        : null;
+      return [
+        storagePath,
+        derivedThumbPath,
+        createMediaManifestStoragePath(row.id)
+      ].filter(Boolean);
+    })
+  );
   const storageFiles = await listTrackedStorageFiles();
   const now = Date.now();
   const referencedBytes = referenced.reduce((sum, row) => sum + (row.media_size || 0), 0);
   const storageBytes = storageFiles.reduce((sum, row) => sum + Number(row.metadata?.size || 0), 0);
+  const thumbCount = activityRows.filter(row => row.thumbnail_path).length;
+  const manifestCount = activityRows.filter(row => row.manifest_path).length;
+  const thumbBytes = storageFiles
+    .filter(file => activityRows.some(row => row.thumbnail_path === file.path))
+    .reduce((sum, file) => sum + Number(file.metadata?.size || 0), 0);
+  const manifestBytes = storageFiles
+    .filter(file => activityRows.some(row => row.manifest_path === file.path))
+    .reduce((sum, file) => sum + Number(file.metadata?.size || 0), 0);
 
   const orphanFiles = storageFiles.filter(file => {
     if (globallyReferencedPathSet.has(file.path)) return false;
@@ -839,6 +1545,10 @@ async function buildStorageSummary(activityId) {
     referenced_bytes: referencedBytes,
     image_count: imageCount,
     video_count: videoCount,
+    thumbnail_count: thumbCount,
+    thumbnail_bytes: thumbBytes,
+    manifest_count: manifestCount,
+    manifest_bytes: manifestBytes,
     average_file_bytes: averageSize,
     orphan_files: orphanFiles,
     orphan_count: orphanFiles.length,
@@ -848,6 +1558,8 @@ async function buildStorageSummary(activityId) {
 }
 
 startTempUploadCleanupLoop();
+startVideoTranscodeLoop();
+startArchiveLoop();
 
 // Middleware
 app.use(cors());
@@ -1185,17 +1897,20 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
     tempFiles = Array.isArray(processed.tempFiles) ? processed.tempFiles : [req.file.path];
     const folder = processed.mediaType === 'video' ? 'videos' : 'uploads';
     const filename = `${folder}/${Date.now()}_${Math.random().toString(36).slice(2)}.${processed.storageExt}`;
+    await uploadLocalFileToPrimaryStorage(processed.finalPath, filename, processed.contentType);
+    const { data: urlData } = supabase.storage.from('submissions').getPublicUrl(filename);
 
-    const fileStream = fs.createReadStream(processed.finalPath);
-    const { error } = await supabase.storage.from('submissions').upload(filename, fileStream, {
-      contentType: processed.contentType,
-      upsert: false,
-      duplex: 'half'
-    });
+    let thumbnailPath = null;
+    let thumbnailUrl = null;
+    if (processed.thumbnail?.finalPath) {
+      thumbnailPath = createSidecarStoragePath(filename, MEDIA_THUMBNAIL_FOLDER, processed.thumbnail.storageExt);
+      if (thumbnailPath) {
+        await uploadLocalFileToPrimaryStorage(processed.thumbnail.finalPath, thumbnailPath, processed.thumbnail.contentType);
+        thumbnailUrl = publicUrlForStoragePath(thumbnailPath);
+      }
+    }
 
     await Promise.all(tempFiles.map(filePath => safeUnlink(filePath)));
-    if (error) throw error;
-    const { data: urlData } = supabase.storage.from('submissions').getPublicUrl(filename);
     res.json({
       url: urlData.publicUrl,
       path: filename,
@@ -1206,7 +1921,11 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
       saved_bytes: processed.savedBytes,
       saved_percent: processed.originalSize > 0
         ? Math.round((processed.savedBytes / processed.originalSize) * 100)
-        : 0
+        : 0,
+      thumbnail_url: thumbnailUrl,
+      thumbnail_path: thumbnailPath,
+      transcode_status: processed.transcodeStatus || 'ready',
+      processing: !!processed.asyncProcessing
     });
   } catch (e) { 
     await Promise.all(tempFiles.map(filePath => safeUnlink(filePath)));
@@ -1223,6 +1942,7 @@ app.post('/api/submissions', studentAuth, async (req, res) => {
     const activity_id = String(req.body.activity_id ?? '').trim();
     const user_id = String(req.body.user_id ?? '').trim();
     const submission_id = String(req.body.submission_id ?? '').trim() || null;
+    const media_changed = coerceBoolean(req.body.media_changed);
     const rawTitle = sanitizeText(req.body.title, 140);
     const title = withUploadTimestampTitle(rawTitle);
     const description = sanitizeText(req.body.description, 400);
@@ -1231,6 +1951,15 @@ app.post('/api/submissions', studentAuth, async (req, res) => {
     const image_url = publicUrlForStoragePath(storage_path);
     const media_type = isVideoFilePath(storage_path) ? 'video' : 'image';
     const media_size = Number.isFinite(Number(req.body.media_size)) ? Number(req.body.media_size) : null;
+    const thumbnail_path = sanitizeStoragePath(req.body.thumbnail_path);
+    const thumbnail_url = sanitizeMediaUrl(req.body.thumbnail_url) || publicUrlForStoragePath(thumbnail_path);
+    const original_media_size = Number.isFinite(Number(req.body.original_media_size)) ? Number(req.body.original_media_size) : (media_size || 0);
+    const compressed = coerceBoolean(req.body.compressed);
+    const saved_bytes = Number.isFinite(Number(req.body.saved_bytes)) ? Number(req.body.saved_bytes) : 0;
+    const saved_percent = Number.isFinite(Number(req.body.saved_percent)) ? Number(req.body.saved_percent) : 0;
+    const transcode_status = media_type === 'video'
+      ? String(req.body.transcode_status || (ASYNC_VIDEO_TRANSCODE ? 'pending' : 'ready'))
+      : 'ready';
     if (!activity_id || !user_id || !rawTitle || !storage_path || !image_url) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
@@ -1258,6 +1987,36 @@ app.post('/api/submissions', studentAuth, async (req, res) => {
         err.status = 403;
         throw err;
       }
+
+      const existingManifest = normalizeSubmissionMediaManifest(existing, await readSubmissionMediaManifest(existing.id).catch(() => null));
+      const oldStoragePath = sanitizeStoragePath(existing.storage_path) || storagePathFromPublicUrl(existing.image_url);
+      const nextManifest = normalizeSubmissionMediaManifest(existing, media_changed ? {
+        ...existingManifest,
+        media_type,
+        thumbnail_path,
+        thumbnail_url,
+        poster_url: thumbnail_url,
+        transcode_status,
+        transcode_error: null,
+        transcoded_at: media_type === 'video' ? null : new Date().toISOString(),
+        original_media_size,
+        compressed,
+        saved_bytes,
+        saved_percent,
+        archive_tier: 'hot',
+        archive_status: ARCHIVE_PROVIDER === 'none' ? 'disabled' : 'pending',
+        archive_provider: null,
+        archive_key: null,
+        archive_url: null,
+        archive_thumbnail_key: null,
+        archive_thumbnail_url: null,
+        archive_error: null,
+        archived_at: null
+      } : {
+        ...existingManifest,
+        thumbnail_path: thumbnail_path || existingManifest.thumbnail_path,
+        thumbnail_url: thumbnail_url || existingManifest.thumbnail_url
+      });
 
       const now = new Date().toISOString();
       const payload = {
@@ -1300,11 +2059,18 @@ app.post('/api/submissions', studentAuth, async (req, res) => {
       if (error) throw error;
       shouldCleanupNewMedia = false;
       await clearSubmissionEngagement(existing.id);
-      const oldStoragePath = sanitizeStoragePath(existing.storage_path) || storagePathFromPublicUrl(existing.image_url);
       if (oldStoragePath && oldStoragePath !== storage_path) {
         await deleteStorageObject(oldStoragePath);
       }
-      return res.json(data);
+      if (media_changed && existingManifest.thumbnail_path && existingManifest.thumbnail_path !== thumbnail_path) {
+        await deleteStorageObject(existingManifest.thumbnail_path);
+      }
+      if (media_changed) {
+        await deleteArchiveObject(existingManifest.archive_key, existingManifest.archive_provider);
+        await deleteArchiveObject(existingManifest.archive_thumbnail_key, existingManifest.archive_provider);
+      }
+      const manifest = await writeSubmissionMediaManifest(existing.id, nextManifest);
+      return res.json(mergeSubmissionWithManifest(data, manifest));
     }
 
     const code = await generateNextAnonymousCode(activity_id);
@@ -1337,7 +2103,31 @@ app.post('/api/submissions', studentAuth, async (req, res) => {
     }
     if (error) throw error;
     shouldCleanupNewMedia = false;
-    res.status(201).json(data);
+    const manifest = await writeSubmissionMediaManifest(data.id, {
+      media_type,
+      thumbnail_path,
+      thumbnail_url,
+      poster_url: thumbnail_url,
+      transcode_status,
+      transcode_error: null,
+      transcode_attempts: 0,
+      transcoded_at: media_type === 'video' ? null : new Date().toISOString(),
+      original_media_size,
+      compressed,
+      saved_bytes,
+      saved_percent,
+      archive_tier: 'hot',
+      archive_status: ARCHIVE_PROVIDER === 'none' ? 'disabled' : 'pending',
+      archive_provider: null,
+      archive_key: null,
+      archive_url: null,
+      archive_thumbnail_key: null,
+      archive_thumbnail_url: null,
+      archive_attempts: 0,
+      archive_error: null,
+      archived_at: null
+    });
+    res.status(201).json(mergeSubmissionWithManifest(data, manifest));
   } catch (e) {
     if (shouldCleanupNewMedia && newStoragePath) await deleteStorageObject(newStoragePath);
     res.status(e.status || 500).json({ error: e.message });
@@ -1358,7 +2148,7 @@ app.get('/api/submissions', async (req, res) => {
     }
 
     let subsResult = await supabase.from('submissions')
-      .select('id,anonymous_code,title,description,image_url,storage_path,media_type,upload_time,view_count,rating_count,average_rating,composite_score,is_pinned,is_teacher_selected,status,user_id')
+      .select('id,anonymous_code,title,description,image_url,storage_path,media_type,media_size,upload_time,view_count,rating_count,average_rating,composite_score,is_pinned,is_teacher_selected,status,user_id')
       .eq('activity_id', activity_id).eq('status', 'visible')
       .order('upload_time', { ascending: false });
     if (subsResult.error && /storage_path|media_type/i.test(subsResult.error.message || '')) {
@@ -1373,11 +2163,12 @@ app.get('/api/submissions', async (req, res) => {
     // Build comment count map from live data
     const ccMap = {};
     (commentsResult.data || []).forEach(c => { ccMap[c.submission_id] = (ccMap[c.submission_id] || 0) + 1; });
-    const result = (subsResult.data || []).map(s => {
+    const baseRows = (subsResult.data || []).map(s => {
       const is_owner = !!viewerUserId && String(s.user_id) === viewerUserId;
       const { user_id, ...safe } = s;
       return { ...safe, image_url: sanitizeMediaUrl(safe.image_url) || '', is_owner, comment_count: ccMap[s.id] || 0 };
     });
+    const result = await enrichSubmissionMediaRows(baseRows);
     res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -1387,7 +2178,7 @@ app.get('/api/submissions/:id', async (req, res) => {
     const { viewer_user_id } = req.query;
     const [subResult, commentsResult] = await Promise.all([
       supabase.from('submissions')
-        .select('id,anonymous_code,title,description,image_url,upload_time,view_count,rating_count,average_rating,user_id,activity_id')
+        .select('id,anonymous_code,title,description,image_url,storage_path,media_type,media_size,upload_time,view_count,rating_count,average_rating,user_id,activity_id')
         .eq('id', req.params.id).single(),
       supabase.from('comments').select('id', { count: 'exact', head: true }).eq('submission_id', req.params.id)
     ]);
@@ -1402,7 +2193,8 @@ app.get('/api/submissions/:id', async (req, res) => {
       if (auth.ok && String(subResult.data.user_id) === String(viewer_user_id)) is_owner = true;
     }
     const { user_id, activity_id, ...safe } = subResult.data;
-    res.json({ ...safe, image_url: sanitizeMediaUrl(safe.image_url) || '', is_owner, comment_count: commentsResult.count || 0 });
+    const [enriched] = await enrichSubmissionMediaRows([{ ...safe, image_url: sanitizeMediaUrl(safe.image_url) || '', is_owner, comment_count: commentsResult.count || 0 }]);
+    res.json(enriched);
   } catch (e) { res.status(404).json({ error: 'Not found' }); }
 });
 
@@ -1423,7 +2215,7 @@ app.get('/api/teacher/submissions', teacherAuth, async (req, res) => {
     if (subsResult.error) throw subsResult.error;
     const ccMap = {};
     (commentsResult.data || []).forEach(c => { ccMap[c.submission_id] = (ccMap[c.submission_id] || 0) + 1; });
-    const result = (subsResult.data || []).map(s => ({ ...s, image_url: sanitizeMediaUrl(s.image_url) || '', comment_count: ccMap[s.id] || 0 }));
+    const result = await enrichSubmissionMediaRows((subsResult.data || []).map(s => ({ ...s, image_url: sanitizeMediaUrl(s.image_url) || '', comment_count: ccMap[s.id] || 0 })));
     res.json(result);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -2186,6 +2978,7 @@ app.get('/api/teacher/export-zip', teacherAuth, async (req, res) => {
       .eq('activity_id', activity_id);
       
     if (!subs || subs.length === 0) return res.status(404).json({ error: 'No submissions found' });
+    const mergedSubs = await enrichSubmissionMediaRows(subs);
 
     res.setHeader('Content-Type', 'application/zip');
     res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(act.activity_name)}_works.zip"`);
@@ -2194,20 +2987,20 @@ app.get('/api/teacher/export-zip', teacherAuth, async (req, res) => {
     archive.pipe(res);
 
     // Download images from Supabase and append to ZIP
-    for (const s of subs) {
-      if (s.image_url) {
+    for (const s of mergedSubs) {
+      const sourceUrl = resolveSubmissionMediaUrl(s);
+      if (sourceUrl) {
         try {
-          const response = await fetch(s.image_url);
-          if (response.ok) {
-            const buffer = await response.arrayBuffer();
+          const buffer = await downloadRemoteBuffer(sourceUrl);
             const u = s.users || {};
-            const ext = s.image_url.split('.').pop()?.split('?')[0] || 'jpg';
+            const ext = s.media_type === 'video'
+              ? 'mp4'
+              : guessUploadExtension({ originalname: s.storage_path || sourceUrl || s.image_url }, 'jpg');
             // 鏍煎紡: 鐝骇_瀛﹀彿_濮撳悕_鏍囬.jpg
             const safeTitle = s.title.replace(/[\/\?<>\\:\*\|":]/g, '');
             const filename = `${u.class_name||'鏈煡鐝骇'}_${u.student_id||'鏈煡瀛﹀彿'}_${u.name||'鏈煡濮撳悕'}_${safeTitle}.${ext}`;
-            archive.append(Buffer.from(buffer), { name: filename });
-          }
-        } catch (err) { console.error('Error downloading image for zip:', s.image_url, err); }
+            archive.append(buffer, { name: filename });
+        } catch (err) { console.error('Error downloading image for zip:', sourceUrl, err); }
       }
     }
     await archive.finalize();
@@ -2292,14 +3085,14 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
     } catch {}
 
     const users = usersResult.data || [];
-    const submissions = (subsResult.data || []).map(item => ({
+    const submissions = await enrichSubmissionMediaRows((subsResult.data || []).map(item => ({
       ...item,
       media_size: Number(item.media_size) || 0,
       view_count: Number(item.view_count) || 0,
       rating_count: Number(item.rating_count) || 0,
       average_rating: Number(item.average_rating) || 0,
       composite_score: Number(item.composite_score) || 0
-    }));
+    })));
     const comments = commentsResult.data || [];
     const workComments = comments.filter(item => !!item.submission_id);
     const feedbackComments = comments.filter(item => !item.submission_id && !isWithdrawnFeedbackContent(item.content));
@@ -2321,6 +3114,29 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
       : 0;
     const activeRosterRows = rosterRows.filter(item => item.active !== false);
     const mutedRosterRows = rosterRows.filter(item => item.feedback_muted);
+    const archiveProvider = getArchiveProviderInfo();
+    const archiveCutoffIso = getArchiveCutoffIso();
+    const mediaPipeline = submissions.reduce((acc, item) => {
+      if (item.media_type === 'video') {
+        acc.video_total += 1;
+        acc.transcode[item.transcode_status || 'ready'] = (acc.transcode[item.transcode_status || 'ready'] || 0) + 1;
+      }
+      if (item.thumbnail_url) acc.thumbnail_ready += 1;
+      else acc.thumbnail_missing += 1;
+      const archiveStatus = item.archive_status || (archiveProvider.configured ? 'pending' : 'disabled');
+      acc.archive[archiveStatus] = (acc.archive[archiveStatus] || 0) + 1;
+      if (archiveCutoffIso && new Date(item.upload_time).getTime() <= new Date(archiveCutoffIso).getTime() && !['mirrored', 'cold'].includes(archiveStatus)) {
+        acc.archive_eligible += 1;
+      }
+      return acc;
+    }, {
+      video_total: 0,
+      thumbnail_ready: 0,
+      thumbnail_missing: 0,
+      archive_eligible: 0,
+      transcode: { ready: 0, pending: 0, processing: 0, retry: 0, failed: 0 },
+      archive: { disabled: 0, pending: 0, processing: 0, mirrored: 0, cold: 0, failed: 0 }
+    });
 
     const topRated = submissions
       .slice()
@@ -2364,6 +3180,15 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
         roster_ready: rosterReady
       },
       storage: storageSummary,
+      media_pipeline: {
+        provider: archiveProvider,
+        transcode: mediaPipeline.transcode,
+        archive: mediaPipeline.archive,
+        video_total: mediaPipeline.video_total,
+        thumbnail_ready: mediaPipeline.thumbnail_ready,
+        thumbnail_missing: mediaPipeline.thumbnail_missing,
+        archive_eligible: mediaPipeline.archive_eligible
+      },
       roster: {
         ready: rosterReady,
         items: rosterRows,
@@ -2407,6 +3232,32 @@ app.post('/api/teacher/storage-cleanup', teacherAuth, async (req, res) => {
       bytes_freed: storageSummary.orphan_bytes,
       summary: storageSummary
     });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/teacher/transcode-run', teacherAuth, async (req, res) => {
+  try {
+    const activity_id = String(req.body.activity_id ?? req.query.activity_id ?? '').trim();
+    if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
+    const auth = await ensureTeacherCanAccessActivity(req, activity_id);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+    const result = await processPendingVideoTranscodes({ activityId: activity_id, limit: TRANSCODE_BATCH_SIZE });
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/teacher/archive-run', teacherAuth, async (req, res) => {
+  try {
+    const activity_id = String(req.body.activity_id ?? req.query.activity_id ?? '').trim();
+    if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
+    const auth = await ensureTeacherCanAccessActivity(req, activity_id);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+    const result = await processArchiveQueue({ activityId: activity_id, limit: ARCHIVE_BATCH_SIZE });
+    res.json({ ok: true, ...result });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

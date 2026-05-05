@@ -228,6 +228,13 @@
             <div class="storage-progress"><div class="storage-progress-bar" id="storageProgressBar" style="width:0%;"></div></div>
             <div class="dashboard-panel-note" id="storageProgressText">正在统计存储占用...</div>
             <div class="storage-meta-row" id="storageMetaRow"></div>
+            <div class="storage-meta-row" id="pipelineMetaRow"></div>
+            <div class="mini-stat-grid" id="pipelineMiniStats" style="margin-top:14px;"></div>
+            <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;align-items:center;">
+              <button class="btn btn-secondary btn-sm" id="runTranscodeBtn" type="button" onclick="runTranscodeQueue()">立即跑转码队列</button>
+              <button class="btn btn-secondary btn-sm" id="runArchiveBtn" type="button" onclick="runArchiveQueue()">立即跑归档队列</button>
+              <span class="dashboard-panel-note" id="pipelineActionText">媒体流水线待命中...</span>
+            </div>
             <div class="storage-warning" id="storageWarning" style="display:none;"></div>
           </div>
         </div>
@@ -615,6 +622,50 @@
       }
     }
 
+    function renderMediaPipeline(summary) {
+      const pipeline = summary.media_pipeline || {};
+      const provider = pipeline.provider || { name: 'none', configured: false, after_days: 0, delete_primary_after_success: false, can_serve_public_url: false };
+      const transcode = pipeline.transcode || {};
+      const archive = pipeline.archive || {};
+      const pipelineMiniStats = document.getElementById('pipelineMiniStats');
+      const pipelineMetaRow = document.getElementById('pipelineMetaRow');
+      const actionText = document.getElementById('pipelineActionText');
+      const runTranscodeBtn = document.getElementById('runTranscodeBtn');
+      const runArchiveBtn = document.getElementById('runArchiveBtn');
+
+      if (!pipelineMiniStats || !pipelineMetaRow || !actionText || !runTranscodeBtn || !runArchiveBtn) return;
+
+      pipelineMiniStats.innerHTML = [
+        ['视频总数', pipeline.video_total || 0],
+        ['缩略图就绪', `${pipeline.thumbnail_ready || 0}/${(pipeline.thumbnail_ready || 0) + (pipeline.thumbnail_missing || 0)}`],
+        ['待转码', (transcode.pending || 0) + (transcode.retry || 0)],
+        ['转码中', transcode.processing || 0],
+        ['已优化', transcode.ready || 0],
+        ['可归档', pipeline.archive_eligible || 0],
+        ['已镜像', archive.mirrored || 0],
+        ['冷归档', archive.cold || 0]
+      ].map(item => `
+        <div class="mini-stat">
+          <strong>${escapeHtml(item[1])}</strong>
+          <span>${escapeHtml(item[0])}</span>
+        </div>
+      `).join('');
+
+      pipelineMetaRow.innerHTML = [
+        `归档提供方 ${provider.name || 'none'}`,
+        provider.configured ? '已配置' : '未配置',
+        `归档阈值 ${provider.after_days || 0} 天`,
+        provider.delete_primary_after_success ? '归档成功后允许切冷存' : '保留主存副本',
+        provider.can_serve_public_url ? '可公网访问归档文件' : '归档仅做备份'
+      ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+
+      runTranscodeBtn.disabled = !Number(pipeline.video_total || 0);
+      runArchiveBtn.disabled = !provider.configured;
+      actionText.textContent = provider.configured
+        ? '可手动触发一次即时转码或归档，无需等待后台定时轮询。'
+        : '尚未配置 Google Drive 或 S3 归档环境变量，当前仅保留在主存。';
+    }
+
     function renderMeta(activity) {
       document.getElementById('heroTitle').textContent = activity.activity_name || 'ClassShow';
       document.getElementById('heroSubtitle').textContent = `${activity.course_name || ''} · ${activity.class_name || ''} · 曼谷时间显示 · 作品自动带上传时间与云端压缩存储`;
@@ -657,6 +708,7 @@
         renderStatusPills(summary.activity || {});
         renderControls(summary.activity || {});
         renderStorage(summary);
+        renderMediaPipeline(summary);
         renderWorkList('topRatedList', summary.top_rated, 'rating');
         renderWorkList('recentUploadsList', summary.recent_uploads, 'time');
         renderFeedbackList('feedbackHotList', summary.hot_feedback, 'hot');
@@ -702,6 +754,58 @@
       } finally {
         btn.disabled = false;
         btn.textContent = '清理孤儿文件';
+      }
+    }
+
+    async function runTranscodeQueue() {
+      const btn = document.getElementById('runTranscodeBtn');
+      if (!btn) return;
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '转码处理中...';
+      try {
+        const result = await api('/teacher/transcode-run', {
+          method: 'POST',
+          body: JSON.stringify({ activity_id: actId })
+        });
+        await reloadDashboard();
+        if (result.skipped && result.reason === 'busy') {
+          toast('后台转码队列正在运行中，请稍后再看结果', 'success');
+        } else {
+          toast(`本轮待转码 ${result.queued || 0} 个，实际处理 ${result.processed || 0} 个`, 'success');
+        }
+      } catch (e) {
+        toast('手动转码失败：' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    }
+
+    async function runArchiveQueue() {
+      const btn = document.getElementById('runArchiveBtn');
+      if (!btn) return;
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '归档处理中...';
+      try {
+        const result = await api('/teacher/archive-run', {
+          method: 'POST',
+          body: JSON.stringify({ activity_id: actId })
+        });
+        await reloadDashboard();
+        if (result.skipped && result.reason === 'provider-not-configured') {
+          toast('尚未配置 Google Drive 或对象存储归档环境变量', 'error');
+        } else if (result.skipped && result.reason === 'busy') {
+          toast('后台归档队列正在运行中，请稍后再看结果', 'success');
+        } else {
+          toast(`本轮待归档 ${result.queued || 0} 个，实际处理 ${result.processed || 0} 个`, 'success');
+        }
+      } catch (e) {
+        toast('手动归档失败：' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
       }
     }
 

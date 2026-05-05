@@ -46,7 +46,7 @@
         <li><strong>内容完整性：</strong>作品是否完整、清楚、有主题</li>
         <li><strong>视觉表达：</strong>图片、海报、图表是否清晰美观</li>
         <li><strong>数据使用：</strong>是否使用了真实或合理的数据</li>
-        <li><strong>AI辅助质量：</strong>AI使用是否有效</li>
+        <li><strong>AI辅助质量：</strong>AI 使用是否有效</li>
         <li><strong>创意与实用性：</strong>作品是否有新意</li>
       </ol>
     </div>
@@ -55,7 +55,7 @@
       <h3 class="section-title">全部作品</h3>
     </div>
     <div class="exhibit-grid" id="allGrid">
-      <div class="empty">还没有作品，快来上传第一个吧！</div>
+      <div class="empty">还没有作品，快来上传第一个吧。</div>
     </div>
   </div>
 
@@ -88,9 +88,75 @@
       window.open(url, '_blank');
     }
 
+    function buildStatusBadges(work) {
+      const chips = [];
+      if (work.is_owner) chips.push('<span class="card-badge" style="background:#10b981;color:#fff;">我的</span>');
+      if (isNewWork(work.upload_time)) chips.push('<span class="card-badge new">NEW</span>');
+      if (work.is_pinned) chips.push('<span class="card-badge pinned">置顶</span>');
+      if (work.is_teacher_selected) chips.push('<span class="card-badge" style="background:#fef3c7;color:#b45309;">精选</span>');
+      if (isVideo(getWorkMediaUrl(work))) chips.push('<span class="card-badge" style="background:#e0f2fe;color:#0369a1;">MP4</span>');
+      if (isVideo(getWorkMediaUrl(work)) && String(work.transcode_status || 'ready').toLowerCase() !== 'ready') {
+        chips.push(`<span class="card-badge" style="background:#ede9fe;color:#5b21b6;">${escapeHtml(getTranscodeStatusLabel(work.transcode_status))}</span>`);
+      }
+      const archiveLabel = getArchiveStatusLabel(work);
+      if (archiveLabel) {
+        chips.push(`<span class="card-badge" style="background:#ecfccb;color:#3f6212;">${escapeHtml(archiveLabel)}</span>`);
+      }
+      return chips.join('');
+    }
+
+    function workCard(work) {
+      const mediaUrl = getWorkMediaUrl(work);
+      const thumbUrl = getWorkThumbnailUrl(work);
+      const vid = isVideo(mediaUrl);
+      const rated = myRatings[work.id];
+      const template = pickWorkTemplate(`${work.id || work.anonymous_code}-${work.media_type || ''}`);
+      const templateLabelMap = {
+        aurora: 'Aurora',
+        gallery: 'Gallery',
+        signal: 'Signal',
+        studio: 'Studio'
+      };
+
+      return `
+        <article class="exhibit-card" data-template="${template}" onclick="location.href='student-detail.html?id=${work.id}'">
+          <div class="exhibit-media skeleton" style="display:flex;align-items:center;justify-content:center;background:${vid ? '#0f172a' : ''};">
+            <img class="card-img" style="width:100%;height:100%;opacity:0;transition:opacity 0.5s;" onload="this.style.opacity=1;this.parentElement.classList.remove('skeleton')" src="${thumbUrl || mediaUrl}" alt="${escapeHtml(work.title || '')}" loading="lazy">
+            <div class="exhibit-overlay">
+              <span class="exhibit-template-label">${vid ? 'Video Cover' : (templateLabelMap[template] || 'Exhibit')}</span>
+            </div>
+          </div>
+          <div class="exhibit-body">
+            <div class="exhibit-chip-row">
+              <span class="card-badge">${escapeHtml(work.anonymous_code || '')}</span>
+              ${buildStatusBadges(work)}
+            </div>
+            <div class="exhibit-kicker">${vid ? 'Motion Piece' : 'Visual Poster'}</div>
+            <div class="exhibit-title">${escapeHtml(work.title || '')}</div>
+            <div class="exhibit-subtitle">${escapeHtml((work.description || '').slice(0, 56) || '点击进入查看作品大图、评分与评论。')}</div>
+            <div class="exhibit-stats">
+              <div class="exhibit-stat">
+                <strong>${work.average_rating > 0 ? Number(work.average_rating).toFixed(1) : '-'}</strong>
+                <span>平均评分 / ${work.rating_count || 0} 人</span>
+              </div>
+              <div class="exhibit-stat">
+                <strong>${work.comment_count || 0}</strong>
+                <span>评论数</span>
+              </div>
+            </div>
+            <div class="exhibit-foot">
+              <span>浏览 <strong>${work.view_count || 0}</strong></span>
+              <span>${rated ? `已评 ${rated} 分` : (work.is_owner ? '本人作品' : formatBangkokTime(work.upload_time, { withSeconds: false }))}</span>
+            </div>
+          </div>
+        </article>
+      `;
+    }
+
     async function loadWorks() {
       try {
-        let works, ratings = [];
+        let works = [];
+        let ratings = [];
         if (guest) {
           works = await api('/submissions?activity_id=' + actId);
         } else {
@@ -101,28 +167,28 @@
         }
 
         myRatings = {};
-        ratings.forEach(r => myRatings[r.submission_id] = r.score);
+        ratings.forEach(item => { myRatings[item.submission_id] = item.score; });
         document.getElementById('totalWorks').textContent = works.length;
         document.getElementById('myRated').textContent = guest ? '-' : ratings.length;
         if (act.voting_open && !guest) document.getElementById('rubricBox').style.display = 'block';
 
-        const newWorks = works.filter(w => isNewWork(w.upload_time));
-        const allWorks = works.filter(w => !isNewWork(w.upload_time));
-        for (let i = allWorks.length - 1; i > 0; i--) {
-          const j = Math.floor(Math.random() * (i + 1));
-          [allWorks[i], allWorks[j]] = [allWorks[j], allWorks[i]];
-        }
-        allWorks.sort((a, b) => (b.is_pinned ? 1 : 0) - (a.is_pinned ? 1 : 0));
+        const newWorks = works.filter(work => isNewWork(work.upload_time));
+        const allWorks = works.filter(work => !isNewWork(work.upload_time));
+        allWorks.sort((a, b) => {
+          if ((b.is_pinned ? 1 : 0) !== (a.is_pinned ? 1 : 0)) return (b.is_pinned ? 1 : 0) - (a.is_pinned ? 1 : 0);
+          return new Date(b.upload_time).getTime() - new Date(a.upload_time).getTime();
+        });
 
         if (newWorks.length > 0) {
           document.getElementById('newSection').style.display = 'block';
-          document.getElementById('newGrid').innerHTML = newWorks.map(w => workCard(w)).join('');
+          document.getElementById('newGrid').innerHTML = newWorks.map(workCard).join('');
         } else {
           document.getElementById('newSection').style.display = 'none';
         }
+
         document.getElementById('allGrid').innerHTML = allWorks.length
-          ? allWorks.map(w => workCard(w)).join('')
-          : '<div class="empty">等待更多作品加入展示墙</div>';
+          ? allWorks.map(workCard).join('')
+          : '<div class="empty">等待更多作品加入展示墙。</div>';
 
         if (!act.upload_open) {
           document.getElementById('uploadBtn').style.display = 'none';
@@ -131,78 +197,6 @@
       } catch (e) {
         toast('加载失败: ' + e.message, 'error');
       }
-    }
-
-    function workCard(w) {
-      const isOwn = !!w.is_owner;
-      const rated = myRatings[w.id];
-      const isNew = isNewWork(w.upload_time);
-      const vid = isVideo(w.image_url);
-      const template = pickWorkTemplate(`${w.id || w.anonymous_code}-${w.media_type || ''}`);
-      const templateLabelMap = {
-        aurora: 'Aurora',
-        gallery: 'Gallery',
-        signal: 'Signal',
-        studio: 'Studio'
-      };
-      const mediaEl = vid
-        ? `<div class="exhibit-media" style="background:#0f172a;">
-             <video src="${w.image_url}" muted playsinline loop preload="metadata"
-               style="width:100%;height:100%;object-fit:cover;display:block;"
-               oncanplay="startFiveSecPreview(this)"></video>
-             <div class="exhibit-overlay">
-               <span class="exhibit-template-label">MP4 Showcase</span>
-             </div>
-           </div>`
-        : `<div class="exhibit-media skeleton" style="display:flex;align-items:center;justify-content:center;">
-             <img class="card-img" style="width:100%;height:100%;opacity:0;transition:opacity 0.5s;" onload="this.style.opacity=1;this.parentElement.classList.remove('skeleton')" src="${w.image_url}" alt="${escapeHtml(w.title)}" loading="lazy" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 1 1%22><rect fill=%22%23e2e8f0%22 width=%221%22 height=%221%22/></svg>'">
-             <div class="exhibit-overlay">
-               <span class="exhibit-template-label">${templateLabelMap[template] || 'Exhibit'}</span>
-             </div>
-           </div>`;
-
-      return `<article class="exhibit-card" data-template="${template}" onclick="location.href='student-detail.html?id=${w.id}'">
-        ${mediaEl}
-        <div class="exhibit-body">
-          <div class="exhibit-chip-row">
-            <span class="card-badge">${escapeHtml(w.anonymous_code)}</span>
-            ${isOwn ? '<span class="card-badge" style="background:#10b981;color:#fff;">我的</span>' : ''}
-            ${isNew ? '<span class="card-badge new">NEW</span>' : ''}
-            ${w.is_pinned ? '<span class="card-badge pinned">置顶</span>' : ''}
-            ${w.is_teacher_selected ? '<span class="card-badge" style="background:#fef3c7;color:#b45309;">精选</span>' : ''}
-            ${vid ? '<span class="card-badge" style="background:#e0f2fe;color:#0369a1;">MP4</span>' : ''}
-          </div>
-          <div class="exhibit-kicker">${vid ? 'Motion Piece' : 'Visual Poster'}</div>
-          <div class="exhibit-title">${escapeHtml(w.title)}</div>
-          <div class="exhibit-subtitle">${escapeHtml((w.description || '').slice(0, 56) || '点击进入查看作品大图、评分与评论。')}</div>
-          <div class="exhibit-stats">
-            <div class="exhibit-stat">
-              <strong>${w.average_rating > 0 ? Number(w.average_rating).toFixed(1) : '-'}</strong>
-              <span>平均评分 / ${w.rating_count || 0} 人</span>
-            </div>
-            <div class="exhibit-stat">
-              <strong>${w.comment_count || 0}</strong>
-              <span>评论数</span>
-            </div>
-          </div>
-          <div class="exhibit-foot">
-            <span>浏览 <strong>${w.view_count || 0}</strong></span>
-            <span>${rated ? `已评 ${rated} 分` : (isOwn ? '本人作品' : formatBangkokTime(w.upload_time, { withSeconds: false }))}</span>
-          </div>
-        </div>
-      </article>`;
-    }
-
-    function startFiveSecPreview(vid) {
-      if (vid._previewSetup) return;
-      vid._previewSetup = true;
-      vid.play().catch(() => {});
-      vid.addEventListener('timeupdate', () => {
-        if (vid.currentTime >= 5) {
-          vid.currentTime = 0;
-          vid.play().catch(() => {});
-        }
-      });
     }
 
     loadWorks();
