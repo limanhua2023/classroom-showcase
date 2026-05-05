@@ -16,6 +16,9 @@ ASYNC_VIDEO_TRANSCODE=true
 ARCHIVE_AFTER_DAYS=30
 ARCHIVE_PROVIDER=none
 ARCHIVE_DELETE_PRIMARY_AFTER_SUCCESS=false
+TRANSCODE_LOOP_INTERVAL_MS=120000
+TRANSCODE_BATCH_SIZE=1
+TRANSCODE_MIN_AGE_MS=90000
 ```
 
 Meaning:
@@ -28,6 +31,12 @@ Meaning:
   Allowed: `none`, `google-drive`, `s3`
 - `ARCHIVE_DELETE_PRIMARY_AFTER_SUCCESS`
   Only set to `true` after you confirm archive playback/download works.
+- `TRANSCODE_LOOP_INTERVAL_MS`
+  Automatic queue scan interval. Default is 2 minutes.
+- `TRANSCODE_BATCH_SIZE`
+  How many videos the background queue processes per round. Default is 1 on low-cost hosting.
+- `TRANSCODE_MIN_AGE_MS`
+  Newly uploaded videos wait this long before auto-transcode starts. Teacher manual run bypasses this cooldown.
 
 ## Google Drive archive
 
@@ -94,6 +103,7 @@ ARCHIVE_PROVIDER=none
    - video upload returns immediately
    - thumbnail appears in gallery/display
    - teacher dashboard can manually run transcode queue
+   - background transcode does not compete with live classroom uploads
 
 3. Configure Google Drive or S3 archive with:
 

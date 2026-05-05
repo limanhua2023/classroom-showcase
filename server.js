@@ -58,9 +58,10 @@ const IMAGE_THUMB_MAX_DIMENSION = 720;
 const IMAGE_THUMB_QUALITY = 76;
 const VIDEO_THUMB_MAX_WIDTH = 960;
 const VIDEO_THUMB_CAPTURE_SECOND = 0.8;
-const TRANSCODE_LOOP_INTERVAL_MS = 45 * 1000;
-const TRANSCODE_BATCH_SIZE = 2;
+const TRANSCODE_LOOP_INTERVAL_MS = Math.max(30 * 1000, Number(process.env.TRANSCODE_LOOP_INTERVAL_MS || 2 * 60 * 1000));
+const TRANSCODE_BATCH_SIZE = Math.max(1, Number(process.env.TRANSCODE_BATCH_SIZE || 1));
 const TRANSCODE_MAX_ATTEMPTS = 3;
+const TRANSCODE_MIN_AGE_MS = Math.max(0, Number(process.env.TRANSCODE_MIN_AGE_MS || 90 * 1000));
 const ASYNC_VIDEO_TRANSCODE = !/^false$/i.test(String(process.env.ASYNC_VIDEO_TRANSCODE || 'true'));
 const ARCHIVE_LOOP_INTERVAL_MS = 15 * 60 * 1000;
 const ARCHIVE_BATCH_SIZE = 2;
@@ -1268,7 +1269,7 @@ async function transcodeSubmissionVideo(submission, manifest) {
 
 let videoTranscodeLoopBusy = false;
 
-async function processPendingVideoTranscodes({ activityId = null, limit = TRANSCODE_BATCH_SIZE } = {}) {
+async function processPendingVideoTranscodes({ activityId = null, limit = TRANSCODE_BATCH_SIZE, ignoreMinAge = false } = {}) {
   if (videoTranscodeLoopBusy) return { processed: 0, skipped: true, reason: 'busy' };
   videoTranscodeLoopBusy = true;
   let processed = 0;
@@ -1283,6 +1284,10 @@ async function processPendingVideoTranscodes({ activityId = null, limit = TRANSC
     if (error) throw error;
     for (const submission of (data || [])) {
       if (processed >= limit) break;
+      if (!ignoreMinAge) {
+        const uploadedAtMs = submission.upload_time ? new Date(submission.upload_time).getTime() : 0;
+        if (uploadedAtMs && (Date.now() - uploadedAtMs) < TRANSCODE_MIN_AGE_MS) continue;
+      }
       const manifest = normalizeSubmissionMediaManifest(submission, await readSubmissionMediaManifest(submission.id).catch(() => null));
       if (!['pending', 'retry'].includes(manifest.transcode_status)) continue;
       queued += 1;
@@ -3243,7 +3248,7 @@ app.post('/api/teacher/transcode-run', teacherAuth, async (req, res) => {
     if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
     const auth = await ensureTeacherCanAccessActivity(req, activity_id);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
-    const result = await processPendingVideoTranscodes({ activityId: activity_id, limit: TRANSCODE_BATCH_SIZE });
+    const result = await processPendingVideoTranscodes({ activityId: activity_id, limit: TRANSCODE_BATCH_SIZE, ignoreMinAge: true });
     res.json({ ok: true, ...result });
   } catch (e) {
     res.status(500).json({ error: e.message });
