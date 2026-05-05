@@ -37,7 +37,7 @@
         <h3 class="section-title">新作品展示区</h3>
         <span class="card-badge new">10分钟内</span>
       </div>
-      <div class="masonry" id="newGrid"></div>
+      <div class="exhibit-grid" id="newGrid"></div>
     </div>
 
     <div class="rubric" id="rubricBox" style="display:none;">
@@ -54,7 +54,7 @@
     <div class="section-header" style="margin-top:16px;">
       <h3 class="section-title">全部作品</h3>
     </div>
-    <div class="masonry" id="allGrid">
+    <div class="exhibit-grid" id="allGrid">
       <div class="empty">还没有作品，快来上传第一个吧！</div>
     </div>
   </div>
@@ -138,21 +138,33 @@
       const rated = myRatings[w.id];
       const isNew = isNewWork(w.upload_time);
       const vid = isVideo(w.image_url);
+      const template = pickWorkTemplate(`${w.id || w.anonymous_code}-${w.media_type || ''}`);
+      const templateLabelMap = {
+        aurora: 'Aurora',
+        gallery: 'Gallery',
+        signal: 'Signal',
+        studio: 'Studio'
+      };
       const mediaEl = vid
-        ? `<div style="position:relative;overflow:hidden;min-height:160px;background:#0f172a;border-radius:var(--radius) var(--radius) 0 0;">
+        ? `<div class="exhibit-media" style="background:#0f172a;">
              <video src="${w.image_url}" muted playsinline loop preload="metadata"
-               style="width:100%;max-height:260px;object-fit:cover;display:block;"
+               style="width:100%;height:100%;object-fit:cover;display:block;"
                oncanplay="startFiveSecPreview(this)"></video>
-             <div style="position:absolute;top:8px;left:8px;background:rgba(0,0,0,0.62);color:#fff;padding:3px 9px;border-radius:999px;font-size:0.75rem;font-weight:900;">视频</div>
+             <div class="exhibit-overlay">
+               <span class="exhibit-template-label">MP4 Showcase</span>
+             </div>
            </div>`
-        : `<div class="skeleton" style="min-height:200px;display:flex;align-items:center;justify-content:center;overflow:hidden;">
-             <img class="card-img" style="opacity:0;transition:opacity 0.5s;" onload="this.style.opacity=1;this.parentElement.classList.remove('skeleton')" src="${w.image_url}" alt="${escapeHtml(w.title)}" loading="lazy" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 1 1%22><rect fill=%22%23e2e8f0%22 width=%221%22 height=%221%22/></svg>'">
+        : `<div class="exhibit-media skeleton" style="display:flex;align-items:center;justify-content:center;">
+             <img class="card-img" style="width:100%;height:100%;opacity:0;transition:opacity 0.5s;" onload="this.style.opacity=1;this.parentElement.classList.remove('skeleton')" src="${w.image_url}" alt="${escapeHtml(w.title)}" loading="lazy" onerror="this.src='data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 1 1%22><rect fill=%22%23e2e8f0%22 width=%221%22 height=%221%22/></svg>'">
+             <div class="exhibit-overlay">
+               <span class="exhibit-template-label">${templateLabelMap[template] || 'Exhibit'}</span>
+             </div>
            </div>`;
 
-      return `<div class="card" onclick="location.href='student-detail.html?id=${w.id}'">
+      return `<article class="exhibit-card" data-template="${template}" onclick="location.href='student-detail.html?id=${w.id}'">
         ${mediaEl}
-        <div class="card-body">
-          <div style="display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap;">
+        <div class="exhibit-body">
+          <div class="exhibit-chip-row">
             <span class="card-badge">${escapeHtml(w.anonymous_code)}</span>
             ${isOwn ? '<span class="card-badge" style="background:#10b981;color:#fff;">我的</span>' : ''}
             ${isNew ? '<span class="card-badge new">NEW</span>' : ''}
@@ -160,16 +172,25 @@
             ${w.is_teacher_selected ? '<span class="card-badge" style="background:#fef3c7;color:#b45309;">精选</span>' : ''}
             ${vid ? '<span class="card-badge" style="background:#e0f2fe;color:#0369a1;">MP4</span>' : ''}
           </div>
-          <div class="card-title">${escapeHtml(w.title)}</div>
-          <div class="card-meta">
-            <span>浏览 ${w.view_count}</span>
-            <span>评论 ${w.comment_count || 0}</span>
-            <span>评分 ${w.average_rating > 0 ? Number(w.average_rating).toFixed(1) : '-'}</span>
-            <span>${w.rating_count}人评</span>
-            ${rated ? '<span style="color:var(--success);">已评'+rated+'分</span>' : (isOwn ? '<span style="color:var(--text-light);">本人作品</span>' : '')}
+          <div class="exhibit-kicker">${vid ? 'Motion Piece' : 'Visual Poster'}</div>
+          <div class="exhibit-title">${escapeHtml(w.title)}</div>
+          <div class="exhibit-subtitle">${escapeHtml((w.description || '').slice(0, 56) || '点击进入查看作品大图、评分与评论。')}</div>
+          <div class="exhibit-stats">
+            <div class="exhibit-stat">
+              <strong>${w.average_rating > 0 ? Number(w.average_rating).toFixed(1) : '-'}</strong>
+              <span>平均评分 / ${w.rating_count || 0} 人</span>
+            </div>
+            <div class="exhibit-stat">
+              <strong>${w.comment_count || 0}</strong>
+              <span>评论数</span>
+            </div>
+          </div>
+          <div class="exhibit-foot">
+            <span>浏览 <strong>${w.view_count || 0}</strong></span>
+            <span>${rated ? `已评 ${rated} 分` : (isOwn ? '本人作品' : formatBangkokTime(w.upload_time, { withSeconds: false }))}</span>
           </div>
         </div>
-      </div>`;
+      </article>`;
     }
 
     function startFiveSecPreview(vid) {

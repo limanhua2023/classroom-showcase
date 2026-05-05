@@ -5,6 +5,162 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>教师后台 - ClassShow</title>
   <link rel="stylesheet" href="css/main.css">
+  <style>
+    .control-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 12px;
+    }
+    .control-tile {
+      padding: 14px;
+      border-radius: 16px;
+      background: rgba(15, 23, 42, 0.04);
+      border: 1px solid rgba(15, 23, 42, 0.07);
+    }
+    .control-tile strong {
+      display: block;
+      font-size: 0.96rem;
+      font-weight: 900;
+    }
+    .control-tile span {
+      display: block;
+      margin: 6px 0 10px;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      line-height: 1.5;
+    }
+    .storage-meta-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .storage-meta-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      background: rgba(15, 23, 42, 0.05);
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+    .storage-warning {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(245, 158, 11, 0.12);
+      border: 1px solid rgba(245, 158, 11, 0.18);
+      color: #92400e;
+      font-size: 0.86rem;
+      line-height: 1.6;
+    }
+    .feedback-preview {
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(15, 23, 42, 0.04);
+      border: 1px solid rgba(15, 23, 42, 0.06);
+    }
+    .feedback-preview strong {
+      display: block;
+      font-size: 0.92rem;
+      font-weight: 800;
+    }
+    .feedback-preview p {
+      margin-top: 8px;
+      color: var(--text-muted);
+      font-size: 0.86rem;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .feedback-preview small {
+      display: block;
+      margin-top: 8px;
+      color: var(--text-light);
+      font-size: 0.76rem;
+    }
+    .roster-toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-bottom: 14px;
+    }
+    .roster-toolbar input[type="file"] {
+      max-width: 260px;
+    }
+    .manual-roster {
+      margin-top: 12px;
+      padding: 16px;
+      border-radius: 18px;
+      background: rgba(37, 99, 235, 0.04);
+      border: 1px solid rgba(37, 99, 235, 0.08);
+    }
+    .manual-roster textarea {
+      width: 100%;
+      min-height: 118px;
+      margin-top: 10px;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font: inherit;
+      resize: vertical;
+      background: rgba(255,255,255,0.9);
+    }
+    .invite-code-line {
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      margin-top: 14px;
+      padding: 10px 14px;
+      border-radius: 999px;
+      background: rgba(255,255,255,0.1);
+      border: 1px solid rgba(255,255,255,0.14);
+      font-weight: 800;
+    }
+    .invite-code-line strong {
+      font-size: 1.02rem;
+      letter-spacing: 0.18em;
+    }
+    .qr-box {
+      display: flex;
+      gap: 18px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .qr-box img {
+      width: 140px;
+      height: 140px;
+      border-radius: 18px;
+      border: 1px solid var(--border);
+      background: #fff;
+    }
+    .largest-file-list .dashboard-list-side strong {
+      font-size: 0.92rem;
+    }
+    @media (max-width: 900px) {
+      .control-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+    @media (max-width: 640px) {
+      .roster-toolbar {
+        align-items: stretch;
+      }
+      .roster-toolbar .btn {
+        width: 100%;
+      }
+      .roster-toolbar input[type="file"] {
+        max-width: 100%;
+      }
+      .qr-box {
+        flex-direction: column;
+        align-items: flex-start;
+      }
+    }
+  </style>
 </head>
 <body>
   <div class="topbar">
@@ -14,168 +170,254 @@
       <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-scores.html'">评分成绩</button>
       <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-feedback.html'">信息反馈</button>
       <button class="btn btn-sm btn-secondary" onclick="openDisplay()">大屏展示</button>
-      <button class="btn btn-sm btn-danger" onclick="sessionStorage.clear();location.href='index.html'">退出</button>
+      <button class="btn btn-sm btn-danger" onclick="logout()">退出</button>
     </div>
   </div>
 
-  <div class="container" style="padding-top:24px;">
-    <h2 id="actTitle" style="margin-bottom:4px;"></h2>
-    <p id="actSubtitle" style="color:var(--text-muted);margin-bottom:20px;"></p>
-
-    <div class="stats-row">
-      <div class="stat-card"><div class="stat-value" id="sUsers">0</div><div class="stat-label">参与学生</div></div>
-      <div class="stat-card"><div class="stat-value" id="sSubs">0</div><div class="stat-label">作品数量</div></div>
-      <div class="stat-card"><div class="stat-value" id="sRatings">0</div><div class="stat-label">评分次数</div></div>
-    </div>
-
-    <div class="card" style="margin:20px 0;">
-      <div class="card-body" style="display:flex;flex-wrap:wrap;gap:12px;align-items:center;">
-        <h3 style="margin-right:auto;">活动控制</h3>
-        <div>上传：<button class="btn btn-sm" id="toggleUpload" onclick="toggleSetting('upload_open')"></button></div>
-        <div>评分：<button class="btn btn-sm" id="toggleVoting" onclick="toggleSetting('voting_open')"></button></div>
-        <div>实时排名：<button class="btn btn-sm" id="toggleRanking" onclick="toggleSetting('show_live_ranking')"></button></div>
-        <div>匿名评论：<button class="btn btn-sm" id="toggleComments" onclick="toggleSetting('comments_open')"></button></div>
-        <div>名单限制：<button class="btn btn-sm" id="toggleRoster" onclick="toggleSetting('roster_enabled')"></button></div>
-        <div>PIN登录：<button class="btn btn-sm" id="togglePin" onclick="toggleSetting('pin_required')"></button></div>
+  <div class="container">
+    <section class="dashboard-hero">
+      <div class="dashboard-kicker">Teacher Control Center</div>
+      <h1 class="dashboard-title"><strong id="heroTitle">ClassShow</strong><br>课堂作品运营台</h1>
+      <p class="dashboard-subtitle" id="heroSubtitle">用一屏掌握上传、评分、反馈、容量和课堂参与质量。</p>
+      <div class="invite-code-line">邀请码 <strong id="inviteCode">-</strong></div>
+      <div class="dashboard-actions">
+        <button class="btn btn-primary" onclick="openDisplay()">打开大屏</button>
+        <button class="btn btn-secondary" onclick="reloadDashboard(true)">刷新数据</button>
+        <button class="btn btn-secondary" id="cleanupBtn" onclick="cleanupStorage()">清理孤儿文件</button>
       </div>
-    </div>
+    </section>
 
-    <div class="card" style="margin:20px 0;">
-      <div class="card-body">
-        <h3 style="margin-bottom:12px;">学生名单</h3>
-        <p class="form-hint" style="margin-bottom:10px;">
-          Excel 只需要两列：姓名、学号。上传后系统会自动开启名单限制，并关闭 PIN 登录。
-        </p>
-
-        <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px;">
-          <input id="rosterFile" type="file" accept=".xlsx,.csv" />
-          <button class="btn btn-primary" type="button" onclick="importRosterFile()">上传名单</button>
-          <button class="btn btn-secondary" type="button" onclick="loadRoster()">刷新名单</button>
-          <span id="rosterStatus" style="color:var(--text-muted);font-size:0.9rem;"></span>
-        </div>
-
-        <details style="margin-bottom:12px;">
-          <summary style="cursor:pointer;font-weight:600;">手工粘贴导入</summary>
-          <p class="form-hint" style="margin:8px 0;">每行一名学生，格式：姓名,学号</p>
-          <textarea id="rosterText" rows="4" style="width:100%;font-family:monospace;" placeholder="张三,2026001&#10;李四,2026002"></textarea>
-          <button class="btn btn-secondary" type="button" style="margin-top:8px;" onclick="importRosterText()">导入粘贴名单</button>
-        </details>
-
-        <div class="table-wrap" style="margin-top:12px;max-height:300px;overflow:auto;">
-          <table>
-            <thead><tr><th>姓名</th><th>学号</th><th>状态</th><th>反馈权限</th><th>操作</th></tr></thead>
-            <tbody id="rosterBody"><tr><td colspan="5" style="color:var(--text-muted);">尚未加载</td></tr></tbody>
-          </table>
+    <section class="dashboard-grid">
+      <div class="dashboard-panel">
+        <div class="dashboard-panel-body">
+          <div class="dashboard-panel-head">
+            <div>
+              <div class="dashboard-panel-title">核心指标</div>
+              <div class="dashboard-panel-note">从参与人数、作品量、互动量、反馈与存储四个维度看活动状态。</div>
+            </div>
+            <div class="card-badge" id="dashboardTimestamp">刚刚更新</div>
+          </div>
+          <div class="dashboard-metrics" id="metricGrid"></div>
         </div>
       </div>
-    </div>
 
-    <div class="card">
-      <div class="card-body">
-        <h3 style="margin-bottom:12px;">活动信息</h3>
-        <table style="width:100%;">
-          <tr><td style="font-weight:600;width:100px;">邀请码</td><td><span id="invCode" style="font-size:1.3rem;font-weight:800;color:var(--primary);letter-spacing:2px;"></span></td></tr>
-          <tr><td style="font-weight:600;">课程</td><td id="infoCourse"></td></tr>
-          <tr><td style="font-weight:600;">班级</td><td id="infoClass"></td></tr>
-          <tr><td style="font-weight:600;">活动</td><td id="infoActivity"></td></tr>
-          <tr><td style="font-weight:600;">说明</td><td id="infoDesc"></td></tr>
-        </table>
-        <div style="margin-top:20px;text-align:center;">
-          <img id="qrCode" style="width:150px;height:150px;border-radius:8px;border:1px solid var(--border);display:none;margin:0 auto 8px auto;">
-          <p style="font-size:0.85rem;color:var(--text-muted);">
-            <a href="#" id="downloadQr" style="display:none;" download="课堂二维码.png">下载二维码图片</a>
-          </p>
+      <div class="dashboard-panel">
+        <div class="dashboard-panel-body">
+          <div class="dashboard-panel-head">
+            <div>
+              <div class="dashboard-panel-title">活动控制</div>
+              <div class="dashboard-panel-note">开关会直接作用于学生端和大屏端，无需单独刷新数据库。</div>
+            </div>
+          </div>
+          <div class="dashboard-pills" id="statusPills" style="margin-bottom:16px;"></div>
+          <div class="control-grid" id="controlGrid"></div>
         </div>
       </div>
-    </div>
+
+      <div class="dashboard-two-col" style="grid-column: span 12;">
+        <div class="dashboard-panel">
+          <div class="dashboard-panel-body">
+            <div class="dashboard-panel-head">
+              <div>
+                <div class="dashboard-panel-title">云存储与生命周期</div>
+                <div class="dashboard-panel-note">图片/视频上传后会先压缩，再进入 Supabase Storage；此处显示引用空间与可清理孤儿文件。</div>
+              </div>
+              <div class="card-badge" id="storageUsageLabel">0 B</div>
+            </div>
+            <div class="mini-stat-grid" id="storageMiniStats"></div>
+            <div class="storage-progress"><div class="storage-progress-bar" id="storageProgressBar" style="width:0%;"></div></div>
+            <div class="dashboard-panel-note" id="storageProgressText">正在统计存储占用...</div>
+            <div class="storage-meta-row" id="storageMetaRow"></div>
+            <div class="storage-warning" id="storageWarning" style="display:none;"></div>
+          </div>
+        </div>
+
+        <div class="dashboard-panel">
+          <div class="dashboard-panel-body">
+            <div class="dashboard-panel-head">
+              <div>
+                <div class="dashboard-panel-title">活动入口与二维码</div>
+                <div class="dashboard-panel-note">可直接发给学生扫码进入，也可复制邀请码和活动链接。</div>
+              </div>
+            </div>
+            <div class="qr-box">
+              <img id="qrCode" alt="活动二维码" style="display:none;">
+              <div>
+                <div class="dashboard-list">
+                  <div class="dashboard-list-item">
+                    <div class="dashboard-list-main">
+                      <div class="dashboard-list-title">课程 / 班级</div>
+                      <div class="dashboard-list-sub" id="metaCourse">-</div>
+                    </div>
+                  </div>
+                  <div class="dashboard-list-item">
+                    <div class="dashboard-list-main">
+                      <div class="dashboard-list-title">活动名称</div>
+                      <div class="dashboard-list-sub" id="metaActivity">-</div>
+                    </div>
+                  </div>
+                  <div class="dashboard-list-item">
+                    <div class="dashboard-list-main">
+                      <div class="dashboard-list-title">活动说明</div>
+                      <div class="dashboard-list-sub" id="metaDesc">-</div>
+                    </div>
+                  </div>
+                </div>
+                <a id="downloadQr" class="btn btn-secondary btn-sm" style="margin-top:12px;display:none;" download="classshow-qrcode.png">下载二维码</a>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="dashboard-three-col" style="grid-column: span 12;">
+        <div class="dashboard-panel">
+          <div class="dashboard-panel-body">
+            <div class="dashboard-panel-head">
+              <div>
+                <div class="dashboard-panel-title">高分作品</div>
+                <div class="dashboard-panel-note">按平均分、评分人数综合排序。</div>
+              </div>
+            </div>
+            <div class="dashboard-list" id="topRatedList"></div>
+          </div>
+        </div>
+
+        <div class="dashboard-panel">
+          <div class="dashboard-panel-body">
+            <div class="dashboard-panel-head">
+              <div>
+                <div class="dashboard-panel-title">最近上传</div>
+                <div class="dashboard-panel-note">观察最近 24 小时课堂活跃度和新作品节奏。</div>
+              </div>
+            </div>
+            <div class="dashboard-list" id="recentUploadsList"></div>
+          </div>
+        </div>
+
+        <div class="dashboard-panel">
+          <div class="dashboard-panel-body">
+            <div class="dashboard-panel-head">
+              <div>
+                <div class="dashboard-panel-title">高热反馈</div>
+                <div class="dashboard-panel-note">结合实名反馈与点赞热度，优先看到最值得处理的问题。</div>
+              </div>
+            </div>
+            <div class="dashboard-list" id="feedbackHotList"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="dashboard-two-col" style="grid-column: span 12;">
+        <div class="dashboard-panel">
+          <div class="dashboard-panel-body">
+            <div class="dashboard-panel-head">
+              <div>
+                <div class="dashboard-panel-title">最大文件与空间热点</div>
+                <div class="dashboard-panel-note">帮助识别最占空间的图片/视频，方便后续做课程归档。</div>
+              </div>
+            </div>
+            <div class="dashboard-list largest-file-list" id="largestFileList"></div>
+          </div>
+        </div>
+
+        <div class="dashboard-panel">
+          <div class="dashboard-panel-body">
+            <div class="dashboard-panel-head">
+              <div>
+                <div class="dashboard-panel-title">最新实名反馈</div>
+                <div class="dashboard-panel-note">教师可直接进入信息反馈页做删除、禁言和每日上限管理。</div>
+              </div>
+              <button class="btn btn-secondary btn-sm" onclick="location.href='teacher-feedback.html'">打开反馈管理</button>
+            </div>
+            <div class="dashboard-list" id="feedbackLatestList"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="dashboard-panel">
+        <div class="dashboard-panel-body">
+          <div class="dashboard-panel-head">
+            <div>
+              <div class="dashboard-panel-title">学生名单与反馈权限</div>
+              <div class="dashboard-panel-note">支持 Excel/CSV 只传“姓名 + 学号”两列；导入后自动启用名单限制，并保留教师对单个学生的反馈禁言能力。</div>
+            </div>
+            <div class="card-badge" id="rosterSummary">已导入 0 人</div>
+          </div>
+
+          <div class="roster-toolbar">
+            <input id="rosterFile" type="file" accept=".xlsx,.csv">
+            <button class="btn btn-primary" type="button" onclick="importRosterFile()">上传名单</button>
+            <button class="btn btn-secondary" type="button" onclick="reloadDashboard(true)">刷新名单</button>
+            <span id="rosterStatus" class="dashboard-panel-note"></span>
+          </div>
+
+          <details class="manual-roster">
+            <summary style="cursor:pointer;font-weight:800;">手工粘贴导入</summary>
+            <div class="dashboard-panel-note" style="margin-top:8px;">每行一位学生，格式支持：`姓名,学号` 或 `学号,姓名`。</div>
+            <textarea id="rosterText" placeholder="张三,2026001&#10;李四,2026002"></textarea>
+            <div style="display:flex;gap:10px;flex-wrap:wrap;margin-top:10px;">
+              <button class="btn btn-secondary" type="button" onclick="importRosterText()">导入粘贴名单</button>
+            </div>
+          </details>
+
+          <div class="table-wrap" style="margin-top:16px;max-height:420px;overflow:auto;">
+            <table>
+              <thead>
+                <tr>
+                  <th>姓名</th>
+                  <th>学号</th>
+                  <th>状态</th>
+                  <th>反馈权限</th>
+                  <th>操作</th>
+                </tr>
+              </thead>
+              <tbody id="rosterBody">
+                <tr><td colspan="5" style="color:var(--text-muted);">正在加载名单...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
   </div>
 
   <script src="js/api.js"></script>
   <script>
     const act = JSON.parse(sessionStorage.getItem('classshow_activity') || '{}');
     const token = sessionStorage.getItem('teacherToken');
+    const actId = act.id || sessionStorage.getItem('classshow_activity_id');
     if (!token) location.href = 'teacher-login.html';
-    const actId = act.id;
     if (!actId) location.href = 'index.html';
 
-    document.getElementById('actTitle').textContent = act.activity_name || '';
-    document.getElementById('actSubtitle').textContent = (act.course_name || '') + ' · ' + (act.class_name || '');
-    document.getElementById('invCode').textContent = act.invite_code || '';
-    document.getElementById('infoCourse').textContent = act.course_name || '';
-    document.getElementById('infoClass').textContent = act.class_name || '';
-    document.getElementById('infoActivity').textContent = act.activity_name || '';
-    document.getElementById('infoDesc').textContent = act.description || '无';
+    let dashboardSummary = null;
 
-    const settingLabels = {
-      upload_open: '上传',
-      voting_open: '评分',
-      show_live_ranking: '实时排名',
-      comments_open: '匿名评论',
-      roster_enabled: '名单限制',
-      pin_required: 'PIN登录'
+    const toggleMeta = {
+      upload_open: { label: '上传入口', note: '控制学生是否还能继续上传或替换作品。' },
+      voting_open: { label: '评分入口', note: '控制学生能否给非本人作品评分。' },
+      comments_open: { label: '评论入口', note: '控制作品详情页和大屏点评功能。' },
+      show_live_ranking: { label: '实时排行', note: '控制大屏上的 Top 排名模块是否显示。' },
+      roster_enabled: { label: '名单限制', note: '学生必须是教师导入名单中的实名用户。' },
+      pin_required: { label: 'PIN 登录', note: '如后续启用 PIN，可做更强身份约束。' }
     };
 
-    function updateToggleBtn(id, val) {
-      const btn = document.getElementById(id);
-      btn.textContent = val ? '已开启 ✓' : '已关闭 ✕';
-      btn.className = 'btn btn-sm ' + (val ? 'btn-success' : 'btn-danger');
-    }
-
-    function updateAllToggleBtns() {
-      updateToggleBtn('toggleUpload', act.upload_open);
-      updateToggleBtn('toggleVoting', act.voting_open);
-      updateToggleBtn('toggleRanking', act.show_live_ranking);
-      updateToggleBtn('toggleComments', act.comments_open);
-      updateToggleBtn('toggleRoster', act.roster_enabled);
-      updateToggleBtn('togglePin', act.pin_required);
-    }
-
-    function applyActivityPatch(activityPatch) {
-      if (!activityPatch) return;
-      Object.assign(act, activityPatch);
-      sessionStorage.setItem('classshow_activity', JSON.stringify(act));
-      updateAllToggleBtns();
-    }
-
-    updateAllToggleBtns();
-
-    async function loadQrCode() {
-      try {
-        const url = location.origin + '/index.html?code=' + act.invite_code;
-        const res = await api('/qrcode?text=' + encodeURIComponent(url));
-        if (res.url) {
-          const img = document.getElementById('qrCode');
-          img.src = res.url;
-          img.style.display = 'block';
-          const anchor = document.getElementById('downloadQr');
-          anchor.href = res.url;
-          anchor.style.display = 'inline-block';
-        }
-      } catch (e) {}
+    function logout() {
+      sessionStorage.clear();
+      location.href = 'index.html';
     }
 
     function openDisplay() {
-      const code = (act.invite_code || '').trim();
+      const code = ((dashboardSummary?.activity?.invite_code) || act.invite_code || '').trim();
       const url = code ? ('display.html?code=' + encodeURIComponent(code)) : 'display.html';
       window.open(url, '_blank');
     }
 
-    async function toggleSetting(key) {
-      const newVal = !act[key];
-      try {
-        await api('/activities/' + actId, { method: 'PUT', body: JSON.stringify({ [key]: newVal }) });
-        applyActivityPatch({ [key]: newVal });
-        toast((settingLabels[key] || key) + (newVal ? ' 已开启' : ' 已关闭'), 'success');
-      } catch (e) {
-        toast('操作失败: ' + e.message, 'error');
-      }
-    }
-
     function parseRosterText(text) {
-      return text.split(/\r?\n/)
+      return String(text || '')
+        .split(/\r?\n/)
         .map(line => line.trim())
         .filter(Boolean)
-        .map(line => line.split(',').map(v => (v || '').trim()))
+        .map(line => line.split(',').map(v => String(v || '').trim()))
         .map(parts => {
           let name = parts[0] || '';
           let student_id = parts[1] || '';
@@ -185,20 +427,289 @@
           }
           return { name, student_id };
         })
-        .filter(row => row.name && row.student_id && row.name !== '姓名' && row.student_id !== '学号');
+        .filter(row => row.name && row.student_id);
     }
 
-    async function handleImportResult(res) {
-      applyActivityPatch(res.activity);
-      toast('名单导入成功：' + res.imported + ' 人', 'success');
-      await loadRoster();
+    function copyInviteCode() {
+      const code = (dashboardSummary?.activity?.invite_code) || '';
+      if (!code) return;
+      navigator.clipboard.writeText(code).then(() => toast('邀请码已复制', 'success')).catch(() => {});
+    }
+
+    function renderMetricGrid(summary) {
+      const metrics = summary.metrics || {};
+      const storage = summary.storage || {};
+      const roster = summary.roster || {};
+      const items = [
+        ['参与学生', metrics.participant_count || 0, `名单覆盖 ${roster.coverage_percent || 0}%`],
+        ['已传作品', metrics.submission_count || 0, `${metrics.image_count || 0} 图 / ${metrics.video_count || 0} 视频`],
+        ['评分次数', metrics.rating_count || 0, `每件平均 ${metrics.average_ratings_per_work || 0}`],
+        ['作品评论', metrics.comment_count || 0, `总浏览 ${metrics.total_views || 0}`],
+        ['信息反馈', metrics.feedback_count || 0, summary.feedback_likes_enabled ? `点赞 ${metrics.feedback_like_count || 0}` : '点赞功能未启用'],
+        ['最近 24h 上传', metrics.uploads_24h || 0, `近 7 天 ${metrics.uploads_7d || 0}`],
+        ['已引用空间', formatBytes(storage.referenced_bytes || 0), `总文件 ${storage.referenced_files || 0}`],
+        ['可清理空间', formatBytes(storage.orphan_bytes || 0), `${storage.orphan_count || 0} 个孤儿文件`]
+      ];
+      document.getElementById('metricGrid').innerHTML = items.map(item => `
+        <div class="dashboard-metric">
+          <div class="dashboard-metric-value">${escapeHtml(item[1])}</div>
+          <div class="dashboard-metric-label">${escapeHtml(item[0])}</div>
+          <div class="dashboard-metric-meta">${escapeHtml(item[2])}</div>
+        </div>
+      `).join('');
+    }
+
+    function renderStatusPills(activity) {
+      const keys = ['upload_open', 'voting_open', 'comments_open', 'show_live_ranking', 'roster_enabled', 'pin_required'];
+      document.getElementById('statusPills').innerHTML = keys.map(key => `
+        <span class="dashboard-pill ${activity[key] ? 'on' : 'off'}">
+          <span>${escapeHtml(toggleMeta[key].label)}</span>
+          <strong>${activity[key] ? '开启' : '关闭'}</strong>
+        </span>
+      `).join('');
+    }
+
+    function renderControls(activity) {
+      document.getElementById('controlGrid').innerHTML = Object.entries(toggleMeta).map(([key, meta]) => `
+        <div class="control-tile">
+          <strong>${escapeHtml(meta.label)}</strong>
+          <span>${escapeHtml(meta.note)}</span>
+          <button class="btn btn-sm ${activity[key] ? 'btn-success' : 'btn-danger'}" type="button" onclick="toggleSetting('${key}')">
+            ${activity[key] ? '已开启' : '已关闭'}
+          </button>
+        </div>
+      `).join('');
+    }
+
+    function renderWorkList(targetId, rows, primaryMode) {
+      const box = document.getElementById(targetId);
+      if (!rows?.length) {
+        box.innerHTML = '<div class="dashboard-panel-note">暂无数据</div>';
+        return;
+      }
+      box.innerHTML = rows.map(row => {
+        const user = row.users || {};
+        const sideValue = primaryMode === 'rating'
+          ? (row.average_rating > 0 ? row.average_rating.toFixed(1) : '-')
+          : primaryMode === 'views'
+            ? String(row.view_count || 0)
+            : formatBangkokTime(row.upload_time);
+        const sideLabel = primaryMode === 'rating'
+          ? `${row.rating_count || 0} 人评分`
+          : primaryMode === 'views'
+            ? '浏览量'
+            : '上传时间';
+        return `
+          <div class="dashboard-list-item">
+            <div class="dashboard-list-main">
+              <div class="dashboard-list-title">${escapeHtml(row.title || '未命名作品')}</div>
+              <div class="dashboard-list-sub">${escapeHtml(user.name || '匿名学生')} · ${escapeHtml(user.student_id || '-')} · ${row.media_type === 'video' ? '视频' : '图片'}</div>
+            </div>
+            <div class="dashboard-list-side">
+              <strong>${escapeHtml(sideValue)}</strong>
+              <span>${escapeHtml(sideLabel)}</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderFeedbackList(targetId, rows, mode) {
+      const box = document.getElementById(targetId);
+      if (!rows?.length) {
+        box.innerHTML = '<div class="dashboard-panel-note">暂无反馈</div>';
+        return;
+      }
+      box.innerHTML = rows.map(item => {
+        const user = item.users || {};
+        const meta = mode === 'hot'
+          ? `${item.like_count || 0} 赞 · ${formatBangkokTime(item.created_at)}`
+          : formatBangkokTime(item.created_at);
+        return `
+          <div class="feedback-preview">
+            <strong>${escapeHtml(user.name || '未实名')} · ${escapeHtml(user.student_id || '-')}</strong>
+            <p>${escapeHtml(item.content || '')}</p>
+            <small>${escapeHtml(meta)}</small>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderLargestFiles(summary) {
+      const rows = summary.storage?.largest_items || [];
+      const box = document.getElementById('largestFileList');
+      if (!rows.length) {
+        box.innerHTML = '<div class="dashboard-panel-note">暂无媒体文件</div>';
+        return;
+      }
+      box.innerHTML = rows.map(item => `
+        <div class="dashboard-list-item">
+          <div class="dashboard-list-main">
+            <div class="dashboard-list-title">${escapeHtml(item.title || '未命名作品')}</div>
+            <div class="dashboard-list-sub">${escapeHtml(item.media_type === 'video' ? '视频' : '图片')} · ${formatBangkokTime(item.upload_time)}</div>
+          </div>
+          <div class="dashboard-list-side">
+            <strong>${formatBytes(item.media_size || 0)}</strong>
+            <span>${escapeHtml(item.storage_path || '')}</span>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function renderRoster(summary) {
+      const roster = summary.roster || {};
+      const rows = roster.items || [];
+      document.getElementById('rosterSummary').textContent = `已导入 ${rows.length} 人`;
+      document.getElementById('rosterStatus').textContent = roster.ready
+        ? `当前实名名单 ${rows.length} 人，其中 ${roster.muted_count || 0} 人已被限制反馈`
+        : '名单表未初始化，请先运行升级 SQL';
+      document.getElementById('rosterBody').innerHTML = rows.length ? rows.map(row => `
+        <tr>
+          <td>${escapeHtml(row.name || '-')}</td>
+          <td>${escapeHtml(row.student_id || '-')}</td>
+          <td>${row.active === false ? '停用' : '启用'}</td>
+          <td>${row.feedback_muted ? '已禁言反馈' : '反馈正常'}</td>
+          <td>
+            <button class="btn btn-sm ${row.feedback_muted ? 'btn-secondary' : 'btn-danger'}" type="button"
+              onclick="toggleRosterFeedbackMute('${encodeURIComponent(row.student_id || '')}', ${row.feedback_muted ? 'false' : 'true'}, '${encodeURIComponent(row.name || '')}')">
+              ${row.feedback_muted ? '解除禁言' : '禁言反馈'}
+            </button>
+          </td>
+        </tr>
+      `).join('') : '<tr><td colspan="5" style="color:var(--text-muted);">暂无名单</td></tr>';
+    }
+
+    function renderStorage(summary) {
+      const storage = summary.storage || {};
+      const referencedBytes = Number(storage.referenced_bytes || 0);
+      const totalBytes = Math.max(Number(storage.total_bytes || 0), referencedBytes);
+      const ratio = totalBytes > 0 ? Math.min((referencedBytes / totalBytes) * 100, 100) : 0;
+      document.getElementById('storageUsageLabel').textContent = formatBytes(referencedBytes);
+      document.getElementById('storageProgressBar').style.width = ratio.toFixed(1) + '%';
+      document.getElementById('storageProgressText').textContent =
+        `被作品实际引用 ${formatBytes(referencedBytes)}，当前桶总量约 ${formatBytes(totalBytes)}。`;
+      document.getElementById('storageMiniStats').innerHTML = [
+        ['图片文件', storage.image_count || 0],
+        ['视频文件', storage.video_count || 0],
+        ['平均体积', formatBytes(storage.average_file_bytes || 0)],
+        ['孤儿空间', formatBytes(storage.orphan_bytes || 0)]
+      ].map(item => `
+        <div class="mini-stat">
+          <strong>${escapeHtml(item[1])}</strong>
+          <span>${escapeHtml(item[0])}</span>
+        </div>
+      `).join('');
+      document.getElementById('storageMetaRow').innerHTML = [
+        `总文件 ${storage.total_files || 0}`,
+        `已引用 ${storage.referenced_files || 0}`,
+        `孤儿文件 ${storage.orphan_count || 0}`,
+        `可回收 ${formatBytes(storage.orphan_bytes || 0)}`
+      ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+      const warning = document.getElementById('storageWarning');
+      if (storage.orphan_count > 0) {
+        warning.style.display = 'block';
+        warning.textContent = `发现 ${storage.orphan_count} 个未被数据库引用、但仍留在云端桶中的文件。点击“清理孤儿文件”可回收约 ${formatBytes(storage.orphan_bytes || 0)}。`;
+      } else {
+        warning.style.display = 'none';
+        warning.textContent = '';
+      }
+    }
+
+    function renderMeta(activity) {
+      document.getElementById('heroTitle').textContent = activity.activity_name || 'ClassShow';
+      document.getElementById('heroSubtitle').textContent = `${activity.course_name || ''} · ${activity.class_name || ''} · 曼谷时间显示 · 作品自动带上传时间与云端压缩存储`;
+      document.getElementById('inviteCode').textContent = activity.invite_code || '-';
+      document.getElementById('inviteCode').onclick = copyInviteCode;
+      document.getElementById('metaCourse').textContent = `${activity.course_name || '-'} / ${activity.class_name || '-'}`;
+      document.getElementById('metaActivity').textContent = activity.activity_name || '-';
+      document.getElementById('metaDesc').textContent = activity.description || '暂无说明';
+      document.getElementById('dashboardTimestamp').textContent = `更新于 ${formatBangkokTime(new Date().toISOString())}`;
+    }
+
+    async function loadQrCode(activity) {
+      try {
+        const url = location.origin + '/index.html?code=' + encodeURIComponent(activity.invite_code || '');
+        const result = await api('/qrcode?text=' + encodeURIComponent(url));
+        if (result.url) {
+          const img = document.getElementById('qrCode');
+          img.src = result.url;
+          img.style.display = 'block';
+          const link = document.getElementById('downloadQr');
+          link.href = result.url;
+          link.style.display = 'inline-flex';
+        }
+      } catch {}
+    }
+
+    function syncSessionActivity(activity) {
+      Object.assign(act, activity || {});
+      sessionStorage.setItem('classshow_activity', JSON.stringify(act));
+      sessionStorage.setItem('classshow_activity_id', act.id || actId);
+    }
+
+    async function reloadDashboard(showToast = false) {
+      try {
+        const summary = await api('/teacher/dashboard-summary?activity_id=' + encodeURIComponent(actId));
+        dashboardSummary = summary;
+        syncSessionActivity(summary.activity || {});
+        renderMeta(summary.activity || {});
+        renderMetricGrid(summary);
+        renderStatusPills(summary.activity || {});
+        renderControls(summary.activity || {});
+        renderStorage(summary);
+        renderWorkList('topRatedList', summary.top_rated, 'rating');
+        renderWorkList('recentUploadsList', summary.recent_uploads, 'time');
+        renderFeedbackList('feedbackHotList', summary.hot_feedback, 'hot');
+        renderFeedbackList('feedbackLatestList', summary.latest_feedback, 'latest');
+        renderLargestFiles(summary);
+        renderRoster(summary);
+        loadQrCode(summary.activity || {});
+        if (showToast) toast('仪表盘已刷新', 'success');
+      } catch (e) {
+        toast('加载仪表盘失败：' + e.message, 'error');
+      }
+    }
+
+    async function toggleSetting(key) {
+      const activity = dashboardSummary?.activity || act;
+      const nextValue = !activity[key];
+      try {
+        await api('/activities/' + actId, {
+          method: 'PUT',
+          body: JSON.stringify({ [key]: nextValue })
+        });
+        await reloadDashboard();
+        toast(`${toggleMeta[key].label}已${nextValue ? '开启' : '关闭'}`, 'success');
+      } catch (e) {
+        toast('切换失败：' + e.message, 'error');
+      }
+    }
+
+    async function cleanupStorage() {
+      if (!confirm('确认清理未被数据库引用的云端孤儿文件吗？')) return;
+      const btn = document.getElementById('cleanupBtn');
+      btn.disabled = true;
+      btn.textContent = '清理中...';
+      try {
+        const result = await api('/teacher/storage-cleanup', {
+          method: 'POST',
+          body: JSON.stringify({ activity_id: actId })
+        });
+        await reloadDashboard();
+        toast(`已清理 ${result.removed || 0} 个文件，释放 ${formatBytes(result.bytes_freed || 0)}`, 'success');
+      } catch (e) {
+        toast('清理失败：' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = '清理孤儿文件';
+      }
     }
 
     async function importRosterText() {
+      const students = parseRosterText(document.getElementById('rosterText').value);
+      if (!students.length) return toast('没有可导入的名单行', 'error');
       try {
-        const students = parseRosterText(document.getElementById('rosterText').value);
-        if (students.length === 0) return toast('没有有效名单行', 'error');
-        const res = await api('/teacher/roster/import', {
+        const result = await api('/teacher/roster/import', {
           method: 'POST',
           body: JSON.stringify({
             activity_id: actId,
@@ -207,16 +718,17 @@
           })
         });
         document.getElementById('rosterText').value = '';
-        await handleImportResult(res);
+        await reloadDashboard();
+        toast(`名单导入成功：${result.imported || 0} 人`, 'success');
       } catch (e) {
-        toast('名单导入失败: ' + e.message, 'error');
+        toast('导入失败：' + e.message, 'error');
       }
     }
 
     async function importRosterFile() {
       const input = document.getElementById('rosterFile');
       const file = input.files && input.files[0];
-      if (!file) return toast('请先选择 .xlsx 或 .csv 名单文件', 'error');
+      if (!file) return toast('请先选择 .xlsx 或 .csv 文件', 'error');
 
       const fd = new FormData();
       fd.append('activity_id', actId);
@@ -232,27 +744,10 @@
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || res.statusText);
         input.value = '';
-        await handleImportResult(data);
+        await reloadDashboard();
+        toast(`名单上传成功：${data.imported || 0} 人`, 'success');
       } catch (e) {
-        toast('文件导入失败: ' + e.message, 'error');
-      }
-    }
-
-    async function loadRoster() {
-      try {
-        const rows = await api('/teacher/roster?activity_id=' + actId);
-        document.getElementById('rosterStatus').textContent = '已导入 ' + rows.length + ' 人';
-        document.getElementById('rosterBody').innerHTML = rows.length ? rows.map(r => `
-          <tr>
-            <td>${escapeHtml(r.name)}</td>
-            <td>${escapeHtml(r.student_id)}</td>
-            <td>${r.active === false ? '停用' : '启用'}</td>
-            <td>${r.feedback_muted ? '已禁言反馈' : '反馈正常'}</td>
-            <td><button class="btn btn-sm ${r.feedback_muted ? 'btn-secondary' : 'btn-danger'}" type="button" onclick="toggleRosterFeedbackMute('${encodeURIComponent(r.student_id || '')}', ${r.feedback_muted ? 'false' : 'true'}, '${encodeURIComponent(r.name || '')}')">${r.feedback_muted ? '解除禁言' : '禁言反馈'}</button></td>
-          </tr>
-        `).join('') : '<tr><td colspan="5" style="color:var(--text-muted);">暂无名单</td></tr>';
-      } catch (e) {
-        document.getElementById('rosterStatus').textContent = '名单功能未初始化';
+        toast('上传失败：' + e.message, 'error');
       }
     }
 
@@ -260,8 +755,7 @@
       studentId = decodeURIComponent(studentId || '');
       studentName = decodeURIComponent(studentName || '');
       const actionText = nextMuted ? '禁言反馈' : '解除禁言';
-      const targetLabel = studentName ? `${studentName}（${studentId}）` : studentId;
-      if (!confirm(`确定要对 ${targetLabel} 执行“${actionText}”吗？`)) return;
+      if (!confirm(`确认要对 ${studentName || studentId} 执行“${actionText}”吗？`)) return;
       try {
         await api('/teacher/activity-feedback-moderation', {
           method: 'PUT',
@@ -271,26 +765,15 @@
             feedback_muted: nextMuted
           })
         });
+        await reloadDashboard();
         toast(`已${actionText}`, 'success');
-        await loadRoster();
       } catch (e) {
-        toast(`${actionText}失败: ` + e.message, 'error');
+        toast(`${actionText}失败：` + e.message, 'error');
       }
     }
 
-    async function loadStats() {
-      try {
-        const stats = await api('/activities/' + actId + '/stats');
-        document.getElementById('sUsers').textContent = stats.users;
-        document.getElementById('sSubs').textContent = stats.submissions;
-        document.getElementById('sRatings').textContent = stats.ratings;
-      } catch (e) {}
-    }
-
-    loadQrCode();
-    loadStats();
-    loadRoster();
-    setInterval(loadStats, 10000);
+    reloadDashboard();
+    setInterval(() => reloadDashboard(false), 20000);
   </script>
 </body>
 </html>

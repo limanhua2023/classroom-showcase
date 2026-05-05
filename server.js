@@ -10,6 +10,9 @@ import QRCode from 'qrcode';
 import fs from 'fs';
 import crypto from 'crypto';
 import readXlsxFile from 'read-excel-file/node';
+import sharp from 'sharp';
+import ffmpegStatic from 'ffmpeg-static';
+import { spawn } from 'child_process';
 
 dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
@@ -38,6 +41,15 @@ const DEFAULT_FEEDBACK_DAILY_LIMIT = 5;
 const MAX_FEEDBACK_DAILY_LIMIT = 20;
 const BANGKOK_UTC_OFFSET_MS = 7 * 60 * 60 * 1000;
 const WITHDRAWN_FEEDBACK_PREFIX = '__WITHDRAWN__::';
+const TMP_UPLOAD_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+const STORAGE_ORPHAN_MIN_AGE_MS = 30 * 60 * 1000;
+const IMAGE_MAX_DIMENSION = 1800;
+const IMAGE_WEBP_QUALITY = 82;
+const VIDEO_MAX_WIDTH = 1280;
+const VIDEO_CRF = 30;
+const VIDEO_PRESET = 'veryfast';
+const VIDEO_AUDIO_BITRATE = '96k';
+const VIDEO_MAXRATE = '1600k';
 
 function escapeHtml(input = '') {
   const str = String(input);
@@ -555,6 +567,288 @@ const rosterUpload = multer({
   }
 });
 
+function guessUploadExtension(file, fallback = 'bin') {
+  const fromName = String(path.extname(file?.originalname || '') || '')
+    .toLowerCase()
+    .replace(/^\./, '');
+  if (fromName) return fromName;
+  const mime = String(file?.mimetype || '').toLowerCase();
+  if (mime.includes('jpeg')) return 'jpg';
+  if (mime.includes('png')) return 'png';
+  if (mime.includes('webp')) return 'webp';
+  if (mime.includes('mp4')) return 'mp4';
+  if (mime.includes('quicktime')) return 'mov';
+  return fallback;
+}
+
+function createTempDerivedPath(ext) {
+  const safeExt = String(ext || 'tmp').replace(/^\./, '');
+  return path.join(tmpDir, `${Date.now()}_${crypto.randomBytes(6).toString('hex')}.${safeExt}`);
+}
+
+async function safeUnlink(filePath) {
+  if (!filePath) return;
+  try {
+    await fs.promises.unlink(filePath);
+  } catch {}
+}
+
+async function cleanupTemporaryUploadFiles(maxAgeMs = TMP_UPLOAD_MAX_AGE_MS) {
+  if (!fs.existsSync(tmpDir)) return { removed: 0 };
+  const now = Date.now();
+  const entries = await fs.promises.readdir(tmpDir, { withFileTypes: true });
+  let removed = 0;
+  await Promise.all(entries.map(async entry => {
+    if (!entry.isFile()) return;
+    const fullPath = path.join(tmpDir, entry.name);
+    try {
+      const stat = await fs.promises.stat(fullPath);
+      if ((now - stat.mtimeMs) >= maxAgeMs) {
+        await safeUnlink(fullPath);
+        removed += 1;
+      }
+    } catch {}
+  }));
+  return { removed };
+}
+
+function startTempUploadCleanupLoop() {
+  cleanupTemporaryUploadFiles().catch(err => {
+    console.warn('Initial tmp upload cleanup failed:', err.message);
+  });
+  setInterval(() => {
+    cleanupTemporaryUploadFiles().catch(err => {
+      console.warn('Periodic tmp upload cleanup failed:', err.message);
+    });
+  }, 60 * 60 * 1000).unref?.();
+}
+
+function getImageContentType() {
+  return 'image/webp';
+}
+
+function getVideoContentType() {
+  return 'video/mp4';
+}
+
+async function runFfmpeg(args) {
+  if (!ffmpegStatic) {
+    throw new Error('ffmpeg binary is unavailable');
+  }
+  await new Promise((resolve, reject) => {
+    const child = spawn(ffmpegStatic, args, { windowsHide: true });
+    let stderr = '';
+    child.stderr.on('data', chunk => {
+      stderr += chunk.toString();
+    });
+    child.on('error', reject);
+    child.on('close', code => {
+      if (code === 0) return resolve();
+      reject(new Error(stderr.trim() || `ffmpeg exited with code ${code}`));
+    });
+  });
+}
+
+async function compressImageUpload(file) {
+  const originalStat = await fs.promises.stat(file.path);
+  const outputPath = createTempDerivedPath('webp');
+  await sharp(file.path, { animated: false })
+    .rotate()
+    .resize({
+      width: IMAGE_MAX_DIMENSION,
+      height: IMAGE_MAX_DIMENSION,
+      fit: 'inside',
+      withoutEnlargement: true
+    })
+    .webp({ quality: IMAGE_WEBP_QUALITY })
+    .toFile(outputPath);
+
+  const outputStat = await fs.promises.stat(outputPath);
+  const keepCompressed = outputStat.size <= (originalStat.size * 1.02);
+  return {
+    finalPath: keepCompressed ? outputPath : file.path,
+    contentType: keepCompressed ? getImageContentType() : String(file.mimetype || 'image/jpeg'),
+    storageExt: keepCompressed ? 'webp' : guessUploadExtension(file, 'jpg'),
+    mediaType: 'image',
+    size: keepCompressed ? outputStat.size : originalStat.size,
+    originalSize: originalStat.size,
+    optimized: keepCompressed,
+    tempFiles: keepCompressed ? [file.path, outputPath] : [file.path, outputPath],
+    savedBytes: keepCompressed ? Math.max(0, originalStat.size - outputStat.size) : 0
+  };
+}
+
+async function compressVideoUpload(file) {
+  const originalStat = await fs.promises.stat(file.path);
+  if (!ffmpegStatic) {
+    return {
+      finalPath: file.path,
+      contentType: String(file.mimetype || getVideoContentType()),
+      storageExt: guessUploadExtension(file, 'mp4'),
+      mediaType: 'video',
+      size: originalStat.size,
+      originalSize: originalStat.size,
+      optimized: false,
+      tempFiles: [file.path],
+      savedBytes: 0
+    };
+  }
+
+  const outputPath = createTempDerivedPath('mp4');
+  await runFfmpeg([
+    '-y',
+    '-i', file.path,
+    '-map', '0:v:0',
+    '-map', '0:a?',
+    '-vf', `scale='min(iw,${VIDEO_MAX_WIDTH})':-2:force_original_aspect_ratio=decrease`,
+    '-c:v', 'libx264',
+    '-preset', VIDEO_PRESET,
+    '-crf', String(VIDEO_CRF),
+    '-maxrate', VIDEO_MAXRATE,
+    '-bufsize', '3200k',
+    '-pix_fmt', 'yuv420p',
+    '-movflags', '+faststart',
+    '-c:a', 'aac',
+    '-b:a', VIDEO_AUDIO_BITRATE,
+    '-ac', '2',
+    outputPath
+  ]);
+
+  const outputStat = await fs.promises.stat(outputPath);
+  const originalExt = guessUploadExtension(file, 'mp4');
+  const shouldUseCompressed = outputStat.size < (originalStat.size * 0.98) || originalExt !== 'mp4';
+  return {
+    finalPath: shouldUseCompressed ? outputPath : file.path,
+    contentType: shouldUseCompressed ? getVideoContentType() : String(file.mimetype || getVideoContentType()),
+    storageExt: shouldUseCompressed ? 'mp4' : originalExt,
+    mediaType: 'video',
+    size: shouldUseCompressed ? outputStat.size : originalStat.size,
+    originalSize: originalStat.size,
+    optimized: shouldUseCompressed,
+    tempFiles: [file.path, outputPath],
+    savedBytes: shouldUseCompressed ? Math.max(0, originalStat.size - outputStat.size) : 0
+  };
+}
+
+async function prepareUploadedMedia(file) {
+  if (!file?.path) throw new Error('Upload file is missing');
+  if (String(file.mimetype || '').startsWith('image/')) {
+    return compressImageUpload(file);
+  }
+  if (String(file.mimetype || '').startsWith('video/')) {
+    return compressVideoUpload(file);
+  }
+  const stat = await fs.promises.stat(file.path);
+  return {
+    finalPath: file.path,
+    contentType: String(file.mimetype || 'application/octet-stream'),
+    storageExt: guessUploadExtension(file),
+    mediaType: 'file',
+    size: stat.size,
+    originalSize: stat.size,
+    optimized: false,
+    tempFiles: [file.path],
+    savedBytes: 0
+  };
+}
+
+async function listStorageFolder(folder) {
+  const files = [];
+  let offset = 0;
+  while (true) {
+    const { data, error } = await supabase.storage.from('submissions').list(folder, {
+      limit: 100,
+      offset,
+      sortBy: { column: 'name', order: 'asc' }
+    });
+    if (error) throw error;
+    if (!Array.isArray(data) || data.length === 0) break;
+    files.push(...data.map(item => ({
+      ...item,
+      folder,
+      path: `${folder}/${item.name}`
+    })));
+    if (data.length < 100) break;
+    offset += data.length;
+  }
+  return files;
+}
+
+async function listTrackedStorageFiles() {
+  const folders = ['uploads', 'videos'];
+  const results = await Promise.all(folders.map(folder => listStorageFolder(folder).catch(() => [])));
+  return results.flat();
+}
+
+async function buildStorageSummary(activityId) {
+  const [{ data: activitySubs, error }, { data: allSubs, error: allSubsError }] = await Promise.all([
+    supabase.from('submissions')
+    .select('id,title,upload_time,storage_path,image_url,media_type,media_size')
+      .eq('activity_id', activityId),
+    supabase.from('submissions')
+      .select('storage_path,image_url')
+  ]);
+  if (error) throw error;
+  if (allSubsError) throw allSubsError;
+
+  const referenced = (activitySubs || []).map(row => {
+    const storagePath = sanitizeStoragePath(row.storage_path) || storagePathFromPublicUrl(row.image_url);
+    const size = Number(row.media_size) || 0;
+    return {
+      id: row.id,
+      title: row.title,
+      upload_time: row.upload_time,
+      storage_path: storagePath,
+      media_type: row.media_type || (isVideoFilePath(storagePath) ? 'video' : 'image'),
+      media_size: size
+    };
+  }).filter(row => row.storage_path);
+
+  const globallyReferencedPathSet = new Set((allSubs || [])
+    .map(row => sanitizeStoragePath(row.storage_path) || storagePathFromPublicUrl(row.image_url))
+    .filter(Boolean));
+  const storageFiles = await listTrackedStorageFiles();
+  const now = Date.now();
+  const referencedBytes = referenced.reduce((sum, row) => sum + (row.media_size || 0), 0);
+  const storageBytes = storageFiles.reduce((sum, row) => sum + Number(row.metadata?.size || 0), 0);
+
+  const orphanFiles = storageFiles.filter(file => {
+    if (globallyReferencedPathSet.has(file.path)) return false;
+    const createdMs = new Date(file.created_at || file.updated_at || 0).getTime();
+    if (!Number.isFinite(createdMs) || createdMs <= 0) return false;
+    return (now - createdMs) >= STORAGE_ORPHAN_MIN_AGE_MS;
+  }).map(file => ({
+    path: file.path,
+    name: file.name,
+    size: Number(file.metadata?.size || 0),
+    created_at: file.created_at || file.updated_at || null
+  }));
+
+  const imageCount = referenced.filter(row => row.media_type !== 'video').length;
+  const videoCount = referenced.filter(row => row.media_type === 'video').length;
+  const averageSize = referenced.length ? Math.round(referencedBytes / referenced.length) : 0;
+  const largestItems = referenced
+    .slice()
+    .sort((a, b) => (b.media_size || 0) - (a.media_size || 0))
+    .slice(0, 5);
+
+  return {
+    total_files: storageFiles.length,
+    total_bytes: storageBytes,
+    referenced_files: referenced.length,
+    referenced_bytes: referencedBytes,
+    image_count: imageCount,
+    video_count: videoCount,
+    average_file_bytes: averageSize,
+    orphan_files: orphanFiles,
+    orphan_count: orphanFiles.length,
+    orphan_bytes: orphanFiles.reduce((sum, file) => sum + file.size, 0),
+    largest_items: largestItems
+  };
+}
+
+startTempUploadCleanupLoop();
+
 // Middleware
 app.use(cors());
 app.use(express.json({ limit: '10mb' }));
@@ -874,6 +1168,7 @@ app.post('/api/teacher/roster/import-file', teacherAuth, rosterUpload.single('ro
 
 // ─── MEDIA UPLOAD (image + video) ───
 app.post('/api/upload', upload.single('image'), async (req, res) => {
+  let tempFiles = [];
   try {
     if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
     const token = req.headers['x-user-token'];
@@ -886,29 +1181,36 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
     }
     await ensureUploadOpen(activityId);
 
-    const isVideo = req.file.mimetype.startsWith('video/');
-    const ext = req.file.originalname.split('.').pop().toLowerCase() || (isVideo ? 'mp4' : 'jpg');
-    const folder = isVideo ? 'videos' : 'uploads';
-    const filename = `${folder}/${Date.now()}_${Math.random().toString(36).slice(2)}.${ext}`;
-    
-    const fileStream = fs.createReadStream(req.file.path);
+    const processed = await prepareUploadedMedia(req.file);
+    tempFiles = Array.isArray(processed.tempFiles) ? processed.tempFiles : [req.file.path];
+    const folder = processed.mediaType === 'video' ? 'videos' : 'uploads';
+    const filename = `${folder}/${Date.now()}_${Math.random().toString(36).slice(2)}.${processed.storageExt}`;
+
+    const fileStream = fs.createReadStream(processed.finalPath);
     const { error } = await supabase.storage.from('submissions').upload(filename, fileStream, {
-      contentType: req.file.mimetype, upsert: false, duplex: 'half'
+      contentType: processed.contentType,
+      upsert: false,
+      duplex: 'half'
     });
-    
-    // Clean up temp file
-    fs.unlink(req.file.path, () => {});
-    
+
+    await Promise.all(tempFiles.map(filePath => safeUnlink(filePath)));
     if (error) throw error;
     const { data: urlData } = supabase.storage.from('submissions').getPublicUrl(filename);
     res.json({
       url: urlData.publicUrl,
       path: filename,
-      type: isVideo ? 'video' : 'image',
-      size: req.file.size
+      type: processed.mediaType,
+      size: processed.size,
+      original_size: processed.originalSize,
+      compressed: !!processed.optimized,
+      saved_bytes: processed.savedBytes,
+      saved_percent: processed.originalSize > 0
+        ? Math.round((processed.savedBytes / processed.originalSize) * 100)
+        : 0
     });
   } catch (e) { 
-    if (req.file && req.file.path) fs.unlink(req.file.path, () => {});
+    await Promise.all(tempFiles.map(filePath => safeUnlink(filePath)));
+    if (req.file?.path) await safeUnlink(req.file.path);
     res.status(e.status || 500).json({ error: e.message }); 
   }
 });
@@ -1915,6 +2217,201 @@ app.get('/api/teacher/export-zip', teacherAuth, async (req, res) => {
 });
 
 // ─── ACTIVITY STATS ───
+app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
+  try {
+    const { activity_id } = req.query;
+    if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
+    const auth = await ensureTeacherCanAccessActivity(req, activity_id);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const [
+      activityResult,
+      usersResult,
+      subsResult,
+      ratingsCountResult,
+      commentsResult,
+      rosterResult,
+      storageSummary,
+      latestFeedback,
+      hotFeedback
+    ] = await Promise.all([
+      supabase.from('activities')
+        .select('id,course_name,class_name,activity_name,description,invite_code,upload_open,voting_open,comments_open,show_live_ranking,roster_enabled,pin_required,feedback_daily_limit,created_at')
+        .eq('id', activity_id)
+        .single(),
+      supabase.from('users')
+        .select('id,name,student_id,class_name,group_name')
+        .eq('activity_id', activity_id),
+      supabase.from('submissions')
+        .select('id,title,description,image_url,storage_path,media_type,media_size,upload_time,view_count,rating_count,average_rating,composite_score,is_pinned,is_teacher_selected,user_id,users(name,student_id,class_name,group_name)')
+        .eq('activity_id', activity_id)
+        .eq('status', 'visible'),
+      supabase.from('ratings')
+        .select('id', { count: 'exact', head: true })
+        .eq('activity_id', activity_id),
+      supabase.from('comments')
+        .select('id,submission_id,user_id,content,created_at')
+        .eq('activity_id', activity_id),
+      supabase.from('student_roster')
+        .select('id,student_id,name,active,feedback_muted')
+        .eq('activity_id', activity_id)
+        .order('student_id', { ascending: true }),
+      buildStorageSummary(activity_id),
+      listActivityFeedback({ activityId: activity_id, sort: 'latest', includeUsers: true, limit: 5 }).catch(() => ({ likes_enabled: false, items: [] })),
+      listActivityFeedback({ activityId: activity_id, sort: 'hot', includeUsers: true, limit: 5 }).catch(() => ({ likes_enabled: false, items: [] }))
+    ]);
+
+    if (activityResult.error) throw activityResult.error;
+    if (usersResult.error) throw usersResult.error;
+    if (subsResult.error) throw subsResult.error;
+    if (ratingsCountResult.error) throw ratingsCountResult.error;
+    if (commentsResult.error && !/comments|does not exist|schema cache/i.test(commentsResult.error.message || '')) {
+      throw commentsResult.error;
+    }
+
+    let rosterRows = [];
+    let rosterReady = true;
+    if (rosterResult.error && /student_roster|schema cache/i.test(rosterResult.error.message || '')) {
+      rosterReady = false;
+    } else if (rosterResult.error) {
+      throw rosterResult.error;
+    } else {
+      rosterRows = rosterResult.data || [];
+    }
+
+    let feedbackLikeCount = 0;
+    let feedbackLikesEnabled = false;
+    try {
+      const { count, error } = await supabase.from('activity_feedback_likes')
+        .select('id', { count: 'exact', head: true })
+        .eq('activity_id', activity_id);
+      if (!error) {
+        feedbackLikeCount = count || 0;
+        feedbackLikesEnabled = true;
+      }
+    } catch {}
+
+    const users = usersResult.data || [];
+    const submissions = (subsResult.data || []).map(item => ({
+      ...item,
+      media_size: Number(item.media_size) || 0,
+      view_count: Number(item.view_count) || 0,
+      rating_count: Number(item.rating_count) || 0,
+      average_rating: Number(item.average_rating) || 0,
+      composite_score: Number(item.composite_score) || 0
+    }));
+    const comments = commentsResult.data || [];
+    const workComments = comments.filter(item => !!item.submission_id);
+    const feedbackComments = comments.filter(item => !item.submission_id && !isWithdrawnFeedbackContent(item.content));
+    const now = Date.now();
+    const oneDayMs = 24 * 60 * 60 * 1000;
+    const sevenDayMs = 7 * oneDayMs;
+    const totalViews = submissions.reduce((sum, item) => sum + item.view_count, 0);
+    const imageCount = submissions.filter(item => (item.media_type || 'image') !== 'video').length;
+    const videoCount = submissions.filter(item => item.media_type === 'video').length;
+    const creatorCount = new Set(submissions.map(item => String(item.user_id || '')).filter(Boolean)).size;
+    const uploads24h = submissions.filter(item => now - new Date(item.upload_time).getTime() <= oneDayMs).length;
+    const uploads7d = submissions.filter(item => now - new Date(item.upload_time).getTime() <= sevenDayMs).length;
+    const ratedWorks = submissions.filter(item => item.rating_count > 0);
+    const averageScore = ratedWorks.length
+      ? ratedWorks.reduce((sum, item) => sum + item.average_rating, 0) / ratedWorks.length
+      : 0;
+    const averageRatingsPerWork = submissions.length
+      ? (ratingsCountResult.count || 0) / submissions.length
+      : 0;
+    const activeRosterRows = rosterRows.filter(item => item.active !== false);
+    const mutedRosterRows = rosterRows.filter(item => item.feedback_muted);
+
+    const topRated = submissions
+      .slice()
+      .sort((a, b) => {
+        if (b.average_rating !== a.average_rating) return b.average_rating - a.average_rating;
+        if (b.rating_count !== a.rating_count) return b.rating_count - a.rating_count;
+        return new Date(b.upload_time).getTime() - new Date(a.upload_time).getTime();
+      })
+      .slice(0, 6);
+    const mostViewed = submissions
+      .slice()
+      .sort((a, b) => {
+        if (b.view_count !== a.view_count) return b.view_count - a.view_count;
+        return new Date(b.upload_time).getTime() - new Date(a.upload_time).getTime();
+      })
+      .slice(0, 6);
+    const recentUploads = submissions
+      .slice()
+      .sort((a, b) => new Date(b.upload_time).getTime() - new Date(a.upload_time).getTime())
+      .slice(0, 8);
+
+    res.json({
+      activity: sanitizeActivity(activityResult.data),
+      metrics: {
+        participant_count: users.length,
+        roster_count: activeRosterRows.length,
+        creator_count: creatorCount,
+        submission_count: submissions.length,
+        image_count: imageCount,
+        video_count: videoCount,
+        rating_count: ratingsCountResult.count || 0,
+        comment_count: workComments.length,
+        feedback_count: feedbackComments.length,
+        feedback_like_count: feedbackLikeCount,
+        total_views: totalViews,
+        average_score: Math.round(averageScore * 100) / 100,
+        average_ratings_per_work: Math.round(averageRatingsPerWork * 100) / 100,
+        uploads_24h: uploads24h,
+        uploads_7d: uploads7d,
+        feedback_muted_count: mutedRosterRows.length,
+        roster_ready: rosterReady
+      },
+      storage: storageSummary,
+      roster: {
+        ready: rosterReady,
+        items: rosterRows,
+        active_count: activeRosterRows.length,
+        muted_count: mutedRosterRows.length,
+        coverage_percent: activeRosterRows.length > 0
+          ? Math.round((creatorCount / activeRosterRows.length) * 100)
+          : 0
+      },
+      top_rated: topRated,
+      most_viewed: mostViewed,
+      recent_uploads: recentUploads,
+      latest_feedback: latestFeedback.items || [],
+      hot_feedback: hotFeedback.items || [],
+      feedback_likes_enabled: !!(latestFeedback.likes_enabled || hotFeedback.likes_enabled || feedbackLikesEnabled)
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/teacher/storage-cleanup', teacherAuth, async (req, res) => {
+  try {
+    const activity_id = String(req.body.activity_id ?? req.query.activity_id ?? '').trim();
+    if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
+    const auth = await ensureTeacherCanAccessActivity(req, activity_id);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const storageSummary = await buildStorageSummary(activity_id);
+    const paths = storageSummary.orphan_files.map(item => item.path).filter(Boolean);
+    if (!paths.length) {
+      return res.json({ ok: true, removed: 0, bytes_freed: 0, summary: storageSummary });
+    }
+
+    const { error } = await supabase.storage.from('submissions').remove(paths);
+    if (error) throw error;
+
+    res.json({
+      ok: true,
+      removed: paths.length,
+      bytes_freed: storageSummary.orphan_bytes,
+      summary: storageSummary
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/activities/:id/stats', async (req, res) => {
   try {
     const id = req.params.id;

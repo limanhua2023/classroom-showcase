@@ -9,20 +9,43 @@
     .media-type-tabs { display:flex; gap:8px; margin-bottom:12px; }
     .media-tab {
       flex:1;
-      padding:10px;
+      padding:12px;
       border:2px solid var(--border);
       border-radius:var(--radius-sm);
-      background:var(--bg);
+      background:rgba(255,255,255,0.8);
       cursor:pointer;
       text-align:center;
-      font-weight:600;
-      font-size:0.95rem;
-      transition:all 0.2s;
+      font-weight:800;
+      transition:all 0.2s ease;
     }
-    .media-tab.active { border-color:var(--primary); background:var(--primary-light); color:var(--primary); }
-    .video-rules { background:#fef9ec; border:1px solid #fde68a; border-radius:var(--radius-sm); padding:12px 16px; font-size:0.88rem; color:#92400e; margin-bottom:12px; }
-    .video-rules ul { margin:6px 0 0 16px; }
-    .upload-preview video { max-height:300px; border-radius:var(--radius-sm); margin:16px auto; display:block; width:100%; }
+    .media-tab.active {
+      border-color:var(--primary);
+      background:var(--primary-light);
+      color:var(--primary);
+    }
+    .video-rules {
+      background:#fef9ec;
+      border:1px solid #fde68a;
+      border-radius:var(--radius-sm);
+      padding:12px 16px;
+      font-size:0.88rem;
+      color:#92400e;
+      margin-bottom:12px;
+      line-height:1.6;
+    }
+    .video-rules ul { margin:8px 0 0 18px; }
+    .upload-preview video,
+    .upload-preview img {
+      max-height:320px;
+      border-radius:var(--radius-sm);
+      margin:16px auto 0;
+      display:block;
+      width:100%;
+      object-fit:cover;
+    }
+    .upload-shell {
+      margin-bottom: 28px;
+    }
   </style>
 </head>
 <body>
@@ -34,67 +57,84 @@
     </div>
   </div>
 
-  <div class="container" style="max-width:600px;padding-top:24px;">
-    <h2 id="pageTitle" style="margin-bottom:20px;">上传你的作品</h2>
-    <div id="editNotice" class="rubric" style="display:none;margin-bottom:16px;background:#fff7ed;border-color:#fdba74;color:#9a3412;">
-      你当前正在修改一份已有作品。保存后，这一份作品会被覆盖，且它的评分、评论、浏览量会重新计算。
-      如果你是想新增一份作品，请点击上方“上传新作品”。
+  <div class="container" style="max-width:720px;padding-top:24px;">
+    <section class="gallery-hero upload-shell">
+      <div class="gallery-kicker">Student Studio</div>
+      <h1 id="pageTitle" style="font-size:clamp(1.9rem,4vw,3rem);">上传你的作品</h1>
+      <p>标题保存后会自动追加曼谷当地上传时间，精确到秒；图片会自动压缩，视频会自动做课堂展示优化。</p>
+    </section>
+
+    <div class="rubric" style="margin-bottom:16px;">
+      <h3>上传说明</h3>
+      <ol>
+        <li>提交后作品将直接进入作品展陈卡片，并同步出现在大屏展示区。</li>
+        <li>图片会优先压缩成更适合课堂浏览的格式；视频会自动规范为更稳定的播放版本。</li>
+        <li>如果你在修改旧作品，原来的评分、评论和浏览量会清零后重新计算。</li>
+      </ol>
     </div>
+
+    <div id="editNotice" class="rubric" style="display:none;margin-bottom:16px;background:#fff7ed;border-color:#fdba74;color:#9a3412;">
+      你当前正在修改一份已有作品。保存后，这一份作品会被覆盖，原有评分、评论和浏览量会被重置并重新统计。
+      如果你想保留旧作品并新上传一份，请点击右上角“上传新作品”。
+    </div>
+
     <form onsubmit="submitWork(event)">
       <div class="form-group">
         <label>作品标题 *</label>
-        <input type="text" id="title" placeholder="给你的作品起一个名字" required>
+        <input type="text" id="title" placeholder="给你的作品起一个醒目的名字" required>
+        <div class="form-hint">系统会在保存时自动追加“年月日时分秒”。</div>
       </div>
 
       <div class="form-group">
         <label>作品说明</label>
-        <textarea id="desc" placeholder="简要描述你的作品（50-100字）" maxlength="200"></textarea>
+        <textarea id="desc" placeholder="简要描述你的作品、创意亮点、AI 使用方式等" maxlength="200"></textarea>
         <div class="form-hint"><span id="charCount">0</span>/200</div>
       </div>
 
       <div class="form-group">
         <label>作品类型</label>
         <div class="media-type-tabs">
-          <div class="media-tab active" id="tabImage" onclick="switchTab('image')">图片</div>
-          <div class="media-tab" id="tabVideo" onclick="switchTab('video')">视频 (MP4)</div>
+          <div class="media-tab active" id="tabImage" onclick="switchTab('image')">图片作品</div>
+          <div class="media-tab" id="tabVideo" onclick="switchTab('video')">视频作品</div>
         </div>
 
         <div id="imagePanel">
-          <div class="upload-area" id="uploadAreaImg">
+          <div class="upload-area">
             <input type="file" id="imageFile" accept="image/jpeg,image/png,image/webp" onchange="previewFile(this,'image')">
             <div id="uploadPromptImg">
-              <div class="upload-icon">📷</div>
+              <div class="upload-icon">🖼️</div>
               <div>点击或拖拽上传图片</div>
-              <div class="form-hint">支持 JPG、PNG、WebP，最大 10MB</div>
+              <div class="form-hint">支持 JPG / PNG / WebP，建议 10MB 以内</div>
             </div>
-            <img id="previewImg" class="upload-preview" style="display:none;">
+            <img id="previewImg" class="upload-preview" style="display:none;" alt="图片预览">
           </div>
         </div>
 
         <div id="videoPanel" style="display:none;">
           <div class="video-rules">
-            <strong>视频要求：</strong>
+            <strong>视频建议</strong>
             <ul>
-              <li>格式：MP4（推荐 H.264）</li>
-              <li>时长：不超过 60 秒</li>
-              <li>大小：建议不超过 100MB（系统上限 200MB）</li>
+              <li>格式：MP4 优先，MOV 也可上传。</li>
+              <li>时长：不超过 60 秒。</li>
+              <li>大小：建议 100MB 以内，系统上限 200MB。</li>
             </ul>
           </div>
-          <div class="upload-area" id="uploadAreaVid">
+          <div class="upload-area">
             <input type="file" id="videoFile" accept="video/mp4,video/quicktime" onchange="previewFile(this,'video')">
             <div id="uploadPromptVid">
-              <div class="upload-icon">🎞️</div>
-              <div>点击选择 MP4 视频</div>
-              <div class="form-hint">最长 60 秒，建议压缩后上传</div>
+              <div class="upload-icon">🎬</div>
+              <div>点击选择视频文件</div>
+              <div class="form-hint">系统会自动做课堂播放优化</div>
             </div>
             <video id="previewVid" class="upload-preview" style="display:none;" muted playsinline controls></video>
-            <div id="vidInfo" style="text-align:center;font-size:0.9rem;color:var(--text-muted);margin-top:8px;"></div>
+            <div id="vidInfo" class="form-hint" style="text-align:center;margin-top:10px;"></div>
           </div>
         </div>
       </div>
 
       <button type="submit" id="submitBtn" class="btn btn-primary btn-block btn-lg">确认上传</button>
       <button type="button" class="btn btn-secondary btn-block" style="margin-top:12px;" onclick="location.href='student-gallery.html'">取消</button>
+      <div id="compressionNote" class="form-hint" style="margin-top:12px;text-align:center;"></div>
     </form>
   </div>
 
@@ -114,50 +154,6 @@
       location.href = 'student-upload.html?new=1';
     }
 
-    async function init() {
-      try {
-        if (!editId) {
-          document.title = '上传作品 - ClassShow';
-          return;
-        }
-        document.title = '修改作品 - ClassShow';
-        document.getElementById('pageTitle').textContent = '修改你的作品';
-        document.getElementById('editNotice').style.display = 'block';
-        document.getElementById('newUploadBtn').style.display = 'inline-flex';
-        const works = await api('/submissions?activity_id=' + actId + '&viewer_user_id=' + user.id);
-        editingWork = works.find(w => w.is_owner && String(w.id) === String(editId));
-        if (!editingWork) {
-          toast('未找到可编辑的作品', 'error');
-          setTimeout(() => location.href = 'student-gallery.html', 1200);
-          return;
-        }
-
-        document.getElementById('title').value = editingWork.title || '';
-        document.getElementById('desc').value = editingWork.description || '';
-        document.getElementById('charCount').textContent = (editingWork.description || '').length;
-        document.getElementById('submitBtn').textContent = '保存修改';
-
-        if (isVideo(editingWork.image_url)) {
-          switchTab('video');
-          document.getElementById('previewVid').src = editingWork.image_url;
-          document.getElementById('previewVid').style.display = 'block';
-          document.getElementById('uploadPromptVid').style.display = 'none';
-        } else {
-          switchTab('image');
-          document.getElementById('previewImg').src = editingWork.image_url;
-          document.getElementById('previewImg').style.display = 'block';
-          document.getElementById('uploadPromptImg').style.display = 'none';
-        }
-      } catch (e) {
-        console.error(e);
-      }
-    }
-    init();
-
-    document.getElementById('desc').addEventListener('input', e => {
-      document.getElementById('charCount').textContent = e.target.value.length;
-    });
-
     function switchTab(type) {
       currentTab = type;
       document.getElementById('tabImage').classList.toggle('active', type === 'image');
@@ -166,74 +162,122 @@
       document.getElementById('videoPanel').style.display = type === 'video' ? 'block' : 'none';
     }
 
+    function showPreview(url, type) {
+      if (type === 'video') {
+        document.getElementById('previewVid').src = url;
+        document.getElementById('previewVid').style.display = 'block';
+        document.getElementById('uploadPromptVid').style.display = 'none';
+      } else {
+        document.getElementById('previewImg').src = url;
+        document.getElementById('previewImg').style.display = 'block';
+        document.getElementById('uploadPromptImg').style.display = 'none';
+      }
+    }
+
     function previewFile(input, type) {
       const file = input.files[0];
       if (!file) return;
 
       if (type === 'image') {
         const reader = new FileReader();
-        reader.onload = e => {
-          document.getElementById('previewImg').src = e.target.result;
-          document.getElementById('previewImg').style.display = 'block';
-          document.getElementById('uploadPromptImg').style.display = 'none';
-        };
+        reader.onload = e => showPreview(e.target.result, 'image');
         reader.readAsDataURL(file);
         return;
       }
 
-      const vidEl = document.getElementById('previewVid');
-      const objUrl = URL.createObjectURL(file);
-      vidEl.src = objUrl;
-      vidEl.onloadedmetadata = () => {
-        const dur = vidEl.duration;
-        if (dur > 60) {
-          toast(`视频时长 ${Math.ceil(dur)} 秒，超过 60 秒限制，请重新选择。`, 'error');
+      const video = document.getElementById('previewVid');
+      const objectUrl = URL.createObjectURL(file);
+      video.src = objectUrl;
+      video.onloadedmetadata = () => {
+        const duration = video.duration || 0;
+        if (duration > 60) {
+          toast(`视频时长 ${Math.ceil(duration)} 秒，超过 60 秒限制`, 'error');
           input.value = '';
-          vidEl.src = '';
-          vidEl.style.display = 'none';
+          video.src = '';
+          video.style.display = 'none';
           document.getElementById('uploadPromptVid').style.display = 'block';
           document.getElementById('vidInfo').textContent = '';
-          URL.revokeObjectURL(objUrl);
+          URL.revokeObjectURL(objectUrl);
           return;
         }
-        vidEl.style.display = 'block';
+        video.style.display = 'block';
         document.getElementById('uploadPromptVid').style.display = 'none';
-        document.getElementById('vidInfo').textContent =
-          `时长：${Math.ceil(dur)} 秒 | 大小：${(file.size / 1024 / 1024).toFixed(1)} MB`;
+        document.getElementById('vidInfo').textContent = `时长 ${Math.ceil(duration)} 秒 · 文件大小 ${formatBytes(file.size)}`;
       };
     }
 
-    async function submitWork(e) {
-      e.preventDefault();
+    async function init() {
+      if (!editId) return;
+      try {
+        document.title = '修改作品 - ClassShow';
+        document.getElementById('pageTitle').textContent = '修改你的作品';
+        document.getElementById('editNotice').style.display = 'block';
+        document.getElementById('newUploadBtn').style.display = 'inline-flex';
+        document.getElementById('submitBtn').textContent = '保存修改';
+
+        const works = await api('/submissions?activity_id=' + actId + '&viewer_user_id=' + user.id);
+        editingWork = works.find(w => w.is_owner && String(w.id) === String(editId));
+        if (!editingWork) {
+          toast('没有找到可编辑的作品', 'error');
+          setTimeout(() => location.href = 'student-gallery.html', 1000);
+          return;
+        }
+
+        document.getElementById('title').value = editingWork.title || '';
+        document.getElementById('desc').value = editingWork.description || '';
+        document.getElementById('charCount').textContent = (editingWork.description || '').length;
+        if (isVideo(editingWork.image_url)) {
+          switchTab('video');
+          showPreview(editingWork.image_url, 'video');
+        } else {
+          switchTab('image');
+          showPreview(editingWork.image_url, 'image');
+        }
+      } catch (e) {
+        toast('加载作品失败：' + e.message, 'error');
+      }
+    }
+
+    document.getElementById('desc').addEventListener('input', e => {
+      document.getElementById('charCount').textContent = e.target.value.length;
+    });
+
+    async function submitWork(event) {
+      event.preventDefault();
       const btn = document.getElementById('submitBtn');
+      const note = document.getElementById('compressionNote');
       btn.disabled = true;
       btn.textContent = editingWork ? '保存中...' : '上传中...';
+      note.textContent = '';
 
       try {
         let file;
         if (currentTab === 'image') {
           file = document.getElementById('imageFile').files[0];
-          if (!file && !editingWork) throw new Error('请选择图片');
+          if (!file && !editingWork) throw new Error('请选择图片文件');
           if (!file && editingWork && isVideo(editingWork.image_url)) throw new Error('请重新选择图片文件');
           if (file && file.size > 10 * 1024 * 1024) throw new Error('图片不能超过 10MB');
         } else {
           file = document.getElementById('videoFile').files[0];
-          if (!file && !editingWork) throw new Error('请选择视频');
+          if (!file && !editingWork) throw new Error('请选择视频文件');
           if (!file && editingWork && !isVideo(editingWork.image_url)) throw new Error('请重新选择视频文件');
           if (file && file.size > 200 * 1024 * 1024) throw new Error('视频不能超过 200MB');
         }
 
-        let url = editingWork ? editingWork.image_url : null;
+        let imageUrl = editingWork ? editingWork.image_url : null;
         let storagePath = editingWork ? editingWork.storage_path : null;
-        let mediaSize = null;
+        let mediaSize = editingWork ? (editingWork.media_size || null) : null;
+
         if (file) {
-          btn.textContent = '上传文件中...';
-          const uploadRes = await uploadMedia(file);
-          url = uploadRes.url;
-          storagePath = uploadRes.path;
-          mediaSize = uploadRes.size;
+          btn.textContent = '处理与上传中...';
+          const uploadResult = await uploadMedia(file);
+          imageUrl = uploadResult.url;
+          storagePath = uploadResult.path;
+          mediaSize = uploadResult.size;
+          note.textContent = buildCompressionNote(uploadResult);
         }
-        if (!url) throw new Error('请选择作品文件');
+
+        if (!imageUrl) throw new Error('请选择要上传的作品文件');
 
         await api('/submissions', {
           method: 'POST',
@@ -243,7 +287,7 @@
             submission_id: editingWork ? editingWork.id : null,
             title: document.getElementById('title').value.trim(),
             description: document.getElementById('desc').value.trim(),
-            image_url: url,
+            image_url: imageUrl,
             storage_path: storagePath,
             media_size: mediaSize
           })
@@ -251,12 +295,14 @@
 
         toast(editingWork ? '作品修改成功' : '作品上传成功', 'success');
         setTimeout(() => location.href = 'student-gallery.html', 900);
-      } catch (err) {
-        toast(err.message, 'error');
+      } catch (e) {
+        toast(e.message, 'error');
         btn.disabled = false;
         btn.textContent = editingWork ? '保存修改' : '确认上传';
       }
     }
+
+    init();
   </script>
 </body>
 </html>
