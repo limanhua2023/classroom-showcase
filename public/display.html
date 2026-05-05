@@ -398,9 +398,8 @@
         const actInfoPromise = inviteCode
           ? api('/activities/code/' + encodeURIComponent(inviteCode))
           : Promise.resolve({ upload_open: false, voting_open: false, show_live_ranking: false, comments_open: false });
-
-        const [works, stats, actInfo] = await Promise.all([
-          api('/submissions?activity_id=' + actId),
+        const worksPromise = api('/submissions?activity_id=' + actId);
+        const [stats, actInfo] = await Promise.all([
           api('/activities/' + actId + '/stats'),
           actInfoPromise
         ]);
@@ -424,6 +423,7 @@
         document.getElementById('dSubs').textContent = stats.submissions;
         document.getElementById('dUsers').textContent = stats.users;
         document.getElementById('dRatings').textContent = stats.ratings;
+        const works = await worksPromise;
 
         // Status
         if (actInfo.voting_open) {
