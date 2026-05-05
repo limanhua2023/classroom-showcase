@@ -19,6 +19,7 @@ ARCHIVE_DELETE_PRIMARY_AFTER_SUCCESS=false
 TRANSCODE_LOOP_INTERVAL_MS=120000
 TRANSCODE_BATCH_SIZE=1
 TRANSCODE_MIN_AGE_MS=90000
+VIDEO_TRANSCODE_THREADS=1
 ```
 
 Meaning:
@@ -37,6 +38,8 @@ Meaning:
   How many videos the background queue processes per round. Default is 1 on low-cost hosting.
 - `TRANSCODE_MIN_AGE_MS`
   Newly uploaded videos wait this long before auto-transcode starts. Teacher manual run bypasses this cooldown.
+- `VIDEO_TRANSCODE_THREADS`
+  FFmpeg thread count. Keep it at `1` on Render free/basic instances to reduce 502 risk during background processing.
 
 ## Google Drive archive
 

@@ -51,6 +51,7 @@ const VIDEO_MAX_WIDTH = 1280;
 const VIDEO_CRF = 30;
 const VIDEO_PRESET = 'veryfast';
 const VIDEO_AUDIO_BITRATE = '96k';
+const VIDEO_TRANSCODE_THREADS = Math.max(1, Number(process.env.VIDEO_TRANSCODE_THREADS || 1));
 const VIDEO_MAXRATE = '1600k';
 const MEDIA_MANIFEST_FOLDER = 'manifests';
 const MEDIA_THUMBNAIL_FOLDER = 'thumbs';
@@ -1135,6 +1136,7 @@ async function createVideoThumbnailFromUpload(filePath) {
   const thumbnailPath = createTempDerivedPath('jpg');
   await runFfmpeg([
     '-y',
+    '-threads', String(VIDEO_TRANSCODE_THREADS),
     '-ss', String(VIDEO_THUMB_CAPTURE_SECOND),
     '-i', filePath,
     '-frames:v', '1',
@@ -1210,6 +1212,7 @@ async function transcodeSubmissionVideo(submission, manifest) {
   try {
     await runFfmpeg([
       '-y',
+      '-threads', String(VIDEO_TRANSCODE_THREADS),
       '-i', inputPath,
       '-map', '0:v:0',
       '-map', '0:a?',
