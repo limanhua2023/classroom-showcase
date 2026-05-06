@@ -67,9 +67,9 @@ const ASYNC_VIDEO_TRANSCODE = !/^false$/i.test(String(process.env.ASYNC_VIDEO_TR
 const ARCHIVE_LOOP_INTERVAL_MS = 15 * 60 * 1000;
 const ARCHIVE_BATCH_SIZE = 2;
 const ARCHIVE_MAX_ATTEMPTS = 3;
-const ARCHIVE_AFTER_DAYS = Math.max(0, Number(process.env.ARCHIVE_AFTER_DAYS || 30));
+const DEFAULT_ARCHIVE_AFTER_DAYS = Math.max(0, Number(process.env.ARCHIVE_AFTER_DAYS || 30));
 const ARCHIVE_PROVIDER = String(process.env.ARCHIVE_PROVIDER || 'none').trim().toLowerCase();
-const ARCHIVE_DELETE_PRIMARY_AFTER_SUCCESS = /^true$/i.test(String(process.env.ARCHIVE_DELETE_PRIMARY_AFTER_SUCCESS || 'false'));
+const DEFAULT_ARCHIVE_DELETE_PRIMARY_AFTER_SUCCESS = /^true$/i.test(String(process.env.ARCHIVE_DELETE_PRIMARY_AFTER_SUCCESS || 'false'));
 const GOOGLE_DRIVE_FOLDER_ID = String(process.env.GOOGLE_DRIVE_FOLDER_ID || '').trim();
 const GOOGLE_DRIVE_PUBLIC_LINKS = /^true$/i.test(String(process.env.GOOGLE_DRIVE_PUBLIC_LINKS || 'false'));
 const ARCHIVE_S3_BUCKET = String(process.env.ARCHIVE_S3_BUCKET || '').trim();
@@ -79,6 +79,7 @@ const ARCHIVE_S3_ACCESS_KEY_ID = String(process.env.ARCHIVE_S3_ACCESS_KEY_ID || 
 const ARCHIVE_S3_SECRET_ACCESS_KEY = String(process.env.ARCHIVE_S3_SECRET_ACCESS_KEY || '').trim();
 const ARCHIVE_S3_FORCE_PATH_STYLE = /^true$/i.test(String(process.env.ARCHIVE_S3_FORCE_PATH_STYLE || 'true'));
 const ARCHIVE_S3_PUBLIC_BASE_URL = String(process.env.ARCHIVE_S3_PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
+const STORAGE_WARNING_LIMIT_BYTES = Math.max(128 * 1024 * 1024, Number(process.env.STORAGE_WARNING_LIMIT_BYTES || 1024 * 1024 * 1024));
 
 function escapeHtml(input = '') {
   const str = String(input);
@@ -92,6 +93,20 @@ function escapeHtml(input = '') {
 
 function sanitizeText(input, maxLen = 200) {
   return escapeHtml(String(input ?? '').trim()).slice(0, maxLen);
+}
+
+function formatStorageBytes(bytes = 0) {
+  const value = Number(bytes) || 0;
+  if (value <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let size = value;
+  let index = 0;
+  while (size >= 1024 && index < units.length - 1) {
+    size /= 1024;
+    index += 1;
+  }
+  const digits = size >= 100 || index === 0 ? 0 : size >= 10 ? 1 : 2;
+  return `${size.toFixed(digits)} ${units[index]}`;
 }
 
 function normalizeFeedbackTextForDedup(input = '') {
@@ -133,6 +148,34 @@ function parseFeedbackDailyLimitInput(value) {
     throw err;
   }
   return num;
+}
+
+function normalizeArchiveAfterDays(value) {
+  const num = Number(value);
+  if (!Number.isInteger(num) || num < 0) return DEFAULT_ARCHIVE_AFTER_DAYS;
+  return Math.min(num, 365);
+}
+
+function parseArchiveAfterDaysInput(value) {
+  const num = Number(value);
+  if (!Number.isInteger(num) || num < 0 || num > 365) {
+    const err = new Error('Archive after days must be an integer between 0 and 365');
+    err.status = 400;
+    throw err;
+  }
+  return num;
+}
+
+function normalizeArchiveDeletePrimary(value) {
+  if (value === null || value === undefined) return DEFAULT_ARCHIVE_DELETE_PRIMARY_AFTER_SUCCESS;
+  return !!value;
+}
+
+function resolveActivityArchivePolicy(activity = null) {
+  return {
+    after_days: normalizeArchiveAfterDays(activity?.archive_after_days),
+    delete_primary_after_success: normalizeArchiveDeletePrimary(activity?.archive_delete_primary_after_success)
+  };
 }
 
 function getBangkokDayRange(date = new Date()) {
@@ -181,6 +224,11 @@ function normalizeInviteCode(input) {
 function sanitizeActivity(activity) {
   if (!activity) return activity;
   const { teacher_password, ...safe } = activity;
+  safe.roster_enabled = !!safe.roster_enabled;
+  safe.pin_required = !!safe.pin_required;
+  safe.feedback_daily_limit = normalizeFeedbackDailyLimit(safe.feedback_daily_limit);
+  safe.archive_after_days = normalizeArchiveAfterDays(safe.archive_after_days);
+  safe.archive_delete_primary_after_success = normalizeArchiveDeletePrimary(safe.archive_delete_primary_after_success);
   return safe;
 }
 
@@ -518,14 +566,15 @@ function getS3ArchiveClient() {
   return s3ArchiveClient;
 }
 
-function getArchiveProviderInfo() {
+function getArchiveProviderInfo(policy = null) {
+  const effectivePolicy = policy || resolveActivityArchivePolicy();
   if (ARCHIVE_PROVIDER === 'google-drive') {
     const credentials = parseGoogleDriveServiceAccount();
     return {
       name: 'google-drive',
       configured: !!(credentials && GOOGLE_DRIVE_FOLDER_ID),
-      after_days: ARCHIVE_AFTER_DAYS,
-      delete_primary_after_success: ARCHIVE_DELETE_PRIMARY_AFTER_SUCCESS,
+      after_days: effectivePolicy.after_days,
+      delete_primary_after_success: effectivePolicy.delete_primary_after_success,
       can_serve_public_url: GOOGLE_DRIVE_PUBLIC_LINKS
     };
   }
@@ -533,15 +582,15 @@ function getArchiveProviderInfo() {
     return {
       name: 's3',
       configured: !!getS3ArchiveClient(),
-      after_days: ARCHIVE_AFTER_DAYS,
-      delete_primary_after_success: ARCHIVE_DELETE_PRIMARY_AFTER_SUCCESS,
+      after_days: effectivePolicy.after_days,
+      delete_primary_after_success: effectivePolicy.delete_primary_after_success,
       can_serve_public_url: !!ARCHIVE_S3_PUBLIC_BASE_URL
     };
   }
   return {
     name: 'none',
     configured: false,
-    after_days: ARCHIVE_AFTER_DAYS,
+    after_days: effectivePolicy.after_days,
     delete_primary_after_success: false,
     can_serve_public_url: false
   };
@@ -560,8 +609,7 @@ function buildS3ArchivePublicUrl(key) {
   return `${ARCHIVE_S3_PUBLIC_BASE_URL}/${String(key || '').replace(/^\/+/, '')}`;
 }
 
-async function uploadFileToArchive(localPath, submission, kind, ext, contentType) {
-  const provider = getArchiveProviderInfo();
+async function uploadFileToArchive(localPath, submission, kind, ext, contentType, provider = getArchiveProviderInfo()) {
   if (!provider.configured) return null;
   const objectKey = buildArchiveObjectKey(submission, kind, ext);
 
@@ -872,20 +920,25 @@ function normalizeRosterRows(rows, defaultClassName = '') {
     .filter(row => row.name && row.student_id);
 }
 
+const ACTIVITY_PUBLIC_FIELDS = 'id,course_name,class_name,activity_name,description,invite_code,upload_open,voting_open,comments_open,show_live_ranking,roster_enabled,pin_required,feedback_daily_limit,archive_after_days,archive_delete_primary_after_success,created_at';
+const ACTIVITY_LEGACY_FIELDS = 'id,course_name,class_name,activity_name,description,invite_code,upload_open,voting_open,comments_open,show_live_ranking,created_at';
+
+async function fetchActivityById(activityId) {
+  let result = await supabase.from('activities').select(ACTIVITY_PUBLIC_FIELDS).eq('id', activityId).single();
+  if (result.error && /roster_enabled|pin_required|comments_open|feedback_daily_limit|archive_after_days|archive_delete_primary_after_success/i.test(result.error.message || '')) {
+    result = await supabase.from('activities').select(ACTIVITY_LEGACY_FIELDS).eq('id', activityId).single();
+  }
+  if (result.data) result.data = sanitizeActivity(result.data);
+  return result;
+}
+
 async function fetchActivityByCode(code) {
   const normalized = normalizeInviteCode(code);
-  const fields = 'id,course_name,class_name,activity_name,description,invite_code,upload_open,voting_open,comments_open,show_live_ranking,roster_enabled,pin_required,feedback_daily_limit,created_at';
-  let result = await supabase.from('activities').select(fields).eq('invite_code', normalized).single();
-  if (result.error && /roster_enabled|pin_required|comments_open|feedback_daily_limit/i.test(result.error.message || '')) {
-    result = await supabase.from('activities')
-      .select('id,course_name,class_name,activity_name,description,invite_code,upload_open,voting_open,comments_open,show_live_ranking,created_at')
-      .eq('invite_code', normalized).single();
+  let result = await supabase.from('activities').select(ACTIVITY_PUBLIC_FIELDS).eq('invite_code', normalized).single();
+  if (result.error && /roster_enabled|pin_required|comments_open|feedback_daily_limit|archive_after_days|archive_delete_primary_after_success/i.test(result.error.message || '')) {
+    result = await supabase.from('activities').select(ACTIVITY_LEGACY_FIELDS).eq('invite_code', normalized).single();
   }
-  if (result.data) {
-    result.data.roster_enabled = !!result.data.roster_enabled;
-    result.data.pin_required = !!result.data.pin_required;
-    result.data.feedback_daily_limit = normalizeFeedbackDailyLimit(result.data.feedback_daily_limit);
-  }
+  if (result.data) result.data = sanitizeActivity(result.data);
   return result;
 }
 
@@ -1331,33 +1384,53 @@ function startVideoTranscodeLoop() {
   }, TRANSCODE_LOOP_INTERVAL_MS).unref?.();
 }
 
-function getArchiveCutoffIso() {
-  if (ARCHIVE_AFTER_DAYS <= 0) return null;
-  return new Date(Date.now() - (ARCHIVE_AFTER_DAYS * 24 * 60 * 60 * 1000)).toISOString();
+function getArchiveCutoffIso(afterDays = DEFAULT_ARCHIVE_AFTER_DAYS) {
+  if (afterDays <= 0) return null;
+  return new Date(Date.now() - (afterDays * 24 * 60 * 60 * 1000)).toISOString();
 }
 
 let archiveLoopBusy = false;
 
 async function processArchiveQueue({ activityId = null, limit = ARCHIVE_BATCH_SIZE } = {}) {
-  const provider = getArchiveProviderInfo();
-  if (!provider.configured) return { processed: 0, skipped: true, reason: 'provider-not-configured', provider };
-  if (archiveLoopBusy) return { processed: 0, skipped: true, reason: 'busy', provider };
-  const cutoffIso = getArchiveCutoffIso();
-  if (!cutoffIso) return { processed: 0, skipped: true, reason: 'archive-disabled', provider };
+  const baseProvider = getArchiveProviderInfo();
+  if (!baseProvider.configured) return { processed: 0, skipped: true, reason: 'provider-not-configured', provider: baseProvider };
+  if (archiveLoopBusy) return { processed: 0, skipped: true, reason: 'busy', provider: baseProvider };
   archiveLoopBusy = true;
   let processed = 0;
   let queued = 0;
   try {
     let query = supabase.from('submissions')
       .select('id,activity_id,title,image_url,storage_path,media_type,media_size,upload_time,status')
-      .lte('upload_time', cutoffIso)
       .order('upload_time', { ascending: true });
     if (activityId) query = query.eq('activity_id', activityId);
     const { data, error } = await query;
     if (error) throw error;
 
+    const activityIds = [...new Set((data || []).map(item => String(item.activity_id || '')).filter(Boolean))];
+    let activityConfigMap = new Map();
+    if (activityIds.length) {
+      let activityConfigResult = await supabase.from('activities')
+        .select('id,archive_after_days,archive_delete_primary_after_success')
+        .in('id', activityIds);
+      if (activityConfigResult.error && /archive_after_days|archive_delete_primary_after_success/i.test(activityConfigResult.error.message || '')) {
+        activityConfigResult = await supabase.from('activities').select('id').in('id', activityIds);
+      }
+      if (activityConfigResult.error) throw activityConfigResult.error;
+      activityConfigMap = new Map((activityConfigResult.data || []).map(row => [String(row.id), row]));
+    }
+
+    const activityPolicy = activityId ? resolveActivityArchivePolicy(activityConfigMap.get(String(activityId))) : null;
+    if (activityPolicy && !getArchiveCutoffIso(activityPolicy.after_days)) {
+      return { processed: 0, queued: 0, skipped: true, reason: 'archive-disabled', provider: getArchiveProviderInfo(activityPolicy) };
+    }
+
     for (const submission of (data || [])) {
       if (processed >= limit) break;
+      const policy = resolveActivityArchivePolicy(activityConfigMap.get(String(submission.activity_id || '')));
+      const cutoffIso = getArchiveCutoffIso(policy.after_days);
+      if (!cutoffIso) continue;
+      if (new Date(submission.upload_time).getTime() > new Date(cutoffIso).getTime()) continue;
+      const provider = getArchiveProviderInfo(policy);
       const manifest = normalizeSubmissionMediaManifest(submission, await readSubmissionMediaManifest(submission.id).catch(() => null));
       if (['mirrored', 'cold'].includes(manifest.archive_status)) continue;
       if (manifest.archive_status === 'processing') continue;
@@ -1377,7 +1450,7 @@ async function processArchiveQueue({ activityId = null, limit = ARCHIVE_BATCH_SI
         const mediaTempPath = await downloadSubmissionMediaToTemp(submission);
         tempFiles.push(mediaTempPath);
         const mediaExt = guessUploadExtension({ originalname: mediaStoragePath }, submission.media_type === 'video' ? 'mp4' : 'jpg');
-        const mediaArchive = await uploadFileToArchive(mediaTempPath, submission, 'media', mediaExt, contentTypeForExtension(mediaExt, submission.media_type === 'video' ? getVideoContentType() : getImageContentType()));
+        const mediaArchive = await uploadFileToArchive(mediaTempPath, submission, 'media', mediaExt, contentTypeForExtension(mediaExt, submission.media_type === 'video' ? getVideoContentType() : getImageContentType()), provider);
 
         let thumbArchive = null;
         if (currentThumbnailPath) {
@@ -1388,7 +1461,7 @@ async function processArchiveQueue({ activityId = null, limit = ARCHIVE_BATCH_SI
           });
           tempFiles.push(thumbTempPath);
           const thumbExt = guessUploadExtension({ originalname: currentThumbnailPath }, 'webp');
-          thumbArchive = await uploadFileToArchive(thumbTempPath, submission, 'thumb', thumbExt, contentTypeForExtension(thumbExt, getImageContentType()));
+          thumbArchive = await uploadFileToArchive(thumbTempPath, submission, 'thumb', thumbExt, contentTypeForExtension(thumbExt, getImageContentType()), provider);
         }
 
         const shouldPromoteToCold = provider.delete_primary_after_success && provider.can_serve_public_url && mediaArchive?.url;
@@ -1424,7 +1497,7 @@ async function processArchiveQueue({ activityId = null, limit = ARCHIVE_BATCH_SI
       processed += 1;
     }
 
-    return { processed, queued, skipped: false, provider };
+    return { processed, queued, skipped: false, provider: activityPolicy ? getArchiveProviderInfo(activityPolicy) : baseProvider };
   } finally {
     archiveLoopBusy = false;
   }
@@ -1545,6 +1618,35 @@ async function buildStorageSummary(activityId) {
     .slice()
     .sort((a, b) => (b.media_size || 0) - (a.media_size || 0))
     .slice(0, 5);
+  const recentUploads7d = activityRows.filter(row => {
+    const uploadedMs = new Date(row.upload_time || 0).getTime();
+    return Number.isFinite(uploadedMs) && uploadedMs > 0 && (now - uploadedMs) <= 7 * 24 * 60 * 60 * 1000;
+  });
+  const recentReferencedBytes7d = recentUploads7d.reduce((sum, row) => sum + Number(row.media_size || 0), 0);
+  const overheadRatio = referencedBytes > 0 ? Math.max(1, storageBytes / referencedBytes) : 1;
+  const dailyGrowthBytes = recentReferencedBytes7d > 0
+    ? Math.round((recentReferencedBytes7d * overheadRatio) / 7)
+    : 0;
+  const quotaBytes = STORAGE_WARNING_LIMIT_BYTES;
+  const usagePercent = quotaBytes > 0 ? Math.min((storageBytes / quotaBytes) * 100, 999) : 0;
+  const remainingBytes = Math.max(quotaBytes - storageBytes, 0);
+  const estimatedDaysToLimit = dailyGrowthBytes > 0 ? Math.max(0, Math.floor(remainingBytes / dailyGrowthBytes)) : null;
+  let warningLevel = 'healthy';
+  let warningTitle = '空间健康';
+  let warningMessage = '当前空间占用较低，继续保持压缩上传和定期清理即可。';
+  if (usagePercent >= 90 || remainingBytes <= 128 * 1024 * 1024 || (estimatedDaysToLimit !== null && estimatedDaysToLimit <= 7)) {
+    warningLevel = 'critical';
+    warningTitle = '空间即将打满';
+    warningMessage = `按当前用量与近 7 天增长速度估算，剩余约 ${formatStorageBytes(remainingBytes)}，建议立即归档并尽快释放主存。`;
+  } else if (usagePercent >= 75 || remainingBytes <= 256 * 1024 * 1024 || (estimatedDaysToLimit !== null && estimatedDaysToLimit <= 21)) {
+    warningLevel = 'warning';
+    warningTitle = '空间进入预警区';
+    warningMessage = `当前桶总量已接近配额上限，建议把归档阈值调低到 7 天左右，并优先清理孤儿文件。`;
+  } else if (usagePercent >= 60 || (estimatedDaysToLimit !== null && estimatedDaysToLimit <= 45)) {
+    warningLevel = 'attention';
+    warningTitle = '建议提前归档';
+    warningMessage = `当前仍可稳定使用，但如果课堂上传继续保持最近 7 天速度，建议尽早调整归档策略。`;
+  }
 
   return {
     total_files: storageFiles.length,
@@ -1561,7 +1663,19 @@ async function buildStorageSummary(activityId) {
     orphan_files: orphanFiles,
     orphan_count: orphanFiles.length,
     orphan_bytes: orphanFiles.reduce((sum, file) => sum + file.size, 0),
-    largest_items: largestItems
+    largest_items: largestItems,
+    quota_bytes: quotaBytes,
+    usage_percent: Math.round(usagePercent * 10) / 10,
+    remaining_bytes: remainingBytes,
+    recent_upload_count_7d: recentUploads7d.length,
+    recent_upload_bytes_7d: recentReferencedBytes7d,
+    estimated_growth_bytes_per_day: dailyGrowthBytes,
+    estimated_days_to_limit: estimatedDaysToLimit,
+    warning: {
+      level: warningLevel,
+      title: warningTitle,
+      message: warningMessage
+    }
   };
 }
 
@@ -1647,19 +1761,20 @@ app.put('/api/activities/:id', teacherAuth, async (req, res) => {
     const auth = await ensureTeacherCanAccessActivity(req, req.params.id);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
-    const allowed = ['upload_open', 'voting_open', 'comments_open', 'show_live_ranking', 'roster_enabled', 'pin_required', 'description', 'activity_name', 'feedback_daily_limit'];
+    const allowed = ['upload_open', 'voting_open', 'comments_open', 'show_live_ranking', 'roster_enabled', 'pin_required', 'description', 'activity_name', 'feedback_daily_limit', 'archive_after_days', 'archive_delete_primary_after_success'];
     const payload = {};
     for (const key of allowed) {
       if (!(key in req.body)) continue;
       if (key === 'description') payload[key] = sanitizeText(req.body[key], 500);
       else if (key === 'activity_name') payload[key] = sanitizeText(req.body[key], 120);
       else if (key === 'feedback_daily_limit') payload[key] = parseFeedbackDailyLimitInput(req.body[key]);
+      else if (key === 'archive_after_days') payload[key] = parseArchiveAfterDaysInput(req.body[key]);
       else payload[key] = coerceBoolean(req.body[key]);
     }
 
     const { data, error } = await supabase.from('activities').update(payload).eq('id', req.params.id).select().single();
-    if (error && /feedback_daily_limit/i.test(error.message || '')) {
-      return res.status(500).json({ error: 'Feedback moderation schema is not ready. Run upgrade_v4.sql first.' });
+    if (error && /feedback_daily_limit|archive_after_days|archive_delete_primary_after_success/i.test(error.message || '')) {
+      return res.status(500).json({ error: 'Archive or feedback schema is not ready. Run upgrade_v4.sql first.' });
     }
     if (error) throw error;
     res.json(sanitizeActivity(data));
@@ -3036,10 +3151,7 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
       latestFeedback,
       hotFeedback
     ] = await Promise.all([
-      supabase.from('activities')
-        .select('id,course_name,class_name,activity_name,description,invite_code,upload_open,voting_open,comments_open,show_live_ranking,roster_enabled,pin_required,feedback_daily_limit,created_at')
-        .eq('id', activity_id)
-        .single(),
+      fetchActivityById(activity_id),
       supabase.from('users')
         .select('id,name,student_id,class_name,group_name')
         .eq('activity_id', activity_id),
@@ -3122,8 +3234,9 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
       : 0;
     const activeRosterRows = rosterRows.filter(item => item.active !== false);
     const mutedRosterRows = rosterRows.filter(item => item.feedback_muted);
-    const archiveProvider = getArchiveProviderInfo();
-    const archiveCutoffIso = getArchiveCutoffIso();
+    const archivePolicy = resolveActivityArchivePolicy(activityResult.data);
+    const archiveProvider = getArchiveProviderInfo(archivePolicy);
+    const archiveCutoffIso = getArchiveCutoffIso(archivePolicy.after_days);
     const mediaPipeline = submissions.reduce((acc, item) => {
       if (item.media_type === 'video') {
         acc.video_total += 1;

@@ -56,6 +56,80 @@
       font-size: 0.86rem;
       line-height: 1.6;
     }
+    .storage-warning.warning-attention {
+      background: rgba(59, 130, 246, 0.1);
+      border-color: rgba(59, 130, 246, 0.16);
+      color: #1d4ed8;
+    }
+    .storage-warning.warning-warning {
+      background: rgba(245, 158, 11, 0.12);
+      border-color: rgba(245, 158, 11, 0.2);
+      color: #92400e;
+    }
+    .storage-warning.warning-critical {
+      background: rgba(239, 68, 68, 0.12);
+      border-color: rgba(239, 68, 68, 0.2);
+      color: #b91c1c;
+    }
+    .storage-control-panel {
+      margin-top: 18px;
+      padding: 16px;
+      border-radius: 22px;
+      background: linear-gradient(135deg, rgba(15, 23, 42, 0.03), rgba(37, 99, 235, 0.05));
+      border: 1px solid rgba(15, 23, 42, 0.08);
+    }
+    .archive-control-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 14px;
+    }
+    .archive-control-field {
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .archive-control-field strong {
+      font-size: 0.88rem;
+      font-weight: 900;
+    }
+    .archive-control-field span {
+      color: var(--text-muted);
+      font-size: 0.8rem;
+      line-height: 1.5;
+    }
+    .archive-control-field input[type="number"] {
+      width: 100%;
+      padding: 12px 14px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.92);
+      font: inherit;
+      font-weight: 700;
+    }
+    .archive-toggle {
+      display: flex;
+      align-items: flex-start;
+      gap: 12px;
+      padding: 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      background: rgba(255,255,255,0.78);
+    }
+    .archive-toggle input {
+      margin-top: 3px;
+      transform: scale(1.15);
+    }
+    .archive-quick-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-top: 14px;
+    }
+    .dashboard-panel-head.compact {
+      margin-bottom: 8px;
+    }
     .feedback-preview {
       padding: 12px 14px;
       border-radius: 16px;
@@ -142,6 +216,9 @@
     }
     @media (max-width: 900px) {
       .control-grid {
+        grid-template-columns: 1fr;
+      }
+      .archive-control-grid {
         grid-template-columns: 1fr;
       }
     }
@@ -236,6 +313,38 @@
               <span class="dashboard-panel-note" id="pipelineActionText">媒体流水线待命中...</span>
             </div>
             <div class="storage-warning" id="storageWarning" style="display:none;"></div>
+            <div class="storage-control-panel">
+              <div class="dashboard-panel-head compact">
+                <div>
+                  <div class="dashboard-panel-title">空间预警与归档控制</div>
+                  <div class="dashboard-panel-note">根据近 7 天上传速度估算剩余可用天数，并允许教师为当前活动单独设置归档阈值与冷存策略。</div>
+                </div>
+                <div class="card-badge" id="archivePolicyBadge">使用默认策略</div>
+              </div>
+              <div class="mini-stat-grid" id="storageForecastStats"></div>
+              <div class="storage-meta-row" id="storageForecastMeta"></div>
+              <div class="archive-control-grid">
+                <label class="archive-control-field">
+                  <strong>自动归档阈值（天）</strong>
+                  <span>达到这个天数的作品会被纳入归档队列。填 7 表示作品上传满 7 天后可归档。</span>
+                  <input id="archiveAfterDaysInput" type="number" min="0" max="365" step="1" value="30">
+                </label>
+                <label class="archive-toggle">
+                  <input id="archiveDeletePrimaryToggle" type="checkbox">
+                  <div>
+                    <strong>归档成功后切到冷存</strong>
+                    <span>开启后，系统在确认归档文件可公网访问时删除 Supabase 主文件，以真正释放免费空间。首次建议先关闭，等验证稳定后再开启。</span>
+                  </div>
+                </label>
+              </div>
+              <div class="archive-quick-actions">
+                <button class="btn btn-secondary btn-sm" type="button" onclick="applyArchivePreset(3)">3 天归档</button>
+                <button class="btn btn-secondary btn-sm" type="button" onclick="applyArchivePreset(7)">7 天归档</button>
+                <button class="btn btn-secondary btn-sm" type="button" onclick="applyArchivePreset(30)">30 天归档</button>
+                <button class="btn btn-primary btn-sm" id="saveArchivePolicyBtn" type="button" onclick="saveArchiveControls()">保存归档策略</button>
+              </div>
+              <div class="dashboard-panel-note" id="archiveControlHint" style="margin-top:10px;">当前活动尚未读取到归档策略。</div>
+            </div>
           </div>
         </div>
 
@@ -590,16 +699,20 @@
       const storage = summary.storage || {};
       const referencedBytes = Number(storage.referenced_bytes || 0);
       const totalBytes = Math.max(Number(storage.total_bytes || 0), referencedBytes);
-      const ratio = totalBytes > 0 ? Math.min((referencedBytes / totalBytes) * 100, 100) : 0;
-      document.getElementById('storageUsageLabel').textContent = formatBytes(referencedBytes);
-      document.getElementById('storageProgressBar').style.width = ratio.toFixed(1) + '%';
+      const quotaBytes = Math.max(Number(storage.quota_bytes || 0), totalBytes);
+      const usagePercent = quotaBytes > 0 ? Math.min(Number(storage.usage_percent || ((totalBytes / quotaBytes) * 100)), 100) : 0;
+      const warning = document.getElementById('storageWarning');
+      const warningInfo = storage.warning || {};
+
+      document.getElementById('storageUsageLabel').textContent = `${formatBytes(totalBytes)} / ${formatBytes(quotaBytes)}`;
+      document.getElementById('storageProgressBar').style.width = usagePercent.toFixed(1) + '%';
       document.getElementById('storageProgressText').textContent =
-        `被作品实际引用 ${formatBytes(referencedBytes)}，当前桶总量约 ${formatBytes(totalBytes)}。`;
+        `当前桶总量约 ${formatBytes(totalBytes)}，其中作品实际引用 ${formatBytes(referencedBytes)}，约占免费配额的 ${usagePercent.toFixed(1)}%。`;
       document.getElementById('storageMiniStats').innerHTML = [
         ['图片文件', storage.image_count || 0],
         ['视频文件', storage.video_count || 0],
-        ['平均体积', formatBytes(storage.average_file_bytes || 0)],
-        ['孤儿空间', formatBytes(storage.orphan_bytes || 0)]
+        ['近 7 天新增', formatBytes(storage.recent_upload_bytes_7d || 0)],
+        ['预计剩余', storage.estimated_days_to_limit === null ? '稳定' : `${storage.estimated_days_to_limit} 天`]
       ].map(item => `
         <div class="mini-stat">
           <strong>${escapeHtml(item[1])}</strong>
@@ -610,14 +723,22 @@
         `总文件 ${storage.total_files || 0}`,
         `已引用 ${storage.referenced_files || 0}`,
         `孤儿文件 ${storage.orphan_count || 0}`,
-        `可回收 ${formatBytes(storage.orphan_bytes || 0)}`
+        `可回收 ${formatBytes(storage.orphan_bytes || 0)}`,
+        `剩余空间 ${formatBytes(storage.remaining_bytes || 0)}`
       ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
-      const warning = document.getElementById('storageWarning');
+
+      const warningParts = [];
+      if (warningInfo.message) warningParts.push(`${warningInfo.title || '空间提醒'}：${warningInfo.message}`);
       if (storage.orphan_count > 0) {
+        warningParts.push(`发现 ${storage.orphan_count} 个孤儿文件，点击“清理孤儿文件”可回收约 ${formatBytes(storage.orphan_bytes || 0)}。`);
+      }
+      if (warningParts.length) {
         warning.style.display = 'block';
-        warning.textContent = `发现 ${storage.orphan_count} 个未被数据库引用、但仍留在云端桶中的文件。点击“清理孤儿文件”可回收约 ${formatBytes(storage.orphan_bytes || 0)}。`;
+        warning.className = `storage-warning warning-${warningInfo.level || 'warning'}`;
+        warning.textContent = warningParts.join(' ');
       } else {
         warning.style.display = 'none';
+        warning.className = 'storage-warning';
         warning.textContent = '';
       }
     }
@@ -655,7 +776,7 @@
         `归档提供方 ${provider.name || 'none'}`,
         provider.configured ? '已配置' : '未配置',
         `归档阈值 ${provider.after_days || 0} 天`,
-        provider.delete_primary_after_success ? '归档成功后允许切冷存' : '保留主存副本',
+        provider.delete_primary_after_success ? '归档成功后切冷存' : '保留主存副本',
         provider.can_serve_public_url ? '可公网访问归档文件' : '归档仅做备份'
       ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
 
@@ -664,6 +785,88 @@
       actionText.textContent = provider.configured
         ? '可手动触发一次即时转码或归档，无需等待后台定时轮询。'
         : '尚未配置 Google Drive 或 S3 归档环境变量，当前仅保留在主存。';
+    }
+
+    function renderArchiveControls(summary) {
+      const activity = summary.activity || {};
+      const storage = summary.storage || {};
+      const provider = summary.media_pipeline?.provider || {};
+      const daysInput = document.getElementById('archiveAfterDaysInput');
+      const deleteToggle = document.getElementById('archiveDeletePrimaryToggle');
+      const badge = document.getElementById('archivePolicyBadge');
+      const hint = document.getElementById('archiveControlHint');
+      const statsBox = document.getElementById('storageForecastStats');
+      const metaBox = document.getElementById('storageForecastMeta');
+
+      if (!daysInput || !deleteToggle || !badge || !hint || !statsBox || !metaBox) return;
+
+      daysInput.value = Number(activity.archive_after_days ?? provider.after_days ?? 30);
+      deleteToggle.checked = !!activity.archive_delete_primary_after_success;
+
+      badge.textContent = deleteToggle.checked
+        ? `冷存开启 · ${daysInput.value} 天`
+        : `镜像模式 · ${daysInput.value} 天`;
+
+      statsBox.innerHTML = [
+        ['免费配额', formatBytes(storage.quota_bytes || 0)],
+        ['当前已用', `${Number(storage.usage_percent || 0).toFixed(1)}%`],
+        ['最近 7 天增量', formatBytes(storage.recent_upload_bytes_7d || 0)],
+        ['预计可用', storage.estimated_days_to_limit === null ? '稳定' : `${storage.estimated_days_to_limit} 天`]
+      ].map(item => `
+        <div class="mini-stat">
+          <strong>${escapeHtml(item[1])}</strong>
+          <span>${escapeHtml(item[0])}</span>
+        </div>
+      `).join('');
+
+      metaBox.innerHTML = [
+        `近 7 天上传 ${storage.recent_upload_count_7d || 0} 件`,
+        `日均增长 ${formatBytes(storage.estimated_growth_bytes_per_day || 0)}`,
+        provider.configured ? `归档已接通 ${provider.name}` : '归档提供方未接通',
+        deleteToggle.checked ? '归档后将尝试释放 Supabase 主存' : '当前只归档备份，不释放 Supabase 主存'
+      ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+
+      hint.textContent = provider.configured
+        ? '这里保存的是“当前活动”的归档策略，不会改动 Google Drive 凭据本身。首次建议先用镜像模式观察 1 至 2 天，再决定是否开启冷存。'
+        : '归档提供方尚未配置完成，当前只能保存策略草稿，不能真正归档。';
+    }
+
+    function applyArchivePreset(days) {
+      const input = document.getElementById('archiveAfterDaysInput');
+      if (!input) return;
+      input.value = String(days);
+    }
+
+    async function saveArchiveControls() {
+      const daysInput = document.getElementById('archiveAfterDaysInput');
+      const deleteToggle = document.getElementById('archiveDeletePrimaryToggle');
+      const saveBtn = document.getElementById('saveArchivePolicyBtn');
+      if (!daysInput || !deleteToggle || !saveBtn) return;
+
+      const archiveAfterDays = Number(daysInput.value);
+      if (!Number.isInteger(archiveAfterDays) || archiveAfterDays < 0 || archiveAfterDays > 365) {
+        return toast('归档天数必须是 0 到 365 之间的整数', 'error');
+      }
+
+      const originalText = saveBtn.textContent;
+      saveBtn.disabled = true;
+      saveBtn.textContent = '保存中...';
+      try {
+        await api('/activities/' + actId, {
+          method: 'PUT',
+          body: JSON.stringify({
+            archive_after_days: archiveAfterDays,
+            archive_delete_primary_after_success: !!deleteToggle.checked
+          })
+        });
+        await reloadDashboard();
+        toast('归档策略已保存', 'success');
+      } catch (e) {
+        toast('保存归档策略失败：' + e.message, 'error');
+      } finally {
+        saveBtn.disabled = false;
+        saveBtn.textContent = originalText;
+      }
     }
 
     function renderMeta(activity) {
@@ -709,6 +912,7 @@
         renderControls(summary.activity || {});
         renderStorage(summary);
         renderMediaPipeline(summary);
+        renderArchiveControls(summary);
         renderWorkList('topRatedList', summary.top_rated, 'rating');
         renderWorkList('recentUploadsList', summary.recent_uploads, 'time');
         renderFeedbackList('feedbackHotList', summary.hot_feedback, 'hot');
