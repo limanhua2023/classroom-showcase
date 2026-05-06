@@ -268,6 +268,61 @@
     const DISPLAY_CAROUSEL_SCROLL_MS = 60 * 1000;
     const DISPLAY_CAROUSEL_SCROLL_STEP = 260;
 
+    function buildMissingMediaDataUrl({ title = '', code = '', type = 'image' } = {}) {
+      const safeTitle = escapeHtml(String(title || '').trim() || '作品预览');
+      const safeCode = escapeHtml(String(code || '').trim() || 'ClassShow');
+      const normalizedType = String(type || 'image').toLowerCase();
+      const accent = normalizedType === 'video' ? '#7c3aed' : '#2563eb';
+      const badge = normalizedType === 'video' ? 'VIDEO' : 'IMAGE';
+      const hint = normalizedType === 'video' ? '视频缩略图暂时不可用' : '图片缩略图暂时不可用';
+      const svg = `
+        <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="720" viewBox="0 0 1280 720">
+          <defs>
+            <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+              <stop offset="0%" stop-color="#0f172a"/>
+              <stop offset="60%" stop-color="#111827"/>
+              <stop offset="100%" stop-color="#1f2937"/>
+            </linearGradient>
+          </defs>
+          <rect width="1280" height="720" fill="url(#bg)"/>
+          <circle cx="1040" cy="120" r="180" fill="${accent}" opacity="0.18"/>
+          <circle cx="220" cy="640" r="220" fill="#22d3ee" opacity="0.08"/>
+          <rect x="76" y="74" width="184" height="58" rx="29" fill="${accent}" opacity="0.95"/>
+          <text x="168" y="111" text-anchor="middle" font-size="28" font-family="Arial, sans-serif" fill="#ffffff" font-weight="700">${badge}</text>
+          <text x="76" y="228" font-size="60" font-family="Arial, sans-serif" fill="#f8fafc" font-weight="700">${safeCode}</text>
+          <text x="76" y="314" font-size="38" font-family="Arial, sans-serif" fill="#e2e8f0" font-weight="700">${safeTitle}</text>
+          <text x="76" y="374" font-size="28" font-family="Arial, sans-serif" fill="#cbd5e1">${hint}</text>
+          <text x="76" y="426" font-size="24" font-family="Arial, sans-serif" fill="#94a3b8">当前显示为占位海报，请稍后重新同步媒体文件</text>
+          <rect x="76" y="528" width="1128" height="2" fill="#334155" opacity="0.8"/>
+          <text x="76" y="592" font-size="24" font-family="Arial, sans-serif" fill="#e5e7eb">如果历史源文件已经从存储中丢失，将无法自动恢复原始缩略图。</text>
+        </svg>`;
+      return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+    }
+
+    function handleMediaFallback(img) {
+      if (!img || img.dataset.fallbackApplied === '1') return;
+      img.dataset.fallbackApplied = '1';
+      img.src = buildMissingMediaDataUrl({
+        title: img.dataset.fallbackTitle || img.alt || '',
+        code: img.dataset.fallbackCode || '',
+        type: img.dataset.mediaType || 'image'
+      });
+    }
+
+    function handleVideoFallback(video) {
+      if (!video || video.dataset.fallbackApplied === '1') return;
+      video.dataset.fallbackApplied = '1';
+      const img = document.createElement('img');
+      img.src = buildMissingMediaDataUrl({
+        title: video.dataset.fallbackTitle || '',
+        code: video.dataset.fallbackCode || '',
+        type: video.dataset.mediaType || 'video'
+      });
+      img.alt = video.dataset.fallbackTitle || 'Video fallback';
+      img.style.cssText = video.style.cssText || 'width:100%;height:100%;object-fit:cover;display:block;';
+      video.replaceWith(img);
+    }
+
     function updateDisplayHeader() {
       document.getElementById('displayTitle').textContent = act.activity_name || '课堂作品秀';
       document.getElementById('displaySubtitle').textContent = (act.course_name || '') + ' · ' + (act.class_name || '');
@@ -285,7 +340,7 @@
       const vid = isVideo(mediaUrl);
       const template = pickWorkTemplate(`${w.id || w.anonymous_code}-${mode}`);
       const media = `<div class="exhibit-media" style="background:${vid ? '#020617' : ''};">
-             <img src="${thumbUrl}" alt="${escapeHtml(w.title || '')}" style="width:100%;height:100%;object-fit:cover;display:block;">
+             <img src="${thumbUrl}" alt="${escapeHtml(w.title || '')}" data-fallback-title="${escapeHtml(w.title || '')}" data-fallback-code="${escapeHtml(w.anonymous_code || '')}" data-media-type="${vid ? 'video' : 'image'}" onerror="handleMediaFallback(this)" style="width:100%;height:100%;object-fit:cover;display:block;">
              <div class="exhibit-overlay"><span class="exhibit-template-label">${mode === 'new' ? 'Fresh Drop' : 'Screen Focus'}</span></div>
            </div>`;
       let countdown = '';
@@ -484,7 +539,7 @@
             document.getElementById('rankList').innerHTML = top.map((w, i) => {
               const mediaUrl = getWorkMediaUrl(w);
               const vid = isVideo(mediaUrl);
-              const thumb = `<img class="display-rank-img" src="${getWorkThumbnailUrl(w) || mediaUrl}" alt="${escapeHtml(w.title || '')}">`;
+              const thumb = `<img class="display-rank-img" src="${getWorkThumbnailUrl(w) || mediaUrl}" alt="${escapeHtml(w.title || '')}" data-fallback-title="${escapeHtml(w.title || '')}" data-fallback-code="${escapeHtml(w.anonymous_code || '')}" data-media-type="${vid ? 'video' : 'image'}" onerror="handleMediaFallback(this)">`;
             return `<div class="display-rank-item" style="cursor:pointer;" onclick="openSpotlight('${w.id}')">
                 <span class="rank-badge ${i===0?'gold':i===1?'silver':i===2?'bronze':''}">${i+1}</span>
                 ${thumb}
@@ -546,9 +601,14 @@
       const slidesHtml = works.map((w, i) => {
         const mediaUrl = getWorkMediaUrl(w);
         const vid = isVideo(mediaUrl);
+        const fallbackPoster = buildMissingMediaDataUrl({
+          title: w.title || '',
+          code: w.anonymous_code || '',
+          type: vid ? 'video' : 'image'
+        });
         const media = vid
-          ? `<video src="${mediaUrl}" poster="${getWorkPosterUrl(w)}" muted playsinline preload="metadata" style="width:100%;height:100%;object-fit:cover;display:block;"></video>`
-          : `<img src="${getWorkThumbnailUrl(w) || mediaUrl}" alt="${w.title}" style="width:100%;height:100%;object-fit:cover;display:block;">`;
+          ? `<video src="${mediaUrl}" poster="${getWorkPosterUrl(w) || fallbackPoster}" muted playsinline preload="metadata" data-fallback-title="${escapeHtml(w.title || '')}" data-fallback-code="${escapeHtml(w.anonymous_code || '')}" data-media-type="video" onerror="handleVideoFallback(this)" style="width:100%;height:100%;object-fit:cover;display:block;"></video>`
+          : `<img src="${getWorkThumbnailUrl(w) || mediaUrl}" alt="${escapeHtml(w.title || '')}" data-fallback-title="${escapeHtml(w.title || '')}" data-fallback-code="${escapeHtml(w.anonymous_code || '')}" data-media-type="image" onerror="handleMediaFallback(this)" style="width:100%;height:100%;object-fit:cover;display:block;">`;
         return `
           <div class="top3-slide ${i === 0 ? 'active' : ''}" data-idx="${i}" onclick="openSpotlight('${w.id}')" style="cursor:pointer">
             ${media}
@@ -622,15 +682,21 @@
         const work = await api('/submissions/' + submissionId + qs);
         const mediaUrl = getWorkMediaUrl(work);
         const posterUrl = getWorkPosterUrl(work);
+        const fallbackPoster = buildMissingMediaDataUrl({
+          title: work.title || '',
+          code: work.anonymous_code || '',
+          type: isVideo(mediaUrl) ? 'video' : 'image'
+        });
         activeSpotlightWork = work;
         activeSpotlightMyRating = 0;
         // Render media: video or image
         const spotMediaWrap = document.getElementById('spotMediaWrap');
         if (isVideo(mediaUrl)) {
-          spotMediaWrap.innerHTML = `<video src="${mediaUrl}" poster="${posterUrl}" controls autoplay muted playsinline
-            style="max-width:100%;max-height:85vh;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.5);display:block;" oncanplay="this.muted=false"></video>`;
+          spotMediaWrap.innerHTML = `<video src="${mediaUrl}" poster="${posterUrl || fallbackPoster}" controls autoplay muted playsinline
+            data-fallback-title="${escapeHtml(work.title || '')}" data-fallback-code="${escapeHtml(work.anonymous_code || '')}" data-media-type="video"
+            style="max-width:100%;max-height:85vh;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.5);display:block;" oncanplay="this.muted=false" onerror="handleVideoFallback(this)"></video>`;
         } else {
-          spotMediaWrap.innerHTML = `<img src="${mediaUrl}" style="max-width:100%;max-height:85vh;object-fit:contain;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.5);animation:spotlightZoom 0.5s ease forwards;">` ;
+          spotMediaWrap.innerHTML = `<img src="${mediaUrl}" data-fallback-title="${escapeHtml(work.title || '')}" data-fallback-code="${escapeHtml(work.anonymous_code || '')}" data-media-type="image" onerror="handleMediaFallback(this)" style="max-width:100%;max-height:85vh;object-fit:contain;border-radius:16px;box-shadow:0 20px 60px rgba(0,0,0,0.5);animation:spotlightZoom 0.5s ease forwards;">` ;
         }
         document.getElementById('spotBadge').textContent = work.anonymous_code;
         document.getElementById('spotTitle').textContent = work.title;
