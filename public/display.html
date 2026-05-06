@@ -152,9 +152,9 @@
   </div>
 
   <div class="display-stats">
-    <div class="display-stat"><div class="display-stat-value" id="dSubs">0</div><div class="display-stat-label">作品数量</div></div>
-    <div class="display-stat"><div class="display-stat-value" id="dUsers">0</div><div class="display-stat-label">参与学生</div></div>
-    <div class="display-stat"><div class="display-stat-value" id="dRatings">0</div><div class="display-stat-label">评分次数</div></div>
+    <div class="display-stat"><div class="display-stat-value" id="dSubs">--</div><div class="display-stat-label">作品数量</div></div>
+    <div class="display-stat"><div class="display-stat-value" id="dUsers">--</div><div class="display-stat-label">参与学生</div></div>
+    <div class="display-stat"><div class="display-stat-value" id="dRatings">--</div><div class="display-stat-label">评分次数</div></div>
     <div class="display-stat">
       <div class="display-stat-value" id="dStatus">⏳</div>
       <div class="display-stat-label" id="dStatusLabel">准备中</div>
@@ -420,10 +420,27 @@
             }
           });
         }
-        document.getElementById('dSubs').textContent = stats.submissions;
-        document.getElementById('dUsers').textContent = stats.users;
-        document.getElementById('dRatings').textContent = stats.ratings;
         const works = await worksPromise;
+        const derivedSubmissionCount = Array.isArray(works) ? works.length : 0;
+        const derivedUserCount = Array.isArray(works)
+          ? new Set(works.map(w => String(w.user_id || '')).filter(Boolean)).size
+          : 0;
+        const derivedRatingCount = Array.isArray(works)
+          ? works.reduce((sum, w) => sum + Number(w.rating_count || 0), 0)
+          : 0;
+        const displaySubmissionCount = Number(stats?.submissions || 0) > 0
+          ? Number(stats.submissions)
+          : derivedSubmissionCount;
+        const displayUserCount = Number(stats?.users || 0) > 0
+          ? Number(stats.users)
+          : derivedUserCount;
+        const displayRatingCount = Number(stats?.ratings || 0) > 0
+          ? Number(stats.ratings)
+          : derivedRatingCount;
+
+        document.getElementById('dSubs').textContent = displaySubmissionCount;
+        document.getElementById('dUsers').textContent = displayUserCount;
+        document.getElementById('dRatings').textContent = displayRatingCount;
 
         // Status
         if (actInfo.voting_open) {
