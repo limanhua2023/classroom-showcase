@@ -214,12 +214,74 @@
     .largest-file-list .dashboard-list-side strong {
       font-size: 0.92rem;
     }
+    .missing-media-list {
+      display: grid;
+      gap: 12px;
+    }
+    .missing-media-item {
+      display: flex;
+      justify-content: space-between;
+      gap: 14px;
+      padding: 14px;
+      border-radius: 18px;
+      background: rgba(15, 23, 42, 0.04);
+      border: 1px solid rgba(15, 23, 42, 0.08);
+    }
+    .missing-media-main {
+      min-width: 0;
+      flex: 1 1 auto;
+    }
+    .missing-media-title {
+      font-size: 0.94rem;
+      font-weight: 900;
+      line-height: 1.5;
+      word-break: break-word;
+    }
+    .missing-media-meta {
+      margin-top: 6px;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      line-height: 1.6;
+      word-break: break-word;
+    }
+    .missing-media-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: flex-end;
+      align-items: center;
+      flex: 0 0 auto;
+    }
+    .issue-chip {
+      display: inline-flex;
+      align-items: center;
+      margin-right: 8px;
+      margin-top: 8px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      background: rgba(239, 68, 68, 0.12);
+      border: 1px solid rgba(239, 68, 68, 0.18);
+      color: #b91c1c;
+      font-size: 0.76rem;
+      font-weight: 800;
+    }
+    .issue-chip.warning {
+      background: rgba(245, 158, 11, 0.12);
+      border-color: rgba(245, 158, 11, 0.18);
+      color: #92400e;
+    }
     @media (max-width: 900px) {
       .control-grid {
         grid-template-columns: 1fr;
       }
       .archive-control-grid {
         grid-template-columns: 1fr;
+      }
+      .missing-media-item {
+        flex-direction: column;
+      }
+      .missing-media-actions {
+        justify-content: flex-start;
       }
     }
     @media (max-width: 640px) {
@@ -386,6 +448,23 @@
         </div>
       </div>
 
+      <div class="dashboard-panel">
+        <div class="dashboard-panel-body">
+          <div class="dashboard-panel-head">
+            <div>
+              <div class="dashboard-panel-title">缺失媒体告警与修复</div>
+              <div class="dashboard-panel-note">自动列出源文件或缩略图已经失效的作品。教师可直接重建缩略图，或上传原文件进行替换修复。</div>
+            </div>
+            <div class="card-badge" id="missingMediaSummary">正在检查</div>
+          </div>
+          <input id="missingMediaRepairInput" type="file" accept=".jpg,.jpeg,.png,.webp,.gif,.mp4,.mov" style="display:none;">
+          <div class="storage-meta-row" id="missingMediaMeta"></div>
+          <div class="missing-media-list" id="missingMediaList">
+            <div class="dashboard-panel-note">正在检查缺失媒体...</div>
+          </div>
+        </div>
+      </div>
+
       <div class="dashboard-three-col" style="grid-column: span 12;">
         <div class="dashboard-panel">
           <div class="dashboard-panel-body">
@@ -507,6 +586,7 @@
     if (!actId) location.href = 'index.html';
 
     let dashboardSummary = null;
+    let pendingRepairSubmissionId = null;
 
     const toggleMeta = {
       upload_open: { label: '上传入口', note: '控制学生是否还能继续上传或替换作品。' },
@@ -831,6 +911,99 @@
         : '归档提供方尚未配置完成，当前只能保存策略草稿，不能真正归档。';
     }
 
+    function renderMissingMedia(summary) {
+      const report = summary.missing_media || {};
+      const rows = Array.isArray(report.items) ? report.items : [];
+      const summaryBadge = document.getElementById('missingMediaSummary');
+      const metaBox = document.getElementById('missingMediaMeta');
+      const listBox = document.getElementById('missingMediaList');
+      if (!summaryBadge || !metaBox || !listBox) return;
+
+      summaryBadge.textContent = rows.length ? `${rows.length} 项待修复` : '当前无缺失';
+      metaBox.innerHTML = [
+        `源文件缺失 ${report.source_missing_count || 0}`,
+        `缩略图缺失 ${report.thumbnail_missing_count || 0}`,
+        rows.length ? '支持直接重建或上传替换' : '当前活动媒体状态正常'
+      ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+
+      if (!rows.length) {
+        listBox.innerHTML = '<div class="dashboard-panel-note">当前活动没有检测到缺失媒体，旧作品和缩略图都可正常读取。</div>';
+        return;
+      }
+
+      listBox.innerHTML = rows.map(item => {
+        const user = item.users || {};
+        const chips = [];
+        if (item.source_missing) chips.push('<span class="issue-chip">源文件缺失</span>');
+        if (item.thumbnail_missing) chips.push(`<span class="issue-chip ${item.source_missing ? 'warning' : ''}">缩略图缺失</span>`);
+        if (item.has_archive_copy) chips.push('<span class="issue-chip warning">已有归档副本</span>');
+        return `
+          <div class="missing-media-item">
+            <div class="missing-media-main">
+              <div class="missing-media-title">${escapeHtml(item.title || '未命名作品')}</div>
+              <div class="missing-media-meta">${escapeHtml(user.name || '未实名')} · ${escapeHtml(user.student_id || '-')} · ${item.media_type === 'video' ? '视频' : '图片'} · ${escapeHtml(formatBangkokTime(item.upload_time))}</div>
+              <div class="missing-media-meta">${escapeHtml(item.storage_path || '无主存路径')}</div>
+              <div>${chips.join('')}</div>
+            </div>
+            <div class="missing-media-actions">
+              <button class="btn btn-secondary btn-sm" type="button" onclick="openRepairMediaPicker('${encodeURIComponent(item.id || '')}')">上传修复文件</button>
+              <button class="btn btn-primary btn-sm" type="button" ${item.can_rebuild_thumbnail ? '' : 'disabled'} onclick="rebuildMissingThumbnail('${encodeURIComponent(item.id || '')}')">重建缩略图</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function openRepairMediaPicker(submissionId) {
+      submissionId = decodeURIComponent(submissionId || '');
+      if (!submissionId) return;
+      pendingRepairSubmissionId = submissionId;
+      const input = document.getElementById('missingMediaRepairInput');
+      if (!input) return;
+      input.value = '';
+      input.click();
+    }
+
+    async function repairSelectedMediaFile(event) {
+      const input = event?.target;
+      const file = input?.files && input.files[0];
+      if (!file || !pendingRepairSubmissionId) return;
+
+      const fd = new FormData();
+      fd.append('media', file);
+      try {
+        const res = await fetch('/api/teacher/submissions/' + encodeURIComponent(pendingRepairSubmissionId) + '/repair-media', {
+          method: 'POST',
+          headers: { 'x-teacher-auth': token },
+          body: fd
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || res.statusText);
+        await reloadDashboard();
+        toast('媒体修复成功，作品已重新挂回主存与缩略图链路', 'success');
+      } catch (e) {
+        toast('修复失败：' + e.message, 'error');
+      } finally {
+        pendingRepairSubmissionId = null;
+        if (input) input.value = '';
+      }
+    }
+
+    async function rebuildMissingThumbnail(submissionId) {
+      submissionId = decodeURIComponent(submissionId || '');
+      if (!submissionId) return;
+      try {
+        const result = await api('/teacher/submissions/' + encodeURIComponent(submissionId) + '/repair-thumbnail', {
+          method: 'POST',
+          body: JSON.stringify({})
+        });
+        await reloadDashboard();
+        toast(result?.submission ? '缩略图已重建' : '缩略图重建已触发', 'success');
+      } catch (e) {
+        toast('重建缩略图失败：' + e.message, 'error');
+      }
+    }
+
     function applyArchivePreset(days) {
       const input = document.getElementById('archiveAfterDaysInput');
       if (!input) return;
@@ -913,6 +1086,7 @@
         renderStorage(summary);
         renderMediaPipeline(summary);
         renderArchiveControls(summary);
+        renderMissingMedia(summary);
         renderWorkList('topRatedList', summary.top_rated, 'rating');
         renderWorkList('recentUploadsList', summary.recent_uploads, 'time');
         renderFeedbackList('feedbackHotList', summary.hot_feedback, 'hot');
@@ -1079,6 +1253,8 @@
         toast(`${actionText}失败：` + e.message, 'error');
       }
     }
+
+    document.getElementById('missingMediaRepairInput')?.addEventListener('change', repairSelectedMediaFile);
 
     reloadDashboard();
     setInterval(() => reloadDashboard(false), 20000);

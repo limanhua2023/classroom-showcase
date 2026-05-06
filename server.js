@@ -466,6 +466,10 @@ function mergeSubmissionWithManifest(submission = {}, manifest = null) {
     archive_tier: normalized.archive_tier,
     archive_status: normalized.archive_status,
     archive_provider: normalized.archive_provider,
+    archive_key: normalized.archive_key,
+    archive_url: normalized.archive_url,
+    archive_thumbnail_key: normalized.archive_thumbnail_key,
+    archive_thumbnail_url: normalized.archive_thumbnail_url,
     archived_at: normalized.archived_at || null,
     original_media_size: normalized.original_media_size,
     compression_saved_bytes: normalized.saved_bytes,
@@ -1206,6 +1210,34 @@ async function createVideoThumbnailFromUpload(filePath) {
   };
 }
 
+async function createImageThumbnailFromLocalFile(filePath) {
+  const thumbnailPath = createTempDerivedPath('webp');
+  await sharp(filePath, { animated: false })
+    .rotate()
+    .resize({
+      width: IMAGE_THUMB_MAX_DIMENSION,
+      height: IMAGE_THUMB_MAX_DIMENSION,
+      fit: 'inside',
+      withoutEnlargement: true
+    })
+    .webp({ quality: IMAGE_THUMB_QUALITY })
+    .toFile(thumbnailPath);
+  const thumbnailStat = await fs.promises.stat(thumbnailPath);
+  return {
+    finalPath: thumbnailPath,
+    contentType: getImageContentType(),
+    storageExt: 'webp',
+    size: thumbnailStat.size
+  };
+}
+
+async function generateThumbnailFromLocalFile(filePath, mediaType = 'image') {
+  if (String(mediaType || 'image').toLowerCase() === 'video') {
+    return createVideoThumbnailFromUpload(filePath);
+  }
+  return createImageThumbnailFromLocalFile(filePath);
+}
+
 async function compressVideoUpload(file) {
   const originalStat = await fs.promises.stat(file.path);
   const thumbnail = await createVideoThumbnailFromUpload(file.path).catch(() => null);
@@ -1256,6 +1288,159 @@ async function downloadSubmissionMediaToTemp(submission) {
   const buffer = await downloadRemoteBuffer(sourceUrl);
   await fs.promises.writeFile(tempPath, buffer);
   return tempPath;
+}
+
+async function downloadStorageObjectToTemp(storagePath, fallbackExt = 'bin') {
+  const safePath = sanitizeStoragePath(storagePath);
+  if (!safePath) throw new Error('Storage path is unavailable');
+  const ext = guessUploadExtension({ originalname: safePath }, fallbackExt);
+  const tempPath = createTempDerivedPath(ext);
+  const { data, error } = await supabase.storage.from('submissions').download(safePath);
+  if (error) throw error;
+  const buffer = Buffer.from(await data.arrayBuffer());
+  await fs.promises.writeFile(tempPath, buffer);
+  return tempPath;
+}
+
+async function repairSubmissionThumbnail(submission) {
+  const storagePath = sanitizeStoragePath(submission.storage_path) || storagePathFromPublicUrl(submission.image_url);
+  if (!storagePath) {
+    const err = new Error('Submission source file path is unavailable');
+    err.status = 400;
+    throw err;
+  }
+  const manifest = normalizeSubmissionMediaManifest(submission, await readSubmissionMediaManifest(submission.id).catch(() => null));
+  let sourceTempPath = null;
+  let thumbnailTempPath = null;
+  try {
+    sourceTempPath = await downloadStorageObjectToTemp(storagePath, submission.media_type === 'video' ? 'mp4' : 'jpg');
+    const thumbnail = await generateThumbnailFromLocalFile(sourceTempPath, submission.media_type || 'image');
+    if (!thumbnail?.finalPath) {
+      throw new Error('Thumbnail generation failed');
+    }
+    thumbnailTempPath = thumbnail.finalPath;
+    const thumbnailPath = manifest.thumbnail_path
+      || createSidecarStoragePath(storagePath, MEDIA_THUMBNAIL_FOLDER, thumbnail.storageExt);
+    if (!thumbnailPath) {
+      throw new Error('Thumbnail storage path could not be determined');
+    }
+    await uploadLocalFileToPrimaryStorage(thumbnail.finalPath, thumbnailPath, thumbnail.contentType);
+    if (manifest.archive_thumbnail_key) {
+      await deleteArchiveObject(manifest.archive_thumbnail_key, manifest.archive_provider);
+    }
+    const thumbnailUrl = publicUrlForStoragePath(thumbnailPath);
+    const nextManifest = await writeSubmissionMediaManifest(submission.id, {
+      ...manifest,
+      thumbnail_path: thumbnailPath,
+      thumbnail_url: thumbnailUrl,
+      poster_url: thumbnailUrl,
+      archive_status: ARCHIVE_PROVIDER === 'none' ? 'disabled' : 'pending',
+      archive_provider: null,
+      archive_key: null,
+      archive_url: null,
+      archive_thumbnail_key: null,
+      archive_thumbnail_url: null,
+      archive_error: null,
+      archive_attempts: 0,
+      archive_tier: 'primary'
+    });
+    return mergeSubmissionWithManifest(submission, nextManifest);
+  } catch (error) {
+    if (submissionManifestNotFound(error)) {
+      const err = new Error('源文件已缺失，请先上传修复文件');
+      err.status = 409;
+      throw err;
+    }
+    throw error;
+  } finally {
+    await Promise.all([safeUnlink(sourceTempPath), safeUnlink(thumbnailTempPath)]);
+  }
+}
+
+async function replaceTeacherSubmissionMedia(submission, file) {
+  if (!file) {
+    const err = new Error('Missing repair media file');
+    err.status = 400;
+    throw err;
+  }
+  const currentManifest = normalizeSubmissionMediaManifest(submission, await readSubmissionMediaManifest(submission.id).catch(() => null));
+  const currentStoragePath = sanitizeStoragePath(submission.storage_path) || storagePathFromPublicUrl(submission.image_url);
+  const currentThumbnailPath = sanitizeStoragePath(currentManifest.thumbnail_path);
+  const processed = await prepareUploadedMedia(file);
+  const tempFiles = Array.isArray(processed.tempFiles) ? processed.tempFiles : [file.path];
+  try {
+    const folder = processed.mediaType === 'video' ? 'videos' : 'uploads';
+    const nextStoragePath = `${folder}/${Date.now()}_${Math.random().toString(36).slice(2)}.${processed.storageExt}`;
+    await uploadLocalFileToPrimaryStorage(processed.finalPath, nextStoragePath, processed.contentType);
+    let nextThumbnailPath = null;
+    let nextThumbnailUrl = null;
+    if (processed.thumbnail?.finalPath) {
+      nextThumbnailPath = createSidecarStoragePath(nextStoragePath, MEDIA_THUMBNAIL_FOLDER, processed.thumbnail.storageExt);
+      if (nextThumbnailPath) {
+        await uploadLocalFileToPrimaryStorage(processed.thumbnail.finalPath, nextThumbnailPath, processed.thumbnail.contentType);
+        nextThumbnailUrl = publicUrlForStoragePath(nextThumbnailPath);
+      }
+    }
+
+    const nextImageUrl = publicUrlForStoragePath(nextStoragePath);
+    const nextMediaSize = Number(processed.size) || Number(submission.media_size) || 0;
+    const nextMediaType = processed.mediaType || (isVideoFilePath(nextStoragePath) ? 'video' : 'image');
+    await supabase.from('submissions').update({
+      image_url: nextImageUrl,
+      storage_path: nextStoragePath,
+      media_type: nextMediaType,
+      media_size: nextMediaSize
+    }).eq('id', submission.id);
+
+    if (currentStoragePath && currentStoragePath !== nextStoragePath) {
+      await deleteStorageObject(currentStoragePath);
+    }
+    if (currentThumbnailPath && currentThumbnailPath !== nextThumbnailPath) {
+      await deleteStorageObject(currentThumbnailPath);
+    }
+    if (currentManifest.archive_key) {
+      await deleteArchiveObject(currentManifest.archive_key, currentManifest.archive_provider);
+    }
+    if (currentManifest.archive_thumbnail_key) {
+      await deleteArchiveObject(currentManifest.archive_thumbnail_key, currentManifest.archive_provider);
+    }
+
+    const nextManifest = await writeSubmissionMediaManifest(submission.id, {
+      ...currentManifest,
+      thumbnail_path: nextThumbnailPath,
+      thumbnail_url: nextThumbnailUrl,
+      poster_url: nextThumbnailUrl,
+      transcode_status: processed.transcodeStatus || 'ready',
+      transcode_error: null,
+      transcode_attempts: 0,
+      original_media_size: Number(processed.originalSize || nextMediaSize || 0),
+      compressed: !!processed.optimized,
+      saved_bytes: Number(processed.savedBytes || 0),
+      saved_percent: Number(processed.originalSize || 0) > 0
+        ? Math.round((Number(processed.savedBytes || 0) / Number(processed.originalSize || 0)) * 100)
+        : 0,
+      archive_status: ARCHIVE_PROVIDER === 'none' ? 'disabled' : 'pending',
+      archive_provider: null,
+      archive_key: null,
+      archive_url: null,
+      archive_thumbnail_key: null,
+      archive_thumbnail_url: null,
+      archive_error: null,
+      archive_attempts: 0,
+      archive_tier: 'primary'
+    });
+
+    const refreshed = {
+      ...submission,
+      image_url: nextImageUrl,
+      storage_path: nextStoragePath,
+      media_type: nextMediaType,
+      media_size: nextMediaSize
+    };
+    return mergeSubmissionWithManifest(refreshed, nextManifest);
+  } finally {
+    await Promise.all(tempFiles.map(filePath => safeUnlink(filePath)));
+  }
 }
 
 async function transcodeSubmissionVideo(submission, manifest) {
@@ -1587,6 +1772,7 @@ async function buildStorageSummary(activityId) {
     })
   );
   const storageFiles = await listTrackedStorageFiles();
+  const trackedPathSet = new Set(storageFiles.map(file => file.path).filter(Boolean));
   const now = Date.now();
   const referencedBytes = referenced.reduce((sum, row) => sum + (row.media_size || 0), 0);
   const storageBytes = storageFiles.reduce((sum, row) => sum + Number(row.metadata?.size || 0), 0);
@@ -1648,7 +1834,7 @@ async function buildStorageSummary(activityId) {
     warningMessage = `当前仍可稳定使用，但如果课堂上传继续保持最近 7 天速度，建议尽早调整归档策略。`;
   }
 
-  return {
+  const summary = {
     total_files: storageFiles.length,
     total_bytes: storageBytes,
     referenced_files: referenced.length,
@@ -1676,6 +1862,81 @@ async function buildStorageSummary(activityId) {
       title: warningTitle,
       message: warningMessage
     }
+  };
+  Object.defineProperty(summary, '_tracked_path_set', {
+    value: trackedPathSet,
+    enumerable: false,
+    configurable: false
+  });
+  return summary;
+}
+
+function buildMissingMediaReport(submissions = [], storageSummary = {}) {
+  const trackedPathSet = storageSummary?._tracked_path_set instanceof Set
+    ? storageSummary._tracked_path_set
+    : new Set();
+  const items = [];
+  let sourceMissingCount = 0;
+  let thumbnailMissingCount = 0;
+
+  for (const submission of submissions || []) {
+    const mediaPath = sanitizeStoragePath(submission.storage_path) || storagePathFromPublicUrl(submission.image_url);
+    const thumbnailPath = sanitizeStoragePath(submission.thumbnail_path);
+    const mediaType = submission.media_type || (isVideoFilePath(mediaPath || submission.image_url) ? 'video' : 'image');
+    const sourceMissing = !!mediaPath && !trackedPathSet.has(mediaPath);
+    const thumbnailExpected = mediaType === 'video' || !!thumbnailPath;
+    const thumbnailMissing = thumbnailExpected && (
+      !thumbnailPath || !trackedPathSet.has(thumbnailPath)
+    );
+
+    if (!sourceMissing && !thumbnailMissing) continue;
+
+    if (sourceMissing) sourceMissingCount += 1;
+    if (thumbnailMissing) thumbnailMissingCount += 1;
+
+    const issueCodes = [];
+    const issueLabels = [];
+    if (sourceMissing) {
+      issueCodes.push('source_missing');
+      issueLabels.push('源文件缺失');
+    }
+    if (thumbnailMissing) {
+      issueCodes.push('thumbnail_missing');
+      issueLabels.push('缩略图缺失');
+    }
+
+    items.push({
+      id: submission.id,
+      title: submission.title || '未命名作品',
+      upload_time: submission.upload_time || null,
+      media_type: mediaType,
+      storage_path: mediaPath || '',
+      thumbnail_path: thumbnailPath || '',
+      issue_codes: issueCodes,
+      issue_labels: issueLabels,
+      source_missing: sourceMissing,
+      thumbnail_missing: thumbnailMissing,
+      can_rebuild_thumbnail: !sourceMissing,
+      has_archive_copy: !!(submission.archive_url || submission.archive_key),
+      users: submission.users || {}
+    });
+  }
+
+  items.sort((a, b) => {
+    if (Number(b.source_missing) !== Number(a.source_missing)) {
+      return Number(b.source_missing) - Number(a.source_missing);
+    }
+    if (Number(b.thumbnail_missing) !== Number(a.thumbnail_missing)) {
+      return Number(b.thumbnail_missing) - Number(a.thumbnail_missing);
+    }
+    return new Date(b.upload_time || 0).getTime() - new Date(a.upload_time || 0).getTime();
+  });
+
+  return {
+    total_count: items.length,
+    source_missing_count: sourceMissingCount,
+    thumbnail_missing_count: thumbnailMissingCount,
+    items
   };
 }
 
@@ -2377,6 +2638,47 @@ app.delete('/api/teacher/submissions/:id', teacherAuth, async (req, res) => {
     await deleteSubmissionMedia(sub);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/api/teacher/submissions/:id/repair-thumbnail', teacherAuth, async (req, res) => {
+  try {
+    const { data: sub, error: subErr } = await supabase.from('submissions')
+      .select('id,activity_id,title,image_url,storage_path,media_type,media_size,upload_time,user_id,users(name,student_id,class_name,group_name)')
+      .eq('id', req.params.id)
+      .single();
+    if (subErr || !sub) return res.status(404).json({ error: 'Submission not found' });
+
+    const auth = await ensureTeacherCanAccessActivity(req, sub.activity_id);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const repaired = await repairSubmissionThumbnail(sub);
+    res.json({ ok: true, submission: repaired });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+app.post('/api/teacher/submissions/:id/repair-media', teacherAuth, upload.single('media'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Missing repair media file' });
+    const { data: sub, error: subErr } = await supabase.from('submissions')
+      .select('id,activity_id,title,image_url,storage_path,media_type,media_size,upload_time,user_id,users(name,student_id,class_name,group_name)')
+      .eq('id', req.params.id)
+      .single();
+    if (subErr || !sub) return res.status(404).json({ error: 'Submission not found' });
+
+    const auth = await ensureTeacherCanAccessActivity(req, sub.activity_id);
+    if (!auth.ok) {
+      await safeUnlink(req.file.path);
+      return res.status(auth.status).json({ error: auth.error });
+    }
+
+    const repaired = await replaceTeacherSubmissionMedia(sub, req.file);
+    res.json({ ok: true, submission: repaired });
+  } catch (e) {
+    if (req.file?.path) await safeUnlink(req.file.path);
+    res.status(e.status || 500).json({ error: e.message });
+  }
 });
 
 // Student: delete own submission
@@ -3278,6 +3580,7 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
       .slice()
       .sort((a, b) => new Date(b.upload_time).getTime() - new Date(a.upload_time).getTime())
       .slice(0, 8);
+    const missingMedia = buildMissingMediaReport(submissions, storageSummary);
 
     res.json({
       activity: sanitizeActivity(activityResult.data),
@@ -3322,6 +3625,7 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
       top_rated: topRated,
       most_viewed: mostViewed,
       recent_uploads: recentUploads,
+      missing_media: missingMedia,
       latest_feedback: latestFeedback.items || [],
       hot_feedback: hotFeedback.items || [],
       feedback_likes_enabled: !!(latestFeedback.likes_enabled || hotFeedback.likes_enabled || feedbackLikesEnabled)
