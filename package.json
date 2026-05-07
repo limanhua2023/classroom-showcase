@@ -5,7 +5,8 @@
   "type": "module",
   "scripts": {
     "build": "echo 'No build needed'",
-    "start": "node server.js"
+    "start": "node server.js",
+    "google-drive:oauth": "node scripts/google-drive-oauth-token.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1042.0",
