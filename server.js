@@ -2078,6 +2078,8 @@ function buildMissingMediaReport(submissions = [], storageSummary = {}) {
   const items = [];
   let sourceMissingCount = 0;
   let thumbnailMissingCount = 0;
+  const now = Date.now();
+  const graceWindowMs = 2 * 60 * 1000;
 
   for (const submission of submissions || []) {
     const mediaPath = sanitizeStoragePath(submission.storage_path) || storagePathFromPublicUrl(submission.image_url);
@@ -2088,8 +2090,11 @@ function buildMissingMediaReport(submissions = [], storageSummary = {}) {
     const thumbnailMissing = thumbnailExpected && (
       !thumbnailPath || !trackedPathSet.has(thumbnailPath)
     );
+    const uploadAt = submission.upload_time ? new Date(submission.upload_time).getTime() : 0;
+    const withinGraceWindow = uploadAt > 0 && (now - uploadAt) < graceWindowMs;
 
     if (!sourceMissing && !thumbnailMissing) continue;
+    if (withinGraceWindow) continue;
 
     if (sourceMissing) sourceMissingCount += 1;
     if (thumbnailMissing) thumbnailMissingCount += 1;
