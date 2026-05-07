@@ -73,6 +73,9 @@ const ARCHIVE_PROVIDER = String(process.env.ARCHIVE_PROVIDER || 'none').trim().t
 const DEFAULT_ARCHIVE_DELETE_PRIMARY_AFTER_SUCCESS = /^true$/i.test(String(process.env.ARCHIVE_DELETE_PRIMARY_AFTER_SUCCESS || 'false'));
 const GOOGLE_DRIVE_FOLDER_ID = String(process.env.GOOGLE_DRIVE_FOLDER_ID || '').trim();
 const GOOGLE_DRIVE_PUBLIC_LINKS = /^true$/i.test(String(process.env.GOOGLE_DRIVE_PUBLIC_LINKS || 'false'));
+const GOOGLE_DRIVE_CLIENT_ID = String(process.env.GOOGLE_DRIVE_CLIENT_ID || '').trim();
+const GOOGLE_DRIVE_CLIENT_SECRET = String(process.env.GOOGLE_DRIVE_CLIENT_SECRET || '').trim();
+const GOOGLE_DRIVE_REFRESH_TOKEN = String(process.env.GOOGLE_DRIVE_REFRESH_TOKEN || '').trim();
 const ARCHIVE_S3_BUCKET = String(process.env.ARCHIVE_S3_BUCKET || '').trim();
 const ARCHIVE_S3_REGION = String(process.env.ARCHIVE_S3_REGION || 'auto').trim();
 const ARCHIVE_S3_ENDPOINT = String(process.env.ARCHIVE_S3_ENDPOINT || '').trim();
@@ -536,6 +539,8 @@ async function deleteStorageObject(storagePath, options = {}) {
 
 const mediaManifestCache = new Map();
 let googleDriveClientPromise = null;
+let googleDriveDestinationInfoPromise = null;
+let googleDriveDestinationInfoExpiresAt = 0;
 let s3ArchiveClient = null;
 const archiveSnapshotListCache = new Map();
 const backgroundTaskState = {
@@ -773,18 +778,122 @@ function parseGoogleDriveServiceAccount() {
   }
 }
 
+function getGoogleDriveAuthInfo() {
+  if (GOOGLE_DRIVE_CLIENT_ID && GOOGLE_DRIVE_CLIENT_SECRET && GOOGLE_DRIVE_REFRESH_TOKEN) {
+    return {
+      mode: 'oauth-refresh-token',
+      configured: true,
+      client_id: GOOGLE_DRIVE_CLIENT_ID,
+      client_secret: GOOGLE_DRIVE_CLIENT_SECRET,
+      refresh_token: GOOGLE_DRIVE_REFRESH_TOKEN,
+      label: 'OAuth refresh token'
+    };
+  }
+  const credentials = parseGoogleDriveServiceAccount();
+  if (credentials) {
+    return {
+      mode: 'service-account',
+      configured: true,
+      credentials,
+      email: String(credentials.client_email || '').trim() || null,
+      label: 'Service account'
+    };
+  }
+  return {
+    mode: 'none',
+    configured: false,
+    label: 'Not configured'
+  };
+}
+
 async function getGoogleDriveClient() {
   if (googleDriveClientPromise) return googleDriveClientPromise;
   googleDriveClientPromise = (async () => {
-    const credentials = parseGoogleDriveServiceAccount();
-    if (!credentials || !GOOGLE_DRIVE_FOLDER_ID) return null;
-    const auth = new google.auth.GoogleAuth({
-      credentials,
-      scopes: ['https://www.googleapis.com/auth/drive']
-    });
+    const authInfo = getGoogleDriveAuthInfo();
+    if (!authInfo.configured || !GOOGLE_DRIVE_FOLDER_ID) return null;
+    let auth = null;
+    if (authInfo.mode === 'oauth-refresh-token') {
+      auth = new google.auth.OAuth2(authInfo.client_id, authInfo.client_secret);
+      auth.setCredentials({ refresh_token: authInfo.refresh_token });
+    } else if (authInfo.mode === 'service-account') {
+      auth = new google.auth.GoogleAuth({
+        credentials: authInfo.credentials,
+        scopes: ['https://www.googleapis.com/auth/drive']
+      });
+    }
+    if (!auth) return null;
     return google.drive({ version: 'v3', auth });
   })();
   return googleDriveClientPromise;
+}
+
+async function inspectGoogleDriveDestination(force = false) {
+  if (ARCHIVE_PROVIDER !== 'google-drive') return null;
+  const authInfo = getGoogleDriveAuthInfo();
+  if (!authInfo.configured || !GOOGLE_DRIVE_FOLDER_ID) return null;
+  if (!force && googleDriveDestinationInfoPromise && googleDriveDestinationInfoExpiresAt > Date.now()) {
+    return googleDriveDestinationInfoPromise;
+  }
+  googleDriveDestinationInfoPromise = (async () => {
+    try {
+      const drive = await getGoogleDriveClient();
+      if (!drive) return null;
+      const { data } = await drive.files.get({
+        fileId: GOOGLE_DRIVE_FOLDER_ID,
+        fields: 'id,name,mimeType,trashed,driveId,capabilities/canAddChildren,owners(displayName,emailAddress)',
+        supportsAllDrives: true
+      });
+      const destinationType = data.driveId ? 'shared-drive' : 'my-drive';
+      const canWrite = data.capabilities?.canAddChildren !== false;
+      const quotaBlocked = authInfo.mode === 'service-account' && destinationType !== 'shared-drive';
+      return {
+        ok: true,
+        folder_id: data.id || GOOGLE_DRIVE_FOLDER_ID,
+        folder_name: data.name || null,
+        destination_type: destinationType,
+        drive_id: data.driveId || null,
+        auth_mode: authInfo.mode,
+        can_write: canWrite && !quotaBlocked,
+        quota_blocked: quotaBlocked,
+        owner_email: Array.isArray(data.owners) ? String(data.owners[0]?.emailAddress || '').trim() || null : null,
+        warning: quotaBlocked
+          ? '当前是 Google Drive 服务账号写入个人 My Drive，Google 官方会拒绝写入。请改用 OAuth refresh token，或切换到 Shared Drive / S3。'
+          : null
+      };
+    } catch (error) {
+      return {
+        ok: false,
+        auth_mode: authInfo.mode,
+        error: String(error?.message || error || 'Google Drive inspection failed')
+      };
+    }
+  })();
+  googleDriveDestinationInfoExpiresAt = Date.now() + OPS_SNAPSHOT_LIST_TTL_MS;
+  return googleDriveDestinationInfoPromise;
+}
+
+async function assertArchiveProviderWritable(provider = getArchiveProviderInfo()) {
+  if (!provider?.configured) {
+    const error = new Error('Archive provider is not configured');
+    error.status = 400;
+    throw error;
+  }
+  if (provider.name !== 'google-drive') return provider;
+  const destination = await inspectGoogleDriveDestination();
+  if (destination?.quota_blocked) {
+    const error = new Error(destination.warning || 'Google Drive archive destination is not writable');
+    error.status = 400;
+    throw error;
+  }
+  if (destination?.ok === false) {
+    const error = new Error(destination.error || 'Google Drive destination inspection failed');
+    error.status = 400;
+    throw error;
+  }
+  return {
+    ...provider,
+    destination
+  };
 }
 
 function getS3ArchiveClient() {
@@ -807,10 +916,12 @@ function getS3ArchiveClient() {
 function getArchiveProviderInfo(policy = null) {
   const effectivePolicy = policy || resolveActivityArchivePolicy();
   if (ARCHIVE_PROVIDER === 'google-drive') {
-    const credentials = parseGoogleDriveServiceAccount();
+    const authInfo = getGoogleDriveAuthInfo();
     return {
       name: 'google-drive',
-      configured: !!(credentials && GOOGLE_DRIVE_FOLDER_ID),
+      configured: !!(authInfo.configured && GOOGLE_DRIVE_FOLDER_ID),
+      auth_mode: authInfo.mode,
+      auth_label: authInfo.label,
       after_days: effectivePolicy.after_days,
       delete_primary_after_success: effectivePolicy.delete_primary_after_success,
       can_serve_public_url: GOOGLE_DRIVE_PUBLIC_LINKS
@@ -2071,6 +2182,7 @@ async function processArchiveQueue({ activityId = null, limit = ARCHIVE_BATCH_SI
   let processed = 0;
   let queued = 0;
   try {
+    const writableProvider = await assertArchiveProviderWritable(baseProvider);
     let query = supabase.from('submissions')
       .select('id,activity_id,title,image_url,storage_path,media_type,media_size,upload_time,status')
       .order('upload_time', { ascending: true });
@@ -2093,7 +2205,17 @@ async function processArchiveQueue({ activityId = null, limit = ARCHIVE_BATCH_SI
 
     const activityPolicy = activityId ? resolveActivityArchivePolicy(activityConfigMap.get(String(activityId))) : null;
     if (activityPolicy && !getArchiveCutoffIso(activityPolicy.after_days)) {
-      const result = { processed: 0, queued: 0, skipped: true, reason: 'archive-disabled', provider: getArchiveProviderInfo(activityPolicy) };
+      const result = {
+        processed: 0,
+        queued: 0,
+        skipped: true,
+        reason: 'archive-disabled',
+        provider: {
+          ...writableProvider,
+          after_days: activityPolicy.after_days,
+          delete_primary_after_success: activityPolicy.delete_primary_after_success
+        }
+      };
       recordTaskRunSuccess(taskState, result, { origin: source, activityId });
       return result;
     }
@@ -2104,7 +2226,11 @@ async function processArchiveQueue({ activityId = null, limit = ARCHIVE_BATCH_SI
       const cutoffIso = getArchiveCutoffIso(policy.after_days);
       if (!cutoffIso) continue;
       if (new Date(submission.upload_time).getTime() > new Date(cutoffIso).getTime()) continue;
-      const provider = getArchiveProviderInfo(policy);
+      const provider = {
+        ...writableProvider,
+        after_days: policy.after_days,
+        delete_primary_after_success: policy.delete_primary_after_success
+      };
       const manifest = normalizeSubmissionMediaManifest(submission, await readSubmissionMediaManifest(submission.id).catch(() => null));
       if (['mirrored', 'cold'].includes(manifest.archive_status)) continue;
       if (manifest.archive_status === 'processing') continue;
@@ -2173,7 +2299,18 @@ async function processArchiveQueue({ activityId = null, limit = ARCHIVE_BATCH_SI
       processed += 1;
     }
 
-    const result = { processed, queued, skipped: false, provider: activityPolicy ? getArchiveProviderInfo(activityPolicy) : baseProvider };
+    const result = {
+      processed,
+      queued,
+      skipped: false,
+      provider: activityPolicy
+        ? {
+          ...writableProvider,
+          after_days: activityPolicy.after_days,
+          delete_primary_after_success: activityPolicy.delete_primary_after_success
+        }
+        : writableProvider
+    };
     recordTaskRunSuccess(taskState, result, { origin: source, activityId });
     return result;
   } catch (error) {
@@ -2562,6 +2699,10 @@ async function buildActivitySnapshot(activityId) {
   const activity = sanitizeActivity(activityResult.data || {});
   const archivePolicy = resolveActivityArchivePolicy(activity);
   const archiveProvider = getArchiveProviderInfo(archivePolicy);
+  const archiveDestination = archiveProvider.name === 'google-drive'
+    ? await inspectGoogleDriveDestination().catch(() => null)
+    : null;
+  if (archiveDestination) archiveProvider.destination = archiveDestination;
 
   const roster = rosterResult.error ? [] : (rosterResult.data || []);
   const rosterReady = !rosterResult.error;
@@ -4262,6 +4403,10 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
     const mutedRosterRows = rosterRows.filter(item => item.feedback_muted);
     const archivePolicy = resolveActivityArchivePolicy(activityResult.data);
     const archiveProvider = getArchiveProviderInfo(archivePolicy);
+    const archiveDestination = archiveProvider.name === 'google-drive'
+      ? await inspectGoogleDriveDestination().catch(() => null)
+      : null;
+    if (archiveDestination) archiveProvider.destination = archiveDestination;
     const archiveCutoffIso = getArchiveCutoffIso(archivePolicy.after_days);
     const mediaPipeline = submissions.reduce((acc, item) => {
       if (item.media_type === 'video') {
@@ -4425,7 +4570,7 @@ app.post('/api/teacher/archive-run', teacherAuth, async (req, res) => {
     const result = await processArchiveQueue({ activityId: activity_id, limit: ARCHIVE_BATCH_SIZE, source: 'manual' });
     res.json({ ok: true, ...result });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(e.status || 500).json({ error: e.message });
   }
 });
 
@@ -4460,7 +4605,7 @@ app.post('/api/teacher/backup-snapshot/archive', teacherAuth, async (req, res) =
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
     const snapshot = await buildActivitySnapshot(activity_id);
-    const provider = getArchiveProviderInfo(resolveActivityArchivePolicy(snapshot.activity));
+    const provider = await assertArchiveProviderWritable(getArchiveProviderInfo(resolveActivityArchivePolicy(snapshot.activity)));
     if (!provider.configured) {
       return res.status(400).json({ error: 'Archive provider is not configured' });
     }

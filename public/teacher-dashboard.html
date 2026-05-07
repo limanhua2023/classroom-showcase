@@ -958,6 +958,9 @@
     function renderMediaPipeline(summary) {
       const pipeline = summary.media_pipeline || {};
       const provider = pipeline.provider || { name: 'none', configured: false, after_days: 0, delete_primary_after_success: false, can_serve_public_url: false };
+      const providerDestination = provider.destination || {};
+      const providerWarning = provider.warning || providerDestination.warning || providerDestination.error || '';
+      const providerLabel = provider.auth_mode ? `${provider.name || 'none'} / ${provider.auth_mode}` : (provider.name || 'none');
       const transcode = pipeline.transcode || {};
       const archive = pipeline.archive || {};
       const pipelineMiniStats = document.getElementById('pipelineMiniStats');
@@ -985,24 +988,34 @@
       `).join('');
 
       pipelineMetaRow.innerHTML = [
-        `归档提供方 ${provider.name || 'none'}`,
+        `归档提供方 ${providerLabel}`,
         provider.configured ? '已配置' : '未配置',
+        providerDestination.destination_type === 'shared-drive'
+          ? '归档目标 Shared Drive'
+          : providerDestination.destination_type === 'my-drive'
+            ? '归档目标 My Drive'
+            : '',
         `归档阈值 ${provider.after_days || 0} 天`,
         provider.delete_primary_after_success ? '归档成功后切冷存' : '保留主存副本',
         provider.can_serve_public_url ? '可公网访问归档文件' : '归档仅做备份'
-      ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+      ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
 
       runTranscodeBtn.disabled = !Number(pipeline.video_total || 0);
-      runArchiveBtn.disabled = !provider.configured;
+      runArchiveBtn.disabled = !provider.configured || !!providerWarning;
       actionText.textContent = provider.configured
         ? '可手动触发一次即时转码或归档，无需等待后台定时轮询。'
         : '尚未配置 Google Drive 或 S3 归档环境变量，当前仅保留在主存。';
+      if (providerWarning) {
+        actionText.textContent += ` 当前归档告警：${providerWarning}`;
+      }
     }
 
     function renderArchiveControls(summary) {
       const activity = summary.activity || {};
       const storage = summary.storage || {};
       const provider = summary.media_pipeline?.provider || {};
+      const providerDestination = provider.destination || {};
+      const providerWarning = provider.warning || providerDestination.warning || providerDestination.error || '';
       const daysInput = document.getElementById('archiveAfterDaysInput');
       const deleteToggle = document.getElementById('archiveDeletePrimaryToggle');
       const badge = document.getElementById('archivePolicyBadge');
@@ -1034,13 +1047,23 @@
       metaBox.innerHTML = [
         `近 7 天上传 ${storage.recent_upload_count_7d || 0} 件`,
         `日均增长 ${formatBytes(storage.estimated_growth_bytes_per_day || 0)}`,
-        provider.configured ? `归档已接通 ${provider.name}` : '归档提供方未接通',
+        provider.configured
+          ? `归档已接通 ${provider.auth_mode ? `${provider.name}/${provider.auth_mode}` : provider.name}`
+          : '归档提供方未接通',
+        providerDestination.destination_type === 'shared-drive'
+          ? '当前目标 Shared Drive'
+          : providerDestination.destination_type === 'my-drive'
+            ? '当前目标 My Drive'
+            : '',
         deleteToggle.checked ? '归档后将尝试释放 Supabase 主存' : '当前只归档备份，不释放 Supabase 主存'
-      ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+      ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
 
       hint.textContent = provider.configured
         ? '这里保存的是“当前活动”的归档策略，不会改动 Google Drive 凭据本身。首次建议先用镜像模式观察 1 至 2 天，再决定是否开启冷存。'
         : '归档提供方尚未配置完成，当前只能保存策略草稿，不能真正归档。';
+      if (providerWarning) {
+        hint.textContent += ` 当前告警：${providerWarning}`;
+      }
     }
 
     function formatDurationMsHuman(value) {
@@ -1120,21 +1143,34 @@
       const archiveBtn = document.getElementById('archiveSnapshotBtn');
       const snapshots = summary.ops?.snapshots || {};
       const provider = snapshots.provider || { name: 'none', configured: false };
+      const providerDestination = provider.destination || {};
+      const providerWarning = provider.warning || providerDestination.warning || providerDestination.error || '';
       const rows = Array.isArray(snapshots.items) ? snapshots.items : [];
       if (!snapshotSummary || !metaBox || !listBox || !hint || !archiveBtn) return;
 
-      archiveBtn.disabled = !provider.configured;
+      archiveBtn.disabled = !provider.configured || !!providerWarning;
       snapshotSummary.textContent = rows.length ? `最近 ${rows.length} 份` : '尚未生成';
       metaBox.innerHTML = [
-        `归档提供方 ${provider.name || 'none'}`,
+        `归档提供方 ${provider.auth_mode ? `${provider.name || 'none'} / ${provider.auth_mode}` : (provider.name || 'none')}`,
         provider.configured ? '云端备份可用' : '云端备份未配置',
+        providerDestination.destination_type === 'shared-drive'
+          ? '快照目标 Shared Drive'
+          : providerDestination.destination_type === 'my-drive'
+            ? '快照目标 My Drive'
+            : '',
         `最近快照 ${rows.length} 份`,
         snapshots.cache_ttl_ms ? `列表缓存 ${Math.round(Number(snapshots.cache_ttl_ms || 0) / 1000)} 秒` : '列表实时读取'
-      ].concat(snapshots.error ? [`读取异常：${snapshots.error}`] : []).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+      ].concat(snapshots.error ? [`读取异常：${snapshots.error}`] : [])
+        .concat(providerWarning ? [`归档告警：${providerWarning}`] : [])
+        .filter(Boolean)
+        .map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
 
       hint.textContent = provider.configured
         ? '下载快照适合本地留档；写入云端归档适合做恢复点。建议保留至少最近 3 次课前 / 课后快照。'
         : '当前仍可下载本地快照，但尚未配置云端快照归档。';
+      if (providerWarning) {
+        hint.textContent += ` 当前告警：${providerWarning}`;
+      }
 
       if (!rows.length) {
         listBox.innerHTML = '<div class="dashboard-panel-note">当前没有已归档的活动快照。先点“下载活动快照”或“写入云端归档”生成第一份。</div>';
