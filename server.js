@@ -2158,7 +2158,7 @@ function startVideoTranscodeLoop() {
 }
 
 function getArchiveCutoffIso(afterDays = DEFAULT_ARCHIVE_AFTER_DAYS) {
-  if (afterDays <= 0) return null;
+  if (!Number.isFinite(afterDays) || afterDays < 0) return null;
   return new Date(Date.now() - (afterDays * 24 * 60 * 60 * 1000)).toISOString();
 }
 
