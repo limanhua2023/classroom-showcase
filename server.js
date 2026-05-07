@@ -14,7 +14,7 @@ import sharp from 'sharp';
 import ffmpegStatic from 'ffmpeg-static';
 import { spawn } from 'child_process';
 import { google } from 'googleapis';
-import { S3Client, PutObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 
 dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
@@ -55,6 +55,7 @@ const VIDEO_TRANSCODE_THREADS = Math.max(1, Number(process.env.VIDEO_TRANSCODE_T
 const VIDEO_MAXRATE = '1600k';
 const MEDIA_MANIFEST_FOLDER = 'manifests';
 const MEDIA_THUMBNAIL_FOLDER = 'thumbs';
+const STORAGE_TRASH_FOLDER = 'trash';
 const IMAGE_THUMB_MAX_DIMENSION = 720;
 const IMAGE_THUMB_QUALITY = 76;
 const VIDEO_THUMB_MAX_WIDTH = 960;
@@ -80,6 +81,8 @@ const ARCHIVE_S3_SECRET_ACCESS_KEY = String(process.env.ARCHIVE_S3_SECRET_ACCESS
 const ARCHIVE_S3_FORCE_PATH_STYLE = /^true$/i.test(String(process.env.ARCHIVE_S3_FORCE_PATH_STYLE || 'true'));
 const ARCHIVE_S3_PUBLIC_BASE_URL = String(process.env.ARCHIVE_S3_PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
 const STORAGE_WARNING_LIMIT_BYTES = Math.max(128 * 1024 * 1024, Number(process.env.STORAGE_WARNING_LIMIT_BYTES || 1024 * 1024 * 1024));
+const STORAGE_SAFE_DELETE = !/^false$/i.test(String(process.env.STORAGE_SAFE_DELETE || 'true'));
+const ARCHIVE_PERMANENT_DELETE = /^true$/i.test(String(process.env.ARCHIVE_PERMANENT_DELETE || 'false'));
 
 function escapeHtml(input = '') {
   const str = String(input);
@@ -306,9 +309,58 @@ function createMediaManifestStoragePath(submissionId) {
   return `${MEDIA_MANIFEST_FOLDER}/${safeId}.json`;
 }
 
-async function deleteStorageObject(storagePath) {
+function createTrashStoragePath(storagePath) {
+  const safePath = sanitizeStoragePath(storagePath);
+  if (!safePath) return null;
+  const encodedPath = Buffer.from(safePath, 'utf8').toString('base64url');
+  const baseName = path.posix.basename(safePath).replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 80) || 'object';
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+  return `${STORAGE_TRASH_FOLDER}/${stamp}_${baseName}_${encodedPath}`;
+}
+
+async function quarantineStorageObject(storagePath, reason = 'safe-delete') {
   const safePath = sanitizeStoragePath(storagePath);
   if (!safePath) return false;
+  if (safePath.startsWith(`${STORAGE_TRASH_FOLDER}/`)) {
+    return deleteStorageObject(safePath, { permanent: true, reason: 'trash-purge' });
+  }
+  const trashPath = createTrashStoragePath(safePath);
+  if (!trashPath) return false;
+  const bucket = supabase.storage.from('submissions');
+  let copied = false;
+  try {
+    const { error: copyError } = await bucket.copy(safePath, trashPath);
+    if (copyError) throw copyError;
+    copied = true;
+  } catch (copyError) {
+    try {
+      const { data, error: downloadError } = await bucket.download(safePath);
+      if (downloadError) throw downloadError;
+      const buffer = Buffer.from(await data.arrayBuffer());
+      await uploadBufferToPrimaryStorage(trashPath, buffer, contentTypeForExtension(path.extname(safePath), 'application/octet-stream'));
+      copied = true;
+    } catch (fallbackError) {
+      console.warn('Failed to quarantine storage object:', safePath, reason, fallbackError.message || fallbackError);
+      return false;
+    }
+  }
+
+  if (!copied) return false;
+  const { error } = await supabase.storage.from('submissions').remove([safePath]);
+  if (error) {
+    console.warn('Failed to remove quarantined storage object:', safePath, error.message);
+    return false;
+  }
+  return true;
+}
+
+async function deleteStorageObject(storagePath, options = {}) {
+  const safePath = sanitizeStoragePath(storagePath);
+  if (!safePath) return false;
+  const permanent = !!options.permanent || !STORAGE_SAFE_DELETE;
+  if (!permanent) {
+    return quarantineStorageObject(safePath, options.reason || 'safe-delete');
+  }
   const { error } = await supabase.storage.from('submissions').remove([safePath]);
   if (error) {
     console.warn('Failed to delete storage object:', safePath, error.message);
@@ -529,6 +581,18 @@ async function downloadRemoteBuffer(sourceUrl) {
   return Buffer.from(await response.arrayBuffer());
 }
 
+async function streamBodyToBuffer(body) {
+  if (!body) return Buffer.alloc(0);
+  if (Buffer.isBuffer(body)) return body;
+  if (body instanceof Uint8Array) return Buffer.from(body);
+  if (typeof body.arrayBuffer === 'function') return Buffer.from(await body.arrayBuffer());
+  const chunks = [];
+  for await (const chunk of body) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+  }
+  return Buffer.concat(chunks);
+}
+
 function parseGoogleDriveServiceAccount() {
   const inline = String(process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON || process.env.GOOGLE_SERVICE_ACCOUNT_JSON || '').trim();
   if (!inline) return null;
@@ -664,21 +728,58 @@ async function uploadFileToArchive(localPath, submission, kind, ext, contentType
   return null;
 }
 
-async function deleteArchiveObject(archiveKey, providerName) {
+async function deleteArchiveObject(archiveKey, providerName, options = {}) {
   if (!archiveKey || !providerName) return false;
+  const permanent = !!options.permanent || ARCHIVE_PERMANENT_DELETE;
   if (providerName === 'google-drive') {
     const drive = await getGoogleDriveClient();
     if (!drive) return false;
-    await drive.files.delete({ fileId: archiveKey, supportsAllDrives: true }).catch(() => {});
+    if (permanent) {
+      await drive.files.delete({ fileId: archiveKey, supportsAllDrives: true }).catch(() => {});
+    } else {
+      await drive.files.update({
+        fileId: archiveKey,
+        supportsAllDrives: true,
+        requestBody: { trashed: true }
+      }).catch(() => {});
+    }
     return true;
   }
   if (providerName === 's3') {
+    if (!permanent) return false;
     const client = getS3ArchiveClient();
     if (!client) return false;
     await client.send(new DeleteObjectCommand({ Bucket: ARCHIVE_S3_BUCKET, Key: archiveKey })).catch(() => {});
     return true;
   }
   return false;
+}
+
+async function downloadArchiveObjectToTemp({ archiveKey, archiveUrl, providerName, fallbackExt = 'bin' } = {}) {
+  const ext = guessUploadExtension({ originalname: archiveKey || archiveUrl || `archive.${fallbackExt}` }, fallbackExt);
+  const tempPath = createTempDerivedPath(ext);
+  let buffer = null;
+
+  if (archiveUrl) {
+    buffer = await downloadRemoteBuffer(archiveUrl);
+  } else if (providerName === 'google-drive' && archiveKey) {
+    const drive = await getGoogleDriveClient();
+    if (!drive) throw new Error('Google Drive archive client is not configured');
+    const { data } = await drive.files.get(
+      { fileId: archiveKey, alt: 'media', supportsAllDrives: true },
+      { responseType: 'arraybuffer' }
+    );
+    buffer = Buffer.from(data);
+  } else if (providerName === 's3' && archiveKey) {
+    const client = getS3ArchiveClient();
+    if (!client) throw new Error('S3 archive client is not configured');
+    const result = await client.send(new GetObjectCommand({ Bucket: ARCHIVE_S3_BUCKET, Key: archiveKey }));
+    buffer = await streamBodyToBuffer(result.Body);
+  }
+
+  if (!buffer?.length) throw new Error('Archive object is unavailable');
+  await fs.promises.writeFile(tempPath, buffer);
+  return tempPath;
 }
 
 async function deleteSubmissionMedia(submission) {
@@ -1443,6 +1544,93 @@ async function replaceTeacherSubmissionMedia(submission, file) {
   }
 }
 
+async function restoreSubmissionFromArchive(submission) {
+  const manifest = normalizeSubmissionMediaManifest(submission, await readSubmissionMediaManifest(submission.id).catch(() => null));
+  if (!manifest.archive_key && !manifest.archive_url) {
+    const err = new Error('No archive copy is available for this submission');
+    err.status = 409;
+    throw err;
+  }
+
+  const currentStoragePath = sanitizeStoragePath(submission.storage_path) || storagePathFromPublicUrl(submission.image_url);
+  const mediaExt = guessUploadExtension({
+    originalname: currentStoragePath || manifest.archive_key || manifest.archive_url || submission.image_url
+  }, submission.media_type === 'video' ? 'mp4' : 'jpg');
+  const restoredStoragePath = currentStoragePath
+    || `${submission.media_type === 'video' ? 'videos' : 'uploads'}/${Date.now()}_${Math.random().toString(36).slice(2)}.${mediaExt}`;
+  const tempFiles = [];
+
+  try {
+    const mediaTempPath = await downloadArchiveObjectToTemp({
+      archiveKey: manifest.archive_key,
+      archiveUrl: manifest.archive_url,
+      providerName: manifest.archive_provider,
+      fallbackExt: mediaExt
+    });
+    tempFiles.push(mediaTempPath);
+    await uploadLocalFileToPrimaryStorage(
+      mediaTempPath,
+      restoredStoragePath,
+      contentTypeForExtension(mediaExt, submission.media_type === 'video' ? getVideoContentType() : getImageContentType())
+    );
+
+    let thumbnailPath = sanitizeStoragePath(manifest.thumbnail_path);
+    let thumbnailUrl = manifest.thumbnail_url || null;
+    if (manifest.archive_thumbnail_key || manifest.archive_thumbnail_url) {
+      const thumbExt = guessUploadExtension({
+        originalname: thumbnailPath || manifest.archive_thumbnail_key || manifest.archive_thumbnail_url
+      }, 'webp');
+      const thumbTempPath = await downloadArchiveObjectToTemp({
+        archiveKey: manifest.archive_thumbnail_key,
+        archiveUrl: manifest.archive_thumbnail_url,
+        providerName: manifest.archive_provider,
+        fallbackExt: thumbExt
+      });
+      tempFiles.push(thumbTempPath);
+      thumbnailPath = thumbnailPath || createSidecarStoragePath(restoredStoragePath, MEDIA_THUMBNAIL_FOLDER, thumbExt);
+      if (thumbnailPath) {
+        await uploadLocalFileToPrimaryStorage(thumbTempPath, thumbnailPath, contentTypeForExtension(thumbExt, getImageContentType()));
+        thumbnailUrl = publicUrlForStoragePath(thumbnailPath);
+      }
+    } else {
+      const generated = await generateThumbnailFromLocalFile(mediaTempPath, submission.media_type || 'image').catch(() => null);
+      if (generated?.finalPath) {
+        tempFiles.push(generated.finalPath);
+        thumbnailPath = thumbnailPath || createSidecarStoragePath(restoredStoragePath, MEDIA_THUMBNAIL_FOLDER, generated.storageExt);
+        if (thumbnailPath) {
+          await uploadLocalFileToPrimaryStorage(generated.finalPath, thumbnailPath, generated.contentType);
+          thumbnailUrl = publicUrlForStoragePath(thumbnailPath);
+        }
+      }
+    }
+
+    const imageUrl = publicUrlForStoragePath(restoredStoragePath);
+    await supabase.from('submissions').update({
+      image_url: imageUrl,
+      storage_path: restoredStoragePath
+    }).eq('id', submission.id);
+
+    const nextManifest = await writeSubmissionMediaManifest(submission.id, {
+      ...manifest,
+      thumbnail_path: thumbnailPath || null,
+      thumbnail_url: thumbnailUrl || null,
+      poster_url: thumbnailUrl || null,
+      archive_status: 'mirrored',
+      archive_tier: 'mirrored',
+      archive_error: null,
+      updated_at: new Date().toISOString()
+    });
+
+    return mergeSubmissionWithManifest({
+      ...submission,
+      image_url: imageUrl,
+      storage_path: restoredStoragePath
+    }, nextManifest);
+  } finally {
+    await Promise.all(tempFiles.map(filePath => safeUnlink(filePath)));
+  }
+}
+
 async function transcodeSubmissionVideo(submission, manifest) {
   const inputPath = await downloadSubmissionMediaToTemp(submission);
   const outputPath = createTempDerivedPath('mp4');
@@ -1651,8 +1839,10 @@ async function processArchiveQueue({ activityId = null, limit = ARCHIVE_BATCH_SI
 
         const shouldPromoteToCold = provider.delete_primary_after_success && provider.can_serve_public_url && mediaArchive?.url;
         if (shouldPromoteToCold && mediaStoragePath) {
-          await deleteStorageObject(mediaStoragePath);
-          if (currentThumbnailPath) await deleteStorageObject(currentThumbnailPath);
+          await deleteStorageObject(mediaStoragePath, { permanent: true, reason: 'cold-archive-primary-release' });
+          if (currentThumbnailPath) {
+            await deleteStorageObject(currentThumbnailPath, { permanent: true, reason: 'cold-archive-primary-release' });
+          }
         }
 
         await writeSubmissionMediaManifest(submission.id, {
@@ -1724,7 +1914,7 @@ async function listStorageFolder(folder) {
 }
 
 async function listTrackedStorageFiles() {
-  const folders = ['uploads', 'videos', MEDIA_THUMBNAIL_FOLDER, MEDIA_MANIFEST_FOLDER];
+  const folders = ['uploads', 'videos', MEDIA_THUMBNAIL_FOLDER, MEDIA_MANIFEST_FOLDER, STORAGE_TRASH_FOLDER];
   const results = await Promise.all(folders.map(folder => listStorageFolder(folder).catch(() => [])));
   return results.flat();
 }
@@ -1758,8 +1948,13 @@ async function buildStorageSummary(activityId) {
 
   const referenced = activityRows.filter(row => row.storage_path);
 
+  const allRows = await Promise.all((allSubs || []).map(async row => {
+    const manifest = normalizeSubmissionMediaManifest(row, await readSubmissionMediaManifest(row.id).catch(() => null));
+    return { ...row, thumbnail_path: manifest.thumbnail_path };
+  }));
+
   const globallyReferencedPathSet = new Set(
-    (allSubs || []).flatMap(row => {
+    allRows.flatMap(row => {
       const storagePath = sanitizeStoragePath(row.storage_path) || storagePathFromPublicUrl(row.image_url);
       const derivedThumbPath = storagePath
         ? createSidecarStoragePath(storagePath, MEDIA_THUMBNAIL_FOLDER, (row.media_type || (isVideoFilePath(storagePath) ? 'video' : 'image')) === 'video' ? 'jpg' : 'webp')
@@ -1767,12 +1962,14 @@ async function buildStorageSummary(activityId) {
       return [
         storagePath,
         derivedThumbPath,
+        sanitizeStoragePath(row.thumbnail_path),
         createMediaManifestStoragePath(row.id)
       ].filter(Boolean);
     })
   );
   const storageFiles = await listTrackedStorageFiles();
   const trackedPathSet = new Set(storageFiles.map(file => file.path).filter(Boolean));
+  const trashFiles = storageFiles.filter(file => String(file.path || '').startsWith(`${STORAGE_TRASH_FOLDER}/`));
   const now = Date.now();
   const referencedBytes = referenced.reduce((sum, row) => sum + (row.media_size || 0), 0);
   const storageBytes = storageFiles.reduce((sum, row) => sum + Number(row.metadata?.size || 0), 0);
@@ -1786,6 +1983,7 @@ async function buildStorageSummary(activityId) {
     .reduce((sum, file) => sum + Number(file.metadata?.size || 0), 0);
 
   const orphanFiles = storageFiles.filter(file => {
+    if (String(file.path || '').startsWith(`${STORAGE_TRASH_FOLDER}/`)) return false;
     if (globallyReferencedPathSet.has(file.path)) return false;
     const createdMs = new Date(file.created_at || file.updated_at || 0).getTime();
     if (!Number.isFinite(createdMs) || createdMs <= 0) return false;
@@ -1827,7 +2025,7 @@ async function buildStorageSummary(activityId) {
   } else if (usagePercent >= 75 || remainingBytes <= 256 * 1024 * 1024 || (estimatedDaysToLimit !== null && estimatedDaysToLimit <= 21)) {
     warningLevel = 'warning';
     warningTitle = '空间进入预警区';
-    warningMessage = `当前桶总量已接近配额上限，建议把归档阈值调低到 7 天左右，并优先清理孤儿文件。`;
+    warningMessage = `当前桶总量已接近配额上限，建议把归档阈值调低到 7 天左右，并优先隔离孤儿文件后再评估空间。`;
   } else if (usagePercent >= 60 || (estimatedDaysToLimit !== null && estimatedDaysToLimit <= 45)) {
     warningLevel = 'attention';
     warningTitle = '建议提前归档';
@@ -1849,6 +2047,8 @@ async function buildStorageSummary(activityId) {
     orphan_files: orphanFiles,
     orphan_count: orphanFiles.length,
     orphan_bytes: orphanFiles.reduce((sum, file) => sum + file.size, 0),
+    trash_count: trashFiles.length,
+    trash_bytes: trashFiles.reduce((sum, file) => sum + Number(file.metadata?.size || 0), 0),
     largest_items: largestItems,
     quota_bytes: quotaBytes,
     usage_percent: Math.round(usagePercent * 10) / 10,
@@ -1905,6 +2105,7 @@ function buildMissingMediaReport(submissions = [], storageSummary = {}) {
       issueLabels.push('缩略图缺失');
     }
 
+    const hasArchiveCopy = !!(submission.archive_url || submission.archive_key);
     items.push({
       id: submission.id,
       title: submission.title || '未命名作品',
@@ -1917,7 +2118,10 @@ function buildMissingMediaReport(submissions = [], storageSummary = {}) {
       source_missing: sourceMissing,
       thumbnail_missing: thumbnailMissing,
       can_rebuild_thumbnail: !sourceMissing,
-      has_archive_copy: !!(submission.archive_url || submission.archive_key),
+      has_archive_copy: hasArchiveCopy,
+      can_restore_archive: sourceMissing && hasArchiveCopy,
+      archive_status: submission.archive_status || null,
+      archive_tier: submission.archive_tier || null,
       users: submission.users || {}
     });
   }
@@ -2677,6 +2881,24 @@ app.post('/api/teacher/submissions/:id/repair-media', teacherAuth, upload.single
     res.json({ ok: true, submission: repaired });
   } catch (e) {
     if (req.file?.path) await safeUnlink(req.file.path);
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+app.post('/api/teacher/submissions/:id/restore-archive', teacherAuth, async (req, res) => {
+  try {
+    const { data: sub, error: subErr } = await supabase.from('submissions')
+      .select('id,activity_id,title,image_url,storage_path,media_type,media_size,upload_time,user_id,users(name,student_id,class_name,group_name)')
+      .eq('id', req.params.id)
+      .single();
+    if (subErr || !sub) return res.status(404).json({ error: 'Submission not found' });
+
+    const auth = await ensureTeacherCanAccessActivity(req, sub.activity_id);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const restored = await restoreSubmissionFromArchive(sub);
+    res.json({ ok: true, submission: restored });
+  } catch (e) {
     res.status(e.status || 500).json({ error: e.message });
   }
 });
@@ -3648,13 +3870,19 @@ app.post('/api/teacher/storage-cleanup', teacherAuth, async (req, res) => {
       return res.json({ ok: true, removed: 0, bytes_freed: 0, summary: storageSummary });
     }
 
-    const { error } = await supabase.storage.from('submissions').remove(paths);
-    if (error) throw error;
+    let quarantined = 0;
+    for (const filePath of paths) {
+      if (await deleteStorageObject(filePath, { reason: 'teacher-orphan-cleanup' })) {
+        quarantined += 1;
+      }
+    }
 
     res.json({
       ok: true,
-      removed: paths.length,
-      bytes_freed: storageSummary.orphan_bytes,
+      removed: quarantined,
+      quarantined,
+      bytes_freed: 0,
+      bytes_quarantined: storageSummary.orphan_bytes,
       summary: storageSummary
     });
   } catch (e) {

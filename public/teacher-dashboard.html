@@ -218,6 +218,37 @@
       display: grid;
       gap: 12px;
     }
+    .missing-media-toolbar {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      margin: 12px 0;
+    }
+    .missing-media-filters,
+    .missing-media-batch {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .missing-media-filter {
+      border: 1px solid rgba(15, 23, 42, 0.12);
+      background: rgba(255, 255, 255, 0.72);
+      color: var(--text-main);
+      border-radius: 999px;
+      padding: 7px 12px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 0.78rem;
+      font-weight: 800;
+    }
+    .missing-media-filter.active {
+      background: #2563eb;
+      color: #ffffff;
+      border-color: #2563eb;
+    }
     .missing-media-item {
       display: flex;
       justify-content: space-between;
@@ -283,6 +314,10 @@
       .missing-media-actions {
         justify-content: flex-start;
       }
+      .missing-media-toolbar {
+        align-items: flex-start;
+        flex-direction: column;
+      }
     }
     @media (max-width: 640px) {
       .roster-toolbar {
@@ -322,7 +357,7 @@
       <div class="dashboard-actions">
         <button class="btn btn-primary" onclick="openDisplay()">打开大屏</button>
         <button class="btn btn-secondary" onclick="reloadDashboard(true)">刷新数据</button>
-        <button class="btn btn-secondary" id="cleanupBtn" onclick="cleanupStorage()">清理孤儿文件</button>
+        <button class="btn btn-secondary" id="cleanupBtn" onclick="cleanupStorage()">隔离孤儿文件</button>
       </div>
     </section>
 
@@ -359,7 +394,7 @@
             <div class="dashboard-panel-head">
               <div>
                 <div class="dashboard-panel-title">云存储与生命周期</div>
-                <div class="dashboard-panel-note">图片/视频上传后会先压缩，再进入 Supabase Storage；此处显示引用空间与可清理孤儿文件。</div>
+                <div class="dashboard-panel-note">图片/视频上传后会先压缩，再进入 Supabase Storage；此处显示引用空间与可隔离孤儿文件。</div>
               </div>
               <div class="card-badge" id="storageUsageLabel">0 B</div>
             </div>
@@ -459,6 +494,19 @@
           </div>
           <input id="missingMediaRepairInput" type="file" accept=".jpg,.jpeg,.png,.webp,.gif,.mp4,.mov" style="display:none;">
           <div class="storage-meta-row" id="missingMediaMeta"></div>
+          <div class="missing-media-toolbar">
+            <div class="missing-media-filters">
+              <button class="missing-media-filter active" type="button" data-missing-filter="all" onclick="setMissingMediaFilter('all')">全部</button>
+              <button class="missing-media-filter" type="button" data-missing-filter="source" onclick="setMissingMediaFilter('source')">源文件缺失</button>
+              <button class="missing-media-filter" type="button" data-missing-filter="thumbnail" onclick="setMissingMediaFilter('thumbnail')">缩略图缺失</button>
+              <button class="missing-media-filter" type="button" data-missing-filter="rebuildable" onclick="setMissingMediaFilter('rebuildable')">可重建</button>
+              <button class="missing-media-filter" type="button" data-missing-filter="archive" onclick="setMissingMediaFilter('archive')">可归档恢复</button>
+            </div>
+            <div class="missing-media-batch">
+              <button class="btn btn-secondary btn-sm" type="button" id="batchRebuildThumbBtn" onclick="batchRebuildMissingThumbnails()">批量重建缩略图</button>
+              <button class="btn btn-primary btn-sm" type="button" id="batchRestoreArchiveBtn" onclick="batchRestoreMissingFromArchive()">批量从归档恢复</button>
+            </div>
+          </div>
           <div class="missing-media-list" id="missingMediaList">
             <div class="dashboard-panel-note">正在检查缺失媒体...</div>
           </div>
@@ -587,6 +635,7 @@
 
     let dashboardSummary = null;
     let pendingRepairSubmissionId = null;
+    let missingMediaFilter = 'all';
 
     const toggleMeta = {
       upload_open: { label: '上传入口', note: '控制学生是否还能继续上传或替换作品。' },
@@ -644,7 +693,7 @@
         ['信息反馈', metrics.feedback_count || 0, summary.feedback_likes_enabled ? `点赞 ${metrics.feedback_like_count || 0}` : '点赞功能未启用'],
         ['最近 24h 上传', metrics.uploads_24h || 0, `近 7 天 ${metrics.uploads_7d || 0}`],
         ['已引用空间', formatBytes(storage.referenced_bytes || 0), `总文件 ${storage.referenced_files || 0}`],
-        ['可清理空间', formatBytes(storage.orphan_bytes || 0), `${storage.orphan_count || 0} 个孤儿文件`]
+        ['可隔离空间', formatBytes(storage.orphan_bytes || 0), `${storage.orphan_count || 0} 个孤儿文件`]
       ];
       document.getElementById('metricGrid').innerHTML = items.map(item => `
         <div class="dashboard-metric">
@@ -803,14 +852,14 @@
         `总文件 ${storage.total_files || 0}`,
         `已引用 ${storage.referenced_files || 0}`,
         `孤儿文件 ${storage.orphan_count || 0}`,
-        `可回收 ${formatBytes(storage.orphan_bytes || 0)}`,
+        `可隔离 ${formatBytes(storage.orphan_bytes || 0)}`,
         `剩余空间 ${formatBytes(storage.remaining_bytes || 0)}`
       ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
 
       const warningParts = [];
       if (warningInfo.message) warningParts.push(`${warningInfo.title || '空间提醒'}：${warningInfo.message}`);
       if (storage.orphan_count > 0) {
-        warningParts.push(`发现 ${storage.orphan_count} 个孤儿文件，点击“清理孤儿文件”可回收约 ${formatBytes(storage.orphan_bytes || 0)}。`);
+        warningParts.push(`发现 ${storage.orphan_count} 个孤儿文件，点击“隔离孤儿文件”可先移入安全区，避免误删。`);
       }
       if (warningParts.length) {
         warning.style.display = 'block';
@@ -914,24 +963,46 @@
     function renderMissingMedia(summary) {
       const report = summary.missing_media || {};
       const rows = Array.isArray(report.items) ? report.items : [];
+      const filteredRows = rows.filter(item => {
+        if (missingMediaFilter === 'source') return item.source_missing;
+        if (missingMediaFilter === 'thumbnail') return item.thumbnail_missing;
+        if (missingMediaFilter === 'rebuildable') return item.can_rebuild_thumbnail;
+        if (missingMediaFilter === 'archive') return item.can_restore_archive;
+        return true;
+      });
       const summaryBadge = document.getElementById('missingMediaSummary');
       const metaBox = document.getElementById('missingMediaMeta');
       const listBox = document.getElementById('missingMediaList');
       if (!summaryBadge || !metaBox || !listBox) return;
 
       summaryBadge.textContent = rows.length ? `${rows.length} 项待修复` : '当前无缺失';
+      document.querySelectorAll('[data-missing-filter]').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.missingFilter === missingMediaFilter);
+      });
+      const rebuildableCount = rows.filter(item => item.can_rebuild_thumbnail).length;
+      const restorableCount = rows.filter(item => item.can_restore_archive).length;
+      const rebuildBtn = document.getElementById('batchRebuildThumbBtn');
+      const restoreBtn = document.getElementById('batchRestoreArchiveBtn');
+      if (rebuildBtn) rebuildBtn.disabled = rebuildableCount === 0;
+      if (restoreBtn) restoreBtn.disabled = restorableCount === 0;
       metaBox.innerHTML = [
         `源文件缺失 ${report.source_missing_count || 0}`,
         `缩略图缺失 ${report.thumbnail_missing_count || 0}`,
-        rows.length ? '支持直接重建或上传替换' : '当前活动媒体状态正常'
+        `可重建 ${rebuildableCount}`,
+        `可归档恢复 ${restorableCount}`,
+        rows.length ? '支持直接重建、归档恢复或上传替换' : '当前活动媒体状态正常'
       ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
 
       if (!rows.length) {
         listBox.innerHTML = '<div class="dashboard-panel-note">当前活动没有检测到缺失媒体，旧作品和缩略图都可正常读取。</div>';
         return;
       }
+      if (!filteredRows.length) {
+        listBox.innerHTML = '<div class="dashboard-panel-note">当前筛选条件下没有待处理项目。</div>';
+        return;
+      }
 
-      listBox.innerHTML = rows.map(item => {
+      listBox.innerHTML = filteredRows.map(item => {
         const user = item.users || {};
         const chips = [];
         if (item.source_missing) chips.push('<span class="issue-chip">源文件缺失</span>');
@@ -947,11 +1018,17 @@
             </div>
             <div class="missing-media-actions">
               <button class="btn btn-secondary btn-sm" type="button" onclick="openRepairMediaPicker('${encodeURIComponent(item.id || '')}')">上传修复文件</button>
+              <button class="btn btn-secondary btn-sm" type="button" ${item.can_restore_archive ? '' : 'disabled'} onclick="restoreMissingFromArchive('${encodeURIComponent(item.id || '')}')">从归档恢复</button>
               <button class="btn btn-primary btn-sm" type="button" ${item.can_rebuild_thumbnail ? '' : 'disabled'} onclick="rebuildMissingThumbnail('${encodeURIComponent(item.id || '')}')">重建缩略图</button>
             </div>
           </div>
         `;
       }).join('');
+    }
+
+    function setMissingMediaFilter(filter) {
+      missingMediaFilter = filter || 'all';
+      renderMissingMedia(dashboardSummary || {});
     }
 
     function openRepairMediaPicker(submissionId) {
@@ -1001,6 +1078,89 @@
         toast(result?.submission ? '缩略图已重建' : '缩略图重建已触发', 'success');
       } catch (e) {
         toast('重建缩略图失败：' + e.message, 'error');
+      }
+    }
+
+    async function restoreMissingFromArchive(submissionId) {
+      submissionId = decodeURIComponent(submissionId || '');
+      if (!submissionId) return;
+      try {
+        await api('/teacher/submissions/' + encodeURIComponent(submissionId) + '/restore-archive', {
+          method: 'POST',
+          body: JSON.stringify({})
+        });
+        await reloadDashboard();
+        toast('已从归档副本恢复到主存储', 'success');
+      } catch (e) {
+        toast('归档恢复失败：' + e.message, 'error');
+      }
+    }
+
+    async function batchRebuildMissingThumbnails() {
+      const rows = (dashboardSummary?.missing_media?.items || []).filter(item => item.can_rebuild_thumbnail);
+      if (!rows.length) return toast('当前没有可直接重建的缩略图', 'error');
+      if (!confirm(`确认批量重建 ${rows.length} 个缩略图吗？`)) return;
+      const btn = document.getElementById('batchRebuildThumbBtn');
+      const originalText = btn?.textContent || '';
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = '重建中...';
+      }
+      let ok = 0;
+      let failed = 0;
+      try {
+        for (const item of rows) {
+          try {
+            await api('/teacher/submissions/' + encodeURIComponent(item.id) + '/repair-thumbnail', {
+              method: 'POST',
+              body: JSON.stringify({})
+            });
+            ok += 1;
+          } catch {
+            failed += 1;
+          }
+        }
+        await reloadDashboard();
+        toast(`批量重建完成：成功 ${ok} 个，失败 ${failed} 个`, failed ? 'error' : 'success');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
+      }
+    }
+
+    async function batchRestoreMissingFromArchive() {
+      const rows = (dashboardSummary?.missing_media?.items || []).filter(item => item.can_restore_archive);
+      if (!rows.length) return toast('当前没有可从归档恢复的作品', 'error');
+      if (!confirm(`确认从归档恢复 ${rows.length} 个作品吗？`)) return;
+      const btn = document.getElementById('batchRestoreArchiveBtn');
+      const originalText = btn?.textContent || '';
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = '恢复中...';
+      }
+      let ok = 0;
+      let failed = 0;
+      try {
+        for (const item of rows) {
+          try {
+            await api('/teacher/submissions/' + encodeURIComponent(item.id) + '/restore-archive', {
+              method: 'POST',
+              body: JSON.stringify({})
+            });
+            ok += 1;
+          } catch {
+            failed += 1;
+          }
+        }
+        await reloadDashboard();
+        toast(`归档恢复完成：成功 ${ok} 个，失败 ${failed} 个`, failed ? 'error' : 'success');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
       }
     }
 
@@ -1116,22 +1276,26 @@
     }
 
     async function cleanupStorage() {
-      if (!confirm('确认清理未被数据库引用的云端孤儿文件吗？')) return;
+      if (!confirm('确认将未被数据库引用的云端孤儿文件移入隔离区吗？')) return;
       const btn = document.getElementById('cleanupBtn');
       btn.disabled = true;
-      btn.textContent = '清理中...';
+        btn.textContent = '隔离中...';
       try {
         const result = await api('/teacher/storage-cleanup', {
           method: 'POST',
           body: JSON.stringify({ activity_id: actId })
         });
         await reloadDashboard();
-        toast(`已清理 ${result.removed || 0} 个文件，释放 ${formatBytes(result.bytes_freed || 0)}`, 'success');
+        if (result.quarantined) {
+          toast(`已隔离 ${result.quarantined || 0} 个孤儿文件，保留恢复窗口 ${formatBytes(result.bytes_quarantined || 0)}`, 'success');
+        } else {
+          toast(`已清理 ${result.removed || 0} 个文件，释放 ${formatBytes(result.bytes_freed || 0)}`, 'success');
+        }
       } catch (e) {
         toast('清理失败：' + e.message, 'error');
       } finally {
         btn.disabled = false;
-        btn.textContent = '清理孤儿文件';
+        btn.textContent = '隔离孤儿文件';
       }
     }
 
