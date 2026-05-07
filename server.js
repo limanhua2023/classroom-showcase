@@ -1775,7 +1775,16 @@ async function downloadSubmissionMediaToTemp(submission) {
   const storagePath = sanitizeStoragePath(submission.storage_path) || storagePathFromPublicUrl(sourceUrl) || storagePathFromPublicUrl(submission.image_url);
   const ext = guessUploadExtension({ originalname: storagePath || sourceUrl || submission.image_url }, 'mp4');
   const tempPath = createTempDerivedPath(ext);
-  const buffer = await downloadRemoteBuffer(sourceUrl);
+  let buffer = null;
+  if (storagePath) {
+    const { data, error } = await supabase.storage.from('submissions').download(storagePath);
+    if (!error && data) {
+      buffer = Buffer.from(await data.arrayBuffer());
+    }
+  }
+  if (!buffer?.length) {
+    buffer = await downloadRemoteBuffer(sourceUrl);
+  }
   await fs.promises.writeFile(tempPath, buffer);
   return tempPath;
 }
