@@ -345,6 +345,23 @@
       border-color: rgba(245, 158, 11, 0.18);
       color: #92400e;
     }
+    .issue-chip.neutral {
+      background: rgba(59, 130, 246, 0.12);
+      border-color: rgba(59, 130, 246, 0.18);
+      color: #1d4ed8;
+    }
+    .missing-media-error {
+      margin-top: 8px;
+      padding: 10px 12px;
+      border-radius: 12px;
+      background: rgba(239, 68, 68, 0.08);
+      border: 1px solid rgba(239, 68, 68, 0.12);
+      color: #b91c1c;
+      font-size: 0.8rem;
+      line-height: 1.6;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
     @media (max-width: 900px) {
       .control-grid {
         grid-template-columns: 1fr;
@@ -571,7 +588,7 @@
           <div class="dashboard-panel-head">
             <div>
               <div class="dashboard-panel-title">缺失媒体告警与修复</div>
-              <div class="dashboard-panel-note">自动列出源文件或缩略图已经失效的作品。教师可直接重建缩略图，或上传原文件进行替换修复。</div>
+              <div class="dashboard-panel-note">自动列出源文件、缩略图异常或归档失败的作品。教师可直接重建缩略图、重试归档，或上传原文件进行替换修复。</div>
             </div>
             <div class="card-badge" id="missingMediaSummary">正在检查</div>
           </div>
@@ -582,10 +599,12 @@
               <button class="missing-media-filter active" type="button" data-missing-filter="all" onclick="setMissingMediaFilter('all')">全部</button>
               <button class="missing-media-filter" type="button" data-missing-filter="source" onclick="setMissingMediaFilter('source')">源文件缺失</button>
               <button class="missing-media-filter" type="button" data-missing-filter="thumbnail" onclick="setMissingMediaFilter('thumbnail')">缩略图缺失</button>
+              <button class="missing-media-filter" type="button" data-missing-filter="failed" onclick="setMissingMediaFilter('failed')">归档失败</button>
               <button class="missing-media-filter" type="button" data-missing-filter="rebuildable" onclick="setMissingMediaFilter('rebuildable')">可重建</button>
               <button class="missing-media-filter" type="button" data-missing-filter="archive" onclick="setMissingMediaFilter('archive')">可归档恢复</button>
             </div>
             <div class="missing-media-batch">
+              <button class="btn btn-secondary btn-sm" type="button" id="batchRetryArchiveBtn" onclick="batchRetryFailedArchive()">批量重试失败归档</button>
               <button class="btn btn-secondary btn-sm" type="button" id="batchRebuildThumbBtn" onclick="batchRebuildMissingThumbnails()">批量重建缩略图</button>
               <button class="btn btn-primary btn-sm" type="button" id="batchRestoreArchiveBtn" onclick="batchRestoreMissingFromArchive()">批量从归档恢复</button>
             </div>
@@ -1198,6 +1217,7 @@
       const filteredRows = rows.filter(item => {
         if (missingMediaFilter === 'source') return item.source_missing;
         if (missingMediaFilter === 'thumbnail') return item.thumbnail_missing;
+        if (missingMediaFilter === 'failed') return item.archive_failed;
         if (missingMediaFilter === 'rebuildable') return item.can_rebuild_thumbnail;
         if (missingMediaFilter === 'archive') return item.can_restore_archive;
         return true;
@@ -1213,16 +1233,22 @@
       });
       const rebuildableCount = rows.filter(item => item.can_rebuild_thumbnail).length;
       const restorableCount = rows.filter(item => item.can_restore_archive).length;
+      const failedArchiveCount = rows.filter(item => item.archive_failed).length;
+      const retryableArchiveCount = rows.filter(item => item.can_retry_archive).length;
+      const retryBtn = document.getElementById('batchRetryArchiveBtn');
       const rebuildBtn = document.getElementById('batchRebuildThumbBtn');
       const restoreBtn = document.getElementById('batchRestoreArchiveBtn');
+      if (retryBtn) retryBtn.disabled = retryableArchiveCount === 0;
       if (rebuildBtn) rebuildBtn.disabled = rebuildableCount === 0;
       if (restoreBtn) restoreBtn.disabled = restorableCount === 0;
       metaBox.innerHTML = [
         `源文件缺失 ${report.source_missing_count || 0}`,
         `缩略图缺失 ${report.thumbnail_missing_count || 0}`,
+        `归档失败 ${report.archive_failed_count || failedArchiveCount}`,
+        `可重试归档 ${report.archive_retryable_count || retryableArchiveCount}`,
         `可重建 ${rebuildableCount}`,
         `可归档恢复 ${restorableCount}`,
-        rows.length ? '支持直接重建、归档恢复或上传替换' : '当前活动媒体状态正常'
+        rows.length ? '支持直接重建、归档恢复、失败归档重试或上传替换' : '当前活动媒体状态正常'
       ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
 
       if (!rows.length) {
@@ -1240,17 +1266,26 @@
         if (item.source_missing) chips.push('<span class="issue-chip">源文件缺失</span>');
         if (item.thumbnail_missing) chips.push(`<span class="issue-chip ${item.source_missing ? 'warning' : ''}">缩略图缺失</span>`);
         if (item.has_archive_copy) chips.push('<span class="issue-chip warning">已有归档副本</span>');
+        if (item.archive_failed) chips.push('<span class="issue-chip neutral">归档失败</span>');
+        const archiveMeta = [];
+        if (item.archive_status) archiveMeta.push(`状态：${item.archive_status}`);
+        if (Number.isFinite(Number(item.archive_attempts)) && Number(item.archive_attempts) > 0) {
+          archiveMeta.push(`尝试 ${Number(item.archive_attempts)} 次`);
+        }
         return `
           <div class="missing-media-item">
             <div class="missing-media-main">
               <div class="missing-media-title">${escapeHtml(item.title || '未命名作品')}</div>
               <div class="missing-media-meta">${escapeHtml(user.name || '未实名')} · ${escapeHtml(user.student_id || '-')} · ${item.media_type === 'video' ? '视频' : '图片'} · ${escapeHtml(formatBangkokTime(item.upload_time))}</div>
               <div class="missing-media-meta">${escapeHtml(item.storage_path || '无主存路径')}</div>
+              ${archiveMeta.length ? `<div class="missing-media-meta">${escapeHtml(archiveMeta.join(' · '))}</div>` : ''}
               <div>${chips.join('')}</div>
+              ${item.archive_error ? `<div class="missing-media-error">失败原因：${escapeHtml(item.archive_error)}</div>` : ''}
             </div>
             <div class="missing-media-actions">
               <button class="btn btn-secondary btn-sm" type="button" onclick="openRepairMediaPicker('${encodeURIComponent(item.id || '')}')">上传修复文件</button>
               <button class="btn btn-secondary btn-sm" type="button" ${item.can_restore_archive ? '' : 'disabled'} onclick="restoreMissingFromArchive('${encodeURIComponent(item.id || '')}')">从归档恢复</button>
+              <button class="btn btn-secondary btn-sm" type="button" ${item.can_retry_archive ? '' : `disabled title="${escapeHtml(item.retry_disabled_reason || '当前不可重试')}"`} onclick="retryFailedArchive('${encodeURIComponent(item.id || '')}')">重试归档</button>
               <button class="btn btn-primary btn-sm" type="button" ${item.can_rebuild_thumbnail ? '' : 'disabled'} onclick="rebuildMissingThumbnail('${encodeURIComponent(item.id || '')}')">重建缩略图</button>
             </div>
           </div>
@@ -1328,6 +1363,21 @@
       }
     }
 
+    async function retryFailedArchive(submissionId) {
+      submissionId = decodeURIComponent(submissionId || '');
+      if (!submissionId) return;
+      try {
+        await api('/teacher/submissions/' + encodeURIComponent(submissionId) + '/retry-archive', {
+          method: 'POST',
+          body: JSON.stringify({})
+        });
+        await reloadDashboard();
+        toast('失败归档项已重新加入队列，可立即再跑归档队列', 'success');
+      } catch (e) {
+        toast('重试归档失败：' + e.message, 'error');
+      }
+    }
+
     async function batchRebuildMissingThumbnails() {
       const rows = (dashboardSummary?.missing_media?.items || []).filter(item => item.can_rebuild_thumbnail);
       if (!rows.length) return toast('当前没有可直接重建的缩略图', 'error');
@@ -1388,6 +1438,40 @@
         }
         await reloadDashboard();
         toast(`归档恢复完成：成功 ${ok} 个，失败 ${failed} 个`, failed ? 'error' : 'success');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
+      }
+    }
+
+    async function batchRetryFailedArchive() {
+      const rows = (dashboardSummary?.missing_media?.items || []).filter(item => item.can_retry_archive);
+      if (!rows.length) return toast('当前没有可重试的失败归档项', 'error');
+      if (!confirm(`确认重试 ${rows.length} 个失败归档项吗？`)) return;
+      const btn = document.getElementById('batchRetryArchiveBtn');
+      const originalText = btn?.textContent || '';
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = '重试中...';
+      }
+      let ok = 0;
+      let failed = 0;
+      try {
+        for (const item of rows) {
+          try {
+            await api('/teacher/submissions/' + encodeURIComponent(item.id) + '/retry-archive', {
+              method: 'POST',
+              body: JSON.stringify({})
+            });
+            ok += 1;
+          } catch {
+            failed += 1;
+          }
+        }
+        await reloadDashboard();
+        toast(`失败归档重试完成：成功 ${ok} 个，失败 ${failed} 个`, failed ? 'error' : 'success');
       } finally {
         if (btn) {
           btn.disabled = false;

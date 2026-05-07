@@ -697,12 +697,27 @@ function mergeSubmissionWithManifest(submission = {}, manifest = null) {
     archive_url: normalized.archive_url,
     archive_thumbnail_key: normalized.archive_thumbnail_key,
     archive_thumbnail_url: normalized.archive_thumbnail_url,
+    archive_attempts: normalized.archive_attempts,
+    archive_error: normalized.archive_error || null,
     archived_at: normalized.archived_at || null,
     original_media_size: normalized.original_media_size,
     compression_saved_bytes: normalized.saved_bytes,
     compression_saved_percent: normalized.saved_percent,
     thumbnail_path: normalized.thumbnail_path
   };
+}
+
+async function primaryStorageObjectExists(storagePath) {
+  const safePath = sanitizeStoragePath(storagePath);
+  if (!safePath) return false;
+  const folder = path.posix.dirname(safePath);
+  const fileName = path.posix.basename(safePath);
+  const { data, error } = await supabase.storage.from('submissions').list(folder === '.' ? '' : folder, {
+    limit: 100,
+    search: fileName
+  });
+  if (error) throw error;
+  return Array.isArray(data) && data.some(item => item?.name === fileName);
 }
 
 async function readSubmissionMediaManifest(submissionId, { force = false } = {}) {
@@ -2530,6 +2545,8 @@ function buildMissingMediaReport(submissions = [], storageSummary = {}) {
   const items = [];
   let sourceMissingCount = 0;
   let thumbnailMissingCount = 0;
+  let archiveFailedCount = 0;
+  let archiveRetryableCount = 0;
   const now = Date.now();
   const graceWindowMs = 2 * 60 * 1000;
 
@@ -2544,12 +2561,19 @@ function buildMissingMediaReport(submissions = [], storageSummary = {}) {
     );
     const uploadAt = submission.upload_time ? new Date(submission.upload_time).getTime() : 0;
     const withinGraceWindow = uploadAt > 0 && (now - uploadAt) < graceWindowMs;
+    const archiveStatus = submission.archive_status || null;
+    const archiveFailed = archiveStatus === 'failed';
+    const archiveError = submission.archive_error ? String(submission.archive_error) : null;
+    const includeMissing = (sourceMissing || thumbnailMissing) && !withinGraceWindow;
+    const hasArchiveCopy = !!(submission.archive_url || submission.archive_key);
+    const canRetryArchive = archiveFailed && !sourceMissing;
 
-    if (!sourceMissing && !thumbnailMissing) continue;
-    if (withinGraceWindow) continue;
+    if (!includeMissing && !archiveFailed) continue;
 
-    if (sourceMissing) sourceMissingCount += 1;
-    if (thumbnailMissing) thumbnailMissingCount += 1;
+    if (includeMissing && sourceMissing) sourceMissingCount += 1;
+    if (includeMissing && thumbnailMissing) thumbnailMissingCount += 1;
+    if (archiveFailed) archiveFailedCount += 1;
+    if (canRetryArchive) archiveRetryableCount += 1;
 
     const issueCodes = [];
     const issueLabels = [];
@@ -2561,8 +2585,11 @@ function buildMissingMediaReport(submissions = [], storageSummary = {}) {
       issueCodes.push('thumbnail_missing');
       issueLabels.push('缩略图缺失');
     }
+    if (archiveFailed) {
+      issueCodes.push('archive_failed');
+      issueLabels.push('归档失败');
+    }
 
-    const hasArchiveCopy = !!(submission.archive_url || submission.archive_key);
     items.push({
       id: submission.id,
       title: submission.title || '未命名作品',
@@ -2574,11 +2601,18 @@ function buildMissingMediaReport(submissions = [], storageSummary = {}) {
       issue_labels: issueLabels,
       source_missing: sourceMissing,
       thumbnail_missing: thumbnailMissing,
+      archive_failed: archiveFailed,
       can_rebuild_thumbnail: !sourceMissing,
       has_archive_copy: hasArchiveCopy,
       can_restore_archive: sourceMissing && hasArchiveCopy,
-      archive_status: submission.archive_status || null,
+      can_retry_archive: canRetryArchive,
+      retry_disabled_reason: archiveFailed
+        ? (sourceMissing ? '源文件已缺失，请先上传修复文件或从归档恢复。' : '')
+        : '当前不是失败归档项。',
+      archive_status: archiveStatus,
       archive_tier: submission.archive_tier || null,
+      archive_attempts: Number(submission.archive_attempts || 0),
+      archive_error: archiveError,
       users: submission.users || {}
     });
   }
@@ -2586,6 +2620,9 @@ function buildMissingMediaReport(submissions = [], storageSummary = {}) {
   items.sort((a, b) => {
     if (Number(b.source_missing) !== Number(a.source_missing)) {
       return Number(b.source_missing) - Number(a.source_missing);
+    }
+    if (Number(b.archive_failed) !== Number(a.archive_failed)) {
+      return Number(b.archive_failed) - Number(a.archive_failed);
     }
     if (Number(b.thumbnail_missing) !== Number(a.thumbnail_missing)) {
       return Number(b.thumbnail_missing) - Number(a.thumbnail_missing);
@@ -2597,6 +2634,8 @@ function buildMissingMediaReport(submissions = [], storageSummary = {}) {
     total_count: items.length,
     source_missing_count: sourceMissingCount,
     thumbnail_missing_count: thumbnailMissingCount,
+    archive_failed_count: archiveFailedCount,
+    archive_retryable_count: archiveRetryableCount,
     items
   };
 }
@@ -3550,6 +3589,43 @@ app.post('/api/teacher/submissions/:id/restore-archive', teacherAuth, async (req
 
     const restored = await restoreSubmissionFromArchive(sub);
     res.json({ ok: true, submission: restored });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+app.post('/api/teacher/submissions/:id/retry-archive', teacherAuth, async (req, res) => {
+  try {
+    const { data: sub, error: subErr } = await supabase.from('submissions')
+      .select('id,activity_id,title,image_url,storage_path,media_type,media_size,upload_time,user_id,users(name,student_id,class_name,group_name)')
+      .eq('id', req.params.id)
+      .single();
+    if (subErr || !sub) return res.status(404).json({ error: 'Submission not found' });
+
+    const auth = await ensureTeacherCanAccessActivity(req, sub.activity_id);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const manifest = normalizeSubmissionMediaManifest(sub, await readSubmissionMediaManifest(sub.id).catch(() => null));
+    if (manifest.archive_status !== 'failed') {
+      return res.status(400).json({ error: 'Only failed archive items can be retried' });
+    }
+
+    const mediaStoragePath = sanitizeStoragePath(sub.storage_path) || storagePathFromPublicUrl(sub.image_url);
+    if (!mediaStoragePath) {
+      return res.status(400).json({ error: 'Primary media source path is missing' });
+    }
+    const sourceExists = await primaryStorageObjectExists(mediaStoragePath);
+    if (!sourceExists) {
+      return res.status(400).json({ error: 'Primary media source is missing. Repair the file or restore it from archive first.' });
+    }
+
+    const nextManifest = await writeSubmissionMediaManifest(sub.id, {
+      ...manifest,
+      archive_status: 'pending',
+      archive_attempts: 0,
+      archive_error: null
+    });
+    res.json({ ok: true, submission: mergeSubmissionWithManifest(sub, nextManifest) });
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message });
   }
