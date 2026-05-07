@@ -2232,7 +2232,7 @@ async function processArchiveQueue({ activityId = null, limit = ARCHIVE_BATCH_SI
         delete_primary_after_success: policy.delete_primary_after_success
       };
       const manifest = normalizeSubmissionMediaManifest(submission, await readSubmissionMediaManifest(submission.id).catch(() => null));
-      if (['mirrored', 'cold'].includes(manifest.archive_status)) continue;
+      if (['mirrored', 'cold', 'failed'].includes(manifest.archive_status)) continue;
       if (manifest.archive_status === 'processing') continue;
       queued += 1;
 
