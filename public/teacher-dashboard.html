@@ -130,6 +130,50 @@
     .dashboard-panel-head.compact {
       margin-bottom: 8px;
     }
+    .ops-state-badge {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 76px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 800;
+      border: 1px solid transparent;
+    }
+    .ops-state-badge.healthy {
+      background: rgba(34, 197, 94, 0.14);
+      color: #166534;
+      border-color: rgba(34, 197, 94, 0.2);
+    }
+    .ops-state-badge.running {
+      background: rgba(37, 99, 235, 0.12);
+      color: #1d4ed8;
+      border-color: rgba(37, 99, 235, 0.18);
+    }
+    .ops-state-badge.warning {
+      background: rgba(245, 158, 11, 0.13);
+      color: #92400e;
+      border-color: rgba(245, 158, 11, 0.22);
+    }
+    .ops-state-badge.critical {
+      background: rgba(239, 68, 68, 0.13);
+      color: #b91c1c;
+      border-color: rgba(239, 68, 68, 0.2);
+    }
+    .snapshot-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      margin-top: 14px;
+    }
+    .snapshot-hint {
+      margin-top: 10px;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      line-height: 1.6;
+    }
     .feedback-preview {
       padding: 12px 14px;
       border-radius: 16px;
@@ -372,6 +416,45 @@
             <div class="card-badge" id="dashboardTimestamp">刚刚更新</div>
           </div>
           <div class="dashboard-metrics" id="metricGrid"></div>
+        </div>
+      </div>
+
+      <div class="dashboard-two-col" style="grid-column: span 12;">
+        <div class="dashboard-panel">
+          <div class="dashboard-panel-body">
+            <div class="dashboard-panel-head">
+              <div>
+                <div class="dashboard-panel-title">运维状态</div>
+                <div class="dashboard-panel-note">持续跟踪视频转码与归档任务的运行情况，尽早发现卡住、连续失败或人工触发未执行的问题。</div>
+              </div>
+              <div class="card-badge" id="opsServerTime">待同步</div>
+            </div>
+            <div class="storage-meta-row" id="opsStatusMeta"></div>
+            <div class="dashboard-list" id="opsStatusList">
+              <div class="dashboard-panel-note">正在读取后台任务状态...</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="dashboard-panel">
+          <div class="dashboard-panel-body">
+            <div class="dashboard-panel-head">
+              <div>
+                <div class="dashboard-panel-title">活动快照备份</div>
+                <div class="dashboard-panel-note">把当前活动的名单、作品、评分、评论、反馈和媒体状态导出成快照，既可本地下载，也可写入云端归档用于恢复。</div>
+              </div>
+              <div class="card-badge" id="snapshotSummary">尚未生成</div>
+            </div>
+            <div class="storage-meta-row" id="snapshotMetaRow"></div>
+            <div class="snapshot-actions">
+              <button class="btn btn-secondary btn-sm" id="downloadSnapshotBtn" type="button" onclick="downloadActivitySnapshot()">下载活动快照</button>
+              <button class="btn btn-primary btn-sm" id="archiveSnapshotBtn" type="button" onclick="archiveActivitySnapshot()">写入云端归档</button>
+            </div>
+            <div class="snapshot-hint" id="snapshotHint">建议每次大课开始前、结束后各做一次快照；若检测到媒体异常或准备释放主存，也先生成一份。</div>
+            <div class="dashboard-list" id="snapshotList" style="margin-top:14px;">
+              <div class="dashboard-panel-note">正在读取最近快照...</div>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -960,6 +1043,119 @@
         : '归档提供方尚未配置完成，当前只能保存策略草稿，不能真正归档。';
     }
 
+    function formatDurationMsHuman(value) {
+      const ms = Number(value || 0);
+      if (!Number.isFinite(ms) || ms <= 0) return '-';
+      if (ms < 1000) return `${ms} ms`;
+      if (ms < 60 * 1000) return `${(ms / 1000).toFixed(1)} 秒`;
+      return `${(ms / 60000).toFixed(1)} 分钟`;
+    }
+
+    function getOpsStateMeta(task) {
+      if (!task) return { label: '未知', className: 'warning' };
+      if (task.stuck) return { label: '可能卡住', className: 'critical' };
+      if (task.busy) return { label: '运行中', className: 'running' };
+      if (task.consecutive_failures > 0) return { label: '连续异常', className: 'critical' };
+      if (task.last_success_at) return { label: '健康', className: 'healthy' };
+      if (task.scheduler_enabled) return { label: '待首轮执行', className: 'warning' };
+      return { label: '仅手动模式', className: 'warning' };
+    }
+
+    function renderOps(summary) {
+      const ops = summary.ops || {};
+      const tasks = ops.tasks || {};
+      const metaBox = document.getElementById('opsStatusMeta');
+      const listBox = document.getElementById('opsStatusList');
+      const serverTime = document.getElementById('opsServerTime');
+      if (!metaBox || !listBox || !serverTime) return;
+
+      serverTime.textContent = ops.server_time ? `服务器 ${formatBangkokTime(ops.server_time)}` : '待同步';
+      const taskList = [
+        { key: 'transcode', label: '视频转码队列', note: '负责视频压缩、转码与封面生成。' },
+        { key: 'archive', label: '归档队列', note: '负责把到期作品写入 Google Drive / S3。' }
+      ];
+      const totalFailures = taskList.reduce((sum, item) => sum + Number(tasks[item.key]?.consecutive_failures || 0), 0);
+      const runningCount = taskList.filter(item => !!tasks[item.key]?.busy).length;
+      const stuckCount = taskList.filter(item => !!tasks[item.key]?.stuck).length;
+      metaBox.innerHTML = [
+        `自动任务 ${taskList.filter(item => tasks[item.key]?.scheduler_enabled !== false).length} 个`,
+        `运行中 ${runningCount} 个`,
+        `疑似卡住 ${stuckCount} 个`,
+        `连续失败 ${totalFailures} 次`
+      ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+
+      listBox.innerHTML = taskList.map(item => {
+        const task = tasks[item.key] || {};
+        const state = getOpsStateMeta(task);
+        const lines = [];
+        if (task.last_result?.skipped && task.last_result?.reason) {
+          lines.push(`最近结果：已跳过（${task.last_result.reason}）`);
+        } else if (task.last_result) {
+          lines.push(`最近结果：处理 ${task.last_result.processed || 0} 个，排队 ${task.last_result.queued || 0} 个`);
+        }
+        if (task.last_success_at) lines.push(`最近成功：${formatBangkokTime(task.last_success_at)}`);
+        if (task.last_error) lines.push(`最近异常：${task.last_error}`);
+        if (task.busy && task.current_started_at) lines.push(`当前开始：${formatBangkokTime(task.current_started_at)}`);
+        return `
+          <div class="dashboard-list-item">
+            <div class="dashboard-list-main">
+              <div class="dashboard-list-title">${escapeHtml(item.label)}</div>
+              <div class="dashboard-list-sub">${escapeHtml(item.note)}</div>
+              <div class="dashboard-list-sub">${escapeHtml(lines.join(' ｜ ') || '尚无任务记录')}</div>
+            </div>
+            <div class="dashboard-list-side">
+              <strong><span class="ops-state-badge ${state.className}">${escapeHtml(state.label)}</span></strong>
+              <span>轮询 ${formatDurationMsHuman(task.interval_ms)} ｜ 耗时 ${formatDurationMsHuman(task.last_duration_ms)}</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderSnapshots(summary) {
+      const snapshotSummary = document.getElementById('snapshotSummary');
+      const metaBox = document.getElementById('snapshotMetaRow');
+      const listBox = document.getElementById('snapshotList');
+      const hint = document.getElementById('snapshotHint');
+      const archiveBtn = document.getElementById('archiveSnapshotBtn');
+      const snapshots = summary.ops?.snapshots || {};
+      const provider = snapshots.provider || { name: 'none', configured: false };
+      const rows = Array.isArray(snapshots.items) ? snapshots.items : [];
+      if (!snapshotSummary || !metaBox || !listBox || !hint || !archiveBtn) return;
+
+      archiveBtn.disabled = !provider.configured;
+      snapshotSummary.textContent = rows.length ? `最近 ${rows.length} 份` : '尚未生成';
+      metaBox.innerHTML = [
+        `归档提供方 ${provider.name || 'none'}`,
+        provider.configured ? '云端备份可用' : '云端备份未配置',
+        `最近快照 ${rows.length} 份`,
+        snapshots.cache_ttl_ms ? `列表缓存 ${Math.round(Number(snapshots.cache_ttl_ms || 0) / 1000)} 秒` : '列表实时读取'
+      ].concat(snapshots.error ? [`读取异常：${snapshots.error}`] : []).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+
+      hint.textContent = provider.configured
+        ? '下载快照适合本地留档；写入云端归档适合做恢复点。建议保留至少最近 3 次课前 / 课后快照。'
+        : '当前仍可下载本地快照，但尚未配置云端快照归档。';
+
+      if (!rows.length) {
+        listBox.innerHTML = '<div class="dashboard-panel-note">当前没有已归档的活动快照。先点“下载活动快照”或“写入云端归档”生成第一份。</div>';
+        return;
+      }
+
+      listBox.innerHTML = rows.map(item => `
+        <div class="dashboard-list-item">
+          <div class="dashboard-list-main">
+            <div class="dashboard-list-title">${escapeHtml(item.name || item.key || '未命名快照')}</div>
+            <div class="dashboard-list-sub">${escapeHtml(formatBangkokTime(item.created_at))} ｜ ${escapeHtml(item.provider || provider.name || 'archive')}</div>
+            <div class="dashboard-list-sub">${escapeHtml(item.key || '')}</div>
+          </div>
+          <div class="dashboard-list-side">
+            <strong>${formatBytes(item.size || 0)}</strong>
+            <span>${item.url || item.view_url ? '可在云端查看' : '仅保留归档索引'}</span>
+          </div>
+        </div>
+      `).join('');
+    }
+
     function renderMissingMedia(summary) {
       const report = summary.missing_media || {};
       const rows = Array.isArray(report.items) ? report.items : [];
@@ -1202,6 +1398,67 @@
       }
     }
 
+    async function downloadActivitySnapshot() {
+      const btn = document.getElementById('downloadSnapshotBtn');
+      if (!btn) return;
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '导出中...';
+      try {
+        const res = await fetch('/api/teacher/backup-snapshot/export?activity_id=' + encodeURIComponent(actId), {
+          headers: { 'x-teacher-auth': token }
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || res.statusText);
+        }
+        const blob = await res.blob();
+        const contentDisposition = res.headers.get('content-disposition') || '';
+        const filenameMatch = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
+        const filename = filenameMatch ? filenameMatch[1] : `classshow_snapshot_${Date.now()}.json`;
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        toast('活动快照已下载，可作为本地恢复底稿', 'success');
+      } catch (e) {
+        toast('导出活动快照失败：' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    }
+
+    async function archiveActivitySnapshot() {
+      const btn = document.getElementById('archiveSnapshotBtn');
+      if (!btn) return;
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '归档中...';
+      try {
+        const result = await api('/teacher/backup-snapshot/archive', {
+          method: 'POST',
+          body: JSON.stringify({ activity_id: actId })
+        });
+        if (dashboardSummary) {
+          dashboardSummary.ops = dashboardSummary.ops || {};
+          dashboardSummary.ops.snapshots = result.snapshots || { items: [] };
+          renderSnapshots(dashboardSummary);
+        }
+        toast(`云端快照已生成：${result.snapshot?.filename || result.snapshot?.id || 'snapshot'}`, 'success');
+        await reloadDashboard();
+      } catch (e) {
+        toast('写入云端快照失败：' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    }
+
     function renderMeta(activity) {
       document.getElementById('heroTitle').textContent = activity.activity_name || 'ClassShow';
       document.getElementById('heroSubtitle').textContent = `${activity.course_name || ''} · ${activity.class_name || ''} · 曼谷时间显示 · 作品自动带上传时间与云端压缩存储`;
@@ -1246,6 +1503,8 @@
         renderStorage(summary);
         renderMediaPipeline(summary);
         renderArchiveControls(summary);
+        renderOps(summary);
+        renderSnapshots(summary);
         renderMissingMedia(summary);
         renderWorkList('topRatedList', summary.top_rated, 'rating');
         renderWorkList('recentUploadsList', summary.recent_uploads, 'time');

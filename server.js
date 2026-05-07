@@ -14,7 +14,7 @@ import sharp from 'sharp';
 import ffmpegStatic from 'ffmpeg-static';
 import { spawn } from 'child_process';
 import { google } from 'googleapis';
-import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand, GetObjectCommand, ListObjectsV2Command } from '@aws-sdk/client-s3';
 
 dotenv.config();
 const __filename = fileURLToPath(import.meta.url);
@@ -83,6 +83,8 @@ const ARCHIVE_S3_PUBLIC_BASE_URL = String(process.env.ARCHIVE_S3_PUBLIC_BASE_URL
 const STORAGE_WARNING_LIMIT_BYTES = Math.max(128 * 1024 * 1024, Number(process.env.STORAGE_WARNING_LIMIT_BYTES || 1024 * 1024 * 1024));
 const STORAGE_SAFE_DELETE = !/^false$/i.test(String(process.env.STORAGE_SAFE_DELETE || 'true'));
 const ARCHIVE_PERMANENT_DELETE = /^true$/i.test(String(process.env.ARCHIVE_PERMANENT_DELETE || 'false'));
+const OPS_SNAPSHOT_LIST_TTL_MS = 60 * 1000;
+const TASK_STUCK_GRACE_MS = 5 * 60 * 1000;
 
 function escapeHtml(input = '') {
   const str = String(input);
@@ -110,6 +112,169 @@ function formatStorageBytes(bytes = 0) {
   }
   const digits = size >= 100 || index === 0 ? 0 : size >= 10 ? 1 : 2;
   return `${size.toFixed(digits)} ${units[index]}`;
+}
+
+function toIsoStringOrNull(value) {
+  if (!value) return null;
+  const date = value instanceof Date ? value : new Date(value);
+  return Number.isNaN(date.getTime()) ? null : date.toISOString();
+}
+
+function formatSnapshotStamp(date = new Date()) {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone: APP_TIME_ZONE,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: false
+  }).formatToParts(date);
+  const map = {};
+  for (const part of parts) map[part.type] = part.value;
+  return `${map.year}${map.month}${map.day}_${map.hour}${map.minute}${map.second}`;
+}
+
+function createTaskHealthState(name, intervalMs, schedulerEnabled = true) {
+  return {
+    name,
+    interval_ms: intervalMs,
+    scheduler_enabled: !!schedulerEnabled,
+    busy: false,
+    current_origin: null,
+    current_activity_id: null,
+    current_started_at: null,
+    last_started_at: null,
+    last_finished_at: null,
+    last_success_at: null,
+    last_manual_started_at: null,
+    last_manual_success_at: null,
+    last_error: null,
+    last_error_at: null,
+    consecutive_failures: 0,
+    last_duration_ms: null,
+    last_result: null
+  };
+}
+
+function taskHealthMaxBusyMs(state = {}) {
+  return Math.max(TASK_STUCK_GRACE_MS, Number(state.interval_ms || 0) * 3 || TASK_STUCK_GRACE_MS);
+}
+
+function trimTaskResult(result = {}) {
+  if (!result || typeof result !== 'object') return null;
+  const trimmed = {
+    processed: Number(result.processed || 0),
+    queued: Number(result.queued || 0),
+    skipped: !!result.skipped
+  };
+  if (result.reason) trimmed.reason = String(result.reason);
+  if (result.provider?.name) {
+    trimmed.provider = {
+      name: result.provider.name,
+      configured: !!result.provider.configured
+    };
+  }
+  return trimmed;
+}
+
+function recordTaskRunStart(state, meta = {}) {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  state.busy = true;
+  state.current_origin = meta.origin || 'loop';
+  state.current_activity_id = meta.activityId ? String(meta.activityId) : null;
+  state.current_started_at = nowIso;
+  state.last_started_at = nowIso;
+  if (state.current_origin === 'manual') state.last_manual_started_at = nowIso;
+}
+
+function recordTaskRunResult(state, result = {}, meta = {}) {
+  const now = new Date();
+  const nowIso = now.toISOString();
+  const startedAtMs = state.current_started_at ? new Date(state.current_started_at).getTime() : NaN;
+  state.last_finished_at = nowIso;
+  state.last_duration_ms = Number.isFinite(startedAtMs) ? Math.max(0, now.getTime() - startedAtMs) : null;
+  state.last_result = {
+    ...trimTaskResult(result),
+    origin: meta.origin || state.current_origin || 'loop',
+    activity_id: meta.activityId ? String(meta.activityId) : state.current_activity_id,
+    finished_at: nowIso
+  };
+  state.busy = false;
+  state.current_origin = null;
+  state.current_activity_id = null;
+  state.current_started_at = null;
+}
+
+function recordTaskRunSuccess(state, result = {}, meta = {}) {
+  recordTaskRunResult(state, result, meta);
+  const nowIso = state.last_finished_at;
+  state.last_success_at = nowIso;
+  state.last_error = null;
+  state.last_error_at = null;
+  state.consecutive_failures = 0;
+  if ((meta.origin || state.last_result?.origin) === 'manual') {
+    state.last_manual_success_at = nowIso;
+  }
+}
+
+function recordTaskRunFailure(state, error, meta = {}) {
+  recordTaskRunResult(state, {
+    skipped: false,
+    processed: 0,
+    queued: 0,
+    reason: 'failed'
+  }, meta);
+  state.last_error = String(error?.message || error || 'Unknown failure');
+  state.last_error_at = state.last_finished_at;
+  state.consecutive_failures = Number(state.consecutive_failures || 0) + 1;
+  if (state.last_result) state.last_result.error = state.last_error;
+}
+
+function recordTaskRunSkip(state, result = {}, meta = {}) {
+  const nowIso = new Date().toISOString();
+  state.last_result = {
+    ...trimTaskResult(result),
+    origin: meta.origin || 'loop',
+    activity_id: meta.activityId ? String(meta.activityId) : null,
+    finished_at: nowIso
+  };
+}
+
+function serializeTaskHealthState(state = {}) {
+  const now = Date.now();
+  const startedAtMs = state.current_started_at ? new Date(state.current_started_at).getTime() : NaN;
+  const stuckThresholdMs = taskHealthMaxBusyMs(state);
+  const isStuck = !!state.busy && Number.isFinite(startedAtMs) && (now - startedAtMs) > stuckThresholdMs;
+  let health = 'idle';
+  if (isStuck) health = 'stuck';
+  else if (state.busy) health = 'running';
+  else if (state.consecutive_failures > 0) health = 'error';
+  else if (state.last_success_at) health = 'healthy';
+  return {
+    name: state.name,
+    interval_ms: Number(state.interval_ms || 0),
+    scheduler_enabled: !!state.scheduler_enabled,
+    busy: !!state.busy,
+    stuck: isStuck,
+    stuck_threshold_ms: stuckThresholdMs,
+    health,
+    current_origin: state.current_origin || null,
+    current_activity_id: state.current_activity_id || null,
+    current_started_at: toIsoStringOrNull(state.current_started_at),
+    last_started_at: toIsoStringOrNull(state.last_started_at),
+    last_finished_at: toIsoStringOrNull(state.last_finished_at),
+    last_success_at: toIsoStringOrNull(state.last_success_at),
+    last_manual_started_at: toIsoStringOrNull(state.last_manual_started_at),
+    last_manual_success_at: toIsoStringOrNull(state.last_manual_success_at),
+    last_error: state.last_error || null,
+    last_error_at: toIsoStringOrNull(state.last_error_at),
+    consecutive_failures: Number(state.consecutive_failures || 0),
+    last_duration_ms: Number.isFinite(Number(state.last_duration_ms)) ? Number(state.last_duration_ms) : null,
+    last_result: state.last_result || null
+  };
 }
 
 function normalizeFeedbackTextForDedup(input = '') {
@@ -372,6 +537,11 @@ async function deleteStorageObject(storagePath, options = {}) {
 const mediaManifestCache = new Map();
 let googleDriveClientPromise = null;
 let s3ArchiveClient = null;
+const archiveSnapshotListCache = new Map();
+const backgroundTaskState = {
+  transcode: createTaskHealthState('transcode', TRANSCODE_LOOP_INTERVAL_MS, ASYNC_VIDEO_TRANSCODE),
+  archive: createTaskHealthState('archive', ARCHIVE_LOOP_INTERVAL_MS, getArchiveProviderInfo().configured)
+};
 
 function submissionManifestNotFound(error) {
   const message = String(error?.message || error || '');
@@ -677,9 +847,36 @@ function buildS3ArchivePublicUrl(key) {
   return `${ARCHIVE_S3_PUBLIC_BASE_URL}/${String(key || '').replace(/^\/+/, '')}`;
 }
 
-async function uploadFileToArchive(localPath, submission, kind, ext, contentType, provider = getArchiveProviderInfo()) {
-  if (!provider.configured) return null;
-  const objectKey = buildArchiveObjectKey(submission, kind, ext);
+function buildArchiveSnapshotPrefix(activityId) {
+  const safeActivity = String(activityId || 'activity').replace(/[^a-zA-Z0-9_-]/g, '');
+  return `classshow-backups/${safeActivity}/`;
+}
+
+function buildArchiveSnapshotObjectKey(activity = {}, snapshotId) {
+  const prefix = buildArchiveSnapshotPrefix(activity.id || activity.activity_id || 'activity');
+  const safeInviteCode = normalizeInviteCode(activity.invite_code || '') || 'activity';
+  const safeSnapshotId = String(snapshotId || formatSnapshotStamp()).replace(/[^a-zA-Z0-9_-]/g, '');
+  return `${prefix}${safeSnapshotId}_${safeInviteCode}.json`;
+}
+
+function buildSnapshotDownloadFilename(activity = {}, snapshotId = formatSnapshotStamp()) {
+  const safeInviteCode = normalizeInviteCode(activity.invite_code || '') || 'activity';
+  return `classshow_snapshot_${safeInviteCode}_${snapshotId}.json`;
+}
+
+function invalidateArchiveSnapshotListCache(activityId) {
+  const safeActivity = String(activityId || '').trim();
+  if (!safeActivity) {
+    archiveSnapshotListCache.clear();
+    return;
+  }
+  for (const key of archiveSnapshotListCache.keys()) {
+    if (key.endsWith(`:${safeActivity}`)) archiveSnapshotListCache.delete(key);
+  }
+}
+
+async function uploadLocalFileToArchiveObject(localPath, objectKey, contentType, provider = getArchiveProviderInfo()) {
+  if (!provider.configured || !objectKey) return null;
 
   if (provider.name === 'google-drive') {
     const drive = await getGoogleDriveClient();
@@ -687,14 +884,14 @@ async function uploadFileToArchive(localPath, submission, kind, ext, contentType
     const { data } = await drive.files.create({
       supportsAllDrives: true,
       requestBody: {
-        name: objectKey.replace(/\//g, '__'),
+        name: String(objectKey).replace(/\//g, '__'),
         parents: [GOOGLE_DRIVE_FOLDER_ID]
       },
       media: {
         mimeType: contentType,
         body: fs.createReadStream(localPath)
       },
-      fields: 'id,name,webViewLink'
+      fields: 'id,name,webViewLink,createdTime,size'
     });
     if (GOOGLE_DRIVE_PUBLIC_LINKS) {
       await drive.permissions.create({
@@ -705,6 +902,10 @@ async function uploadFileToArchive(localPath, submission, kind, ext, contentType
     return {
       provider: 'google-drive',
       key: data.id,
+      name: data.name || null,
+      view_url: data.webViewLink || null,
+      created_at: data.createdTime || new Date().toISOString(),
+      size: Number(data.size || 0),
       url: GOOGLE_DRIVE_PUBLIC_LINKS ? `https://drive.google.com/uc?export=download&id=${data.id}` : null
     };
   }
@@ -721,11 +922,21 @@ async function uploadFileToArchive(localPath, submission, kind, ext, contentType
     return {
       provider: 's3',
       key: objectKey,
+      name: path.posix.basename(objectKey),
+      view_url: buildS3ArchivePublicUrl(objectKey),
+      created_at: new Date().toISOString(),
+      size: 0,
       url: buildS3ArchivePublicUrl(objectKey)
     };
   }
 
   return null;
+}
+
+async function uploadFileToArchive(localPath, submission, kind, ext, contentType, provider = getArchiveProviderInfo()) {
+  if (!provider.configured) return null;
+  const objectKey = buildArchiveObjectKey(submission, kind, ext);
+  return uploadLocalFileToArchiveObject(localPath, objectKey, contentType, provider);
 }
 
 async function deleteArchiveObject(archiveKey, providerName, options = {}) {
@@ -780,6 +991,73 @@ async function downloadArchiveObjectToTemp({ archiveKey, archiveUrl, providerNam
   if (!buffer?.length) throw new Error('Archive object is unavailable');
   await fs.promises.writeFile(tempPath, buffer);
   return tempPath;
+}
+
+async function listArchiveSnapshots(activityId, { limit = 6, force = false, provider = getArchiveProviderInfo() } = {}) {
+  const safeActivity = String(activityId || '').trim();
+  if (!safeActivity) return { provider, items: [], cache_ttl_ms: OPS_SNAPSHOT_LIST_TTL_MS };
+  const cacheKey = `${provider.name}:${safeActivity}`;
+  const cached = archiveSnapshotListCache.get(cacheKey);
+  if (!force && cached && cached.expires_at > Date.now()) {
+    return cached.payload;
+  }
+
+  if (!provider.configured) {
+    const payload = { provider, items: [], cache_ttl_ms: OPS_SNAPSHOT_LIST_TTL_MS };
+    archiveSnapshotListCache.set(cacheKey, { expires_at: Date.now() + OPS_SNAPSHOT_LIST_TTL_MS, payload });
+    return payload;
+  }
+
+  const prefix = buildArchiveSnapshotPrefix(safeActivity);
+  let items = [];
+
+  if (provider.name === 'google-drive') {
+    const drive = await getGoogleDriveClient();
+    if (!drive) throw new Error('Google Drive archive client is not configured');
+    const namePrefix = prefix.replace(/\//g, '__');
+    const { data } = await drive.files.list({
+      supportsAllDrives: true,
+      includeItemsFromAllDrives: true,
+      q: `'${GOOGLE_DRIVE_FOLDER_ID}' in parents and name contains '${namePrefix}' and trashed = false`,
+      orderBy: 'createdTime desc',
+      pageSize: limit,
+      fields: 'files(id,name,createdTime,size,webViewLink)'
+    });
+    items = (data.files || []).map(file => ({
+      provider: 'google-drive',
+      key: file.id,
+      name: file.name || '',
+      created_at: file.createdTime || null,
+      size: Number(file.size || 0),
+      url: GOOGLE_DRIVE_PUBLIC_LINKS ? `https://drive.google.com/uc?export=download&id=${file.id}` : null,
+      view_url: file.webViewLink || null
+    }));
+  } else if (provider.name === 's3') {
+    const client = getS3ArchiveClient();
+    if (!client) throw new Error('S3 archive client is not configured');
+    const { Contents = [] } = await client.send(new ListObjectsV2Command({
+      Bucket: ARCHIVE_S3_BUCKET,
+      Prefix: prefix,
+      MaxKeys: limit
+    }));
+    items = Contents
+      .slice()
+      .sort((a, b) => new Date(b.LastModified || 0).getTime() - new Date(a.LastModified || 0).getTime())
+      .slice(0, limit)
+      .map(file => ({
+        provider: 's3',
+        key: file.Key || '',
+        name: path.posix.basename(file.Key || ''),
+        created_at: file.LastModified ? new Date(file.LastModified).toISOString() : null,
+        size: Number(file.Size || 0),
+        url: buildS3ArchivePublicUrl(file.Key || ''),
+        view_url: buildS3ArchivePublicUrl(file.Key || '')
+      }));
+  }
+
+  const payload = { provider, items, cache_ttl_ms: OPS_SNAPSHOT_LIST_TTL_MS };
+  archiveSnapshotListCache.set(cacheKey, { expires_at: Date.now() + OPS_SNAPSHOT_LIST_TTL_MS, payload });
+  return payload;
 }
 
 async function deleteSubmissionMedia(submission) {
@@ -1698,9 +1976,15 @@ async function transcodeSubmissionVideo(submission, manifest) {
 
 let videoTranscodeLoopBusy = false;
 
-async function processPendingVideoTranscodes({ activityId = null, limit = TRANSCODE_BATCH_SIZE, ignoreMinAge = false } = {}) {
-  if (videoTranscodeLoopBusy) return { processed: 0, skipped: true, reason: 'busy' };
+async function processPendingVideoTranscodes({ activityId = null, limit = TRANSCODE_BATCH_SIZE, ignoreMinAge = false, source = 'loop' } = {}) {
+  const taskState = backgroundTaskState.transcode;
+  if (videoTranscodeLoopBusy) {
+    const result = { processed: 0, queued: 0, skipped: true, reason: 'busy' };
+    recordTaskRunSkip(taskState, result, { origin: source, activityId });
+    return result;
+  }
   videoTranscodeLoopBusy = true;
+  recordTaskRunStart(taskState, { origin: source, activityId });
   let processed = 0;
   let queued = 0;
   try {
@@ -1739,7 +2023,12 @@ async function processPendingVideoTranscodes({ activityId = null, limit = TRANSC
       }
       processed += 1;
     }
-    return { processed, queued, skipped: false };
+    const result = { processed, queued, skipped: false };
+    recordTaskRunSuccess(taskState, result, { origin: source, activityId });
+    return result;
+  } catch (error) {
+    recordTaskRunFailure(taskState, error, { origin: source, activityId });
+    throw error;
   } finally {
     videoTranscodeLoopBusy = false;
   }
@@ -1747,11 +2036,11 @@ async function processPendingVideoTranscodes({ activityId = null, limit = TRANSC
 
 function startVideoTranscodeLoop() {
   if (!ASYNC_VIDEO_TRANSCODE) return;
-  processPendingVideoTranscodes().catch(err => {
+  processPendingVideoTranscodes({ source: 'loop' }).catch(err => {
     console.warn('Initial video transcode loop failed:', err.message);
   });
   setInterval(() => {
-    processPendingVideoTranscodes().catch(err => {
+    processPendingVideoTranscodes({ source: 'loop' }).catch(err => {
       console.warn('Video transcode loop failed:', err.message);
     });
   }, TRANSCODE_LOOP_INTERVAL_MS).unref?.();
@@ -1764,11 +2053,21 @@ function getArchiveCutoffIso(afterDays = DEFAULT_ARCHIVE_AFTER_DAYS) {
 
 let archiveLoopBusy = false;
 
-async function processArchiveQueue({ activityId = null, limit = ARCHIVE_BATCH_SIZE } = {}) {
+async function processArchiveQueue({ activityId = null, limit = ARCHIVE_BATCH_SIZE, source = 'loop' } = {}) {
   const baseProvider = getArchiveProviderInfo();
-  if (!baseProvider.configured) return { processed: 0, skipped: true, reason: 'provider-not-configured', provider: baseProvider };
-  if (archiveLoopBusy) return { processed: 0, skipped: true, reason: 'busy', provider: baseProvider };
+  const taskState = backgroundTaskState.archive;
+  if (!baseProvider.configured) {
+    const result = { processed: 0, queued: 0, skipped: true, reason: 'provider-not-configured', provider: baseProvider };
+    recordTaskRunSkip(taskState, result, { origin: source, activityId });
+    return result;
+  }
+  if (archiveLoopBusy) {
+    const result = { processed: 0, queued: 0, skipped: true, reason: 'busy', provider: baseProvider };
+    recordTaskRunSkip(taskState, result, { origin: source, activityId });
+    return result;
+  }
   archiveLoopBusy = true;
+  recordTaskRunStart(taskState, { origin: source, activityId });
   let processed = 0;
   let queued = 0;
   try {
@@ -1794,7 +2093,9 @@ async function processArchiveQueue({ activityId = null, limit = ARCHIVE_BATCH_SI
 
     const activityPolicy = activityId ? resolveActivityArchivePolicy(activityConfigMap.get(String(activityId))) : null;
     if (activityPolicy && !getArchiveCutoffIso(activityPolicy.after_days)) {
-      return { processed: 0, queued: 0, skipped: true, reason: 'archive-disabled', provider: getArchiveProviderInfo(activityPolicy) };
+      const result = { processed: 0, queued: 0, skipped: true, reason: 'archive-disabled', provider: getArchiveProviderInfo(activityPolicy) };
+      recordTaskRunSuccess(taskState, result, { origin: source, activityId });
+      return result;
     }
 
     for (const submission of (data || [])) {
@@ -1872,7 +2173,12 @@ async function processArchiveQueue({ activityId = null, limit = ARCHIVE_BATCH_SI
       processed += 1;
     }
 
-    return { processed, queued, skipped: false, provider: activityPolicy ? getArchiveProviderInfo(activityPolicy) : baseProvider };
+    const result = { processed, queued, skipped: false, provider: activityPolicy ? getArchiveProviderInfo(activityPolicy) : baseProvider };
+    recordTaskRunSuccess(taskState, result, { origin: source, activityId });
+    return result;
+  } catch (error) {
+    recordTaskRunFailure(taskState, error, { origin: source, activityId });
+    throw error;
   } finally {
     archiveLoopBusy = false;
   }
@@ -1881,11 +2187,11 @@ async function processArchiveQueue({ activityId = null, limit = ARCHIVE_BATCH_SI
 function startArchiveLoop() {
   const provider = getArchiveProviderInfo();
   if (!provider.configured) return;
-  processArchiveQueue().catch(err => {
+  processArchiveQueue({ source: 'loop' }).catch(err => {
     console.warn('Initial archive loop failed:', err.message);
   });
   setInterval(() => {
-    processArchiveQueue().catch(err => {
+    processArchiveQueue({ source: 'loop' }).catch(err => {
       console.warn('Archive loop failed:', err.message);
     });
   }, ARCHIVE_LOOP_INTERVAL_MS).unref?.();
@@ -2146,6 +2452,197 @@ function buildMissingMediaReport(submissions = [], storageSummary = {}) {
     source_missing_count: sourceMissingCount,
     thumbnail_missing_count: thumbnailMissingCount,
     items
+  };
+}
+
+async function buildActivitySnapshot(activityId) {
+  let [
+    activityResult,
+    usersResult,
+    rosterResult,
+    submissionsResult,
+    ratingsResult,
+    commentsResult,
+    viewsResult,
+    feedbackLikesResult,
+    storageSummary
+  ] = await Promise.all([
+    fetchActivityById(activityId),
+    supabase.from('users')
+      .select('id,activity_id,name,student_id,class_name,group_name,created_at')
+      .eq('activity_id', activityId)
+      .order('student_id', { ascending: true }),
+    supabase.from('student_roster')
+      .select('id,activity_id,student_id,name,class_name,group_name,active,feedback_muted,created_at,updated_at')
+      .eq('activity_id', activityId)
+      .order('student_id', { ascending: true }),
+    supabase.from('submissions')
+      .select('id,activity_id,user_id,title,description,image_url,storage_path,media_type,media_size,upload_time,last_modified_time,view_count,rating_count,average_rating,composite_score,anonymous_code,is_teacher_selected,is_pinned,status')
+      .eq('activity_id', activityId)
+      .order('upload_time', { ascending: true }),
+    supabase.from('ratings')
+      .select('id,activity_id,submission_id,rater_user_id,score,created_at,updated_at')
+      .eq('activity_id', activityId)
+      .order('created_at', { ascending: true }),
+    supabase.from('comments')
+      .select('id,activity_id,submission_id,user_id,content,is_anonymous,created_at')
+      .eq('activity_id', activityId)
+      .order('created_at', { ascending: true }),
+    supabase.from('views')
+      .select('id,activity_id,submission_id,viewer_user_id,is_valid,viewed_at')
+      .eq('activity_id', activityId)
+      .order('viewed_at', { ascending: true }),
+    supabase.from('activity_feedback_likes')
+      .select('id,activity_id,feedback_id,user_id,created_at')
+      .eq('activity_id', activityId)
+      .order('created_at', { ascending: true }),
+    buildStorageSummary(activityId)
+  ]);
+
+  if (activityResult.error) throw activityResult.error;
+  if (usersResult.error) throw usersResult.error;
+  if (submissionsResult.error) throw submissionsResult.error;
+
+  const submissionIds = (submissionsResult.data || []).map(item => item.id).filter(Boolean);
+
+  if (ratingsResult.error && /activity_id/i.test(ratingsResult.error.message || '') && submissionIds.length) {
+    ratingsResult = await supabase.from('ratings')
+      .select('id,submission_id,rater_user_id,score,created_at,updated_at')
+      .in('submission_id', submissionIds)
+      .order('created_at', { ascending: true });
+  }
+  if (commentsResult.error && /activity_id/i.test(commentsResult.error.message || '')) {
+    const userIds = (usersResult.data || []).map(item => item.id).filter(Boolean);
+    const [workCommentsResult, feedbackCommentsResult] = await Promise.all([
+      submissionIds.length
+        ? supabase.from('comments')
+          .select('id,submission_id,user_id,content,is_anonymous,created_at')
+          .in('submission_id', submissionIds)
+          .order('created_at', { ascending: true })
+        : Promise.resolve({ data: [], error: null }),
+      userIds.length
+        ? supabase.from('comments')
+          .select('id,submission_id,user_id,content,is_anonymous,created_at')
+          .is('submission_id', null)
+          .in('user_id', userIds)
+          .order('created_at', { ascending: true })
+        : Promise.resolve({ data: [], error: null })
+    ]);
+    commentsResult = {
+      data: [...(workCommentsResult.data || []), ...(feedbackCommentsResult.data || [])]
+        .sort((a, b) => new Date(a.created_at || 0).getTime() - new Date(b.created_at || 0).getTime()),
+      error: workCommentsResult.error || feedbackCommentsResult.error || null
+    };
+  }
+  if (viewsResult.error && /activity_id/i.test(viewsResult.error.message || '') && submissionIds.length) {
+    viewsResult = await supabase.from('views')
+      .select('id,submission_id,viewer_user_id,is_valid,viewed_at')
+      .in('submission_id', submissionIds)
+      .order('viewed_at', { ascending: true });
+  }
+  if (feedbackLikesResult.error && /activity_id/i.test(feedbackLikesResult.error.message || '') && submissionIds.length && commentsResult.data?.length) {
+    const feedbackIds = commentsResult.data
+      .filter(item => !item.submission_id)
+      .map(item => item.id)
+      .filter(Boolean);
+    if (feedbackIds.length) {
+      feedbackLikesResult = await supabase.from('activity_feedback_likes')
+        .select('id,feedback_id,user_id,created_at')
+        .in('feedback_id', feedbackIds)
+        .order('created_at', { ascending: true });
+    }
+  }
+
+  if (ratingsResult.error) throw ratingsResult.error;
+  if (viewsResult.error) throw viewsResult.error;
+  if (commentsResult.error && !/comments|does not exist|schema cache/i.test(commentsResult.error.message || '')) {
+    throw commentsResult.error;
+  }
+
+  const activity = sanitizeActivity(activityResult.data || {});
+  const archivePolicy = resolveActivityArchivePolicy(activity);
+  const archiveProvider = getArchiveProviderInfo(archivePolicy);
+
+  const roster = rosterResult.error ? [] : (rosterResult.data || []);
+  const rosterReady = !rosterResult.error;
+  const users = usersResult.data || [];
+  const submissions = await enrichSubmissionMediaRows((submissionsResult.data || []).map(item => ({
+    ...item,
+    media_size: Number(item.media_size || 0),
+    view_count: Number(item.view_count || 0),
+    rating_count: Number(item.rating_count || 0),
+    average_rating: Number(item.average_rating || 0),
+    composite_score: Number(item.composite_score || 0)
+  })));
+  const ratings = ratingsResult.data || [];
+  const comments = commentsResult.data || [];
+  const views = viewsResult.data || [];
+  const feedbackLikes = feedbackLikesResult.error ? [] : (feedbackLikesResult.data || []);
+  const missingMedia = buildMissingMediaReport(submissions, storageSummary);
+  const ratedWorks = submissions.filter(item => Number(item.rating_count || 0) > 0);
+  const creatorCount = new Set(submissions.map(item => String(item.user_id || '')).filter(Boolean)).size;
+
+  return {
+    schema_version: 'classshow-activity-snapshot-v1',
+    generated_at: new Date().toISOString(),
+    time_zone: APP_TIME_ZONE,
+    activity_id: activityId,
+    activity,
+    archive_policy: archivePolicy,
+    archive_provider: archiveProvider,
+    ops: {
+      tasks: {
+        transcode: serializeTaskHealthState(backgroundTaskState.transcode),
+        archive: serializeTaskHealthState(backgroundTaskState.archive)
+      }
+    },
+    metrics: {
+      participant_count: users.length,
+      roster_count: roster.filter(item => item.active !== false).length,
+      creator_count: creatorCount,
+      submission_count: submissions.length,
+      rating_count: ratings.length,
+      comment_count: comments.filter(item => !!item.submission_id).length,
+      feedback_count: comments.filter(item => !item.submission_id && !isWithdrawnFeedbackContent(item.content)).length,
+      view_count: views.length,
+      average_score: ratedWorks.length
+        ? Math.round((ratedWorks.reduce((sum, item) => sum + Number(item.average_rating || 0), 0) / ratedWorks.length) * 100) / 100
+        : 0
+    },
+    integrity: {
+      missing_media_total: missingMedia.total_count,
+      missing_media_source: missingMedia.source_missing_count,
+      missing_media_thumbnails: missingMedia.thumbnail_missing_count,
+      orphan_file_count: Number(storageSummary.orphan_count || 0),
+      orphan_bytes: Number(storageSummary.orphan_bytes || 0)
+    },
+    storage: {
+      ...storageSummary,
+      _tracked_path_set: undefined
+    },
+    data: {
+      roster_ready: rosterReady,
+      roster,
+      users,
+      submissions,
+      ratings,
+      comments,
+      views,
+      feedback_likes: feedbackLikes
+    }
+  };
+}
+
+function serializeActivitySnapshot(snapshot) {
+  const json = JSON.stringify(snapshot, null, 2);
+  const sha256 = crypto.createHash('sha256').update(json).digest('hex');
+  return { json, sha256 };
+}
+
+function buildTaskOpsOverview() {
+  return {
+    transcode: serializeTaskHealthState(backgroundTaskState.transcode),
+    archive: serializeTaskHealthState(backgroundTaskState.archive)
   };
 }
 
@@ -3808,6 +4305,12 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
       .sort((a, b) => new Date(b.upload_time).getTime() - new Date(a.upload_time).getTime())
       .slice(0, 8);
     const missingMedia = buildMissingMediaReport(submissions, storageSummary);
+    const snapshotOverview = await listArchiveSnapshots(activity_id, { provider: archiveProvider }).catch(error => ({
+      provider: archiveProvider,
+      items: [],
+      error: String(error?.message || error || 'Failed to list snapshots'),
+      cache_ttl_ms: OPS_SNAPSHOT_LIST_TTL_MS
+    }));
 
     res.json({
       activity: sanitizeActivity(activityResult.data),
@@ -3853,6 +4356,11 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
       most_viewed: mostViewed,
       recent_uploads: recentUploads,
       missing_media: missingMedia,
+      ops: {
+        server_time: new Date().toISOString(),
+        tasks: buildTaskOpsOverview(),
+        snapshots: snapshotOverview
+      },
       latest_feedback: latestFeedback.items || [],
       hot_feedback: hotFeedback.items || [],
       feedback_likes_enabled: !!(latestFeedback.likes_enabled || hotFeedback.likes_enabled || feedbackLikesEnabled)
@@ -3901,7 +4409,7 @@ app.post('/api/teacher/transcode-run', teacherAuth, async (req, res) => {
     if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
     const auth = await ensureTeacherCanAccessActivity(req, activity_id);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
-    const result = await processPendingVideoTranscodes({ activityId: activity_id, limit: TRANSCODE_BATCH_SIZE, ignoreMinAge: true });
+    const result = await processPendingVideoTranscodes({ activityId: activity_id, limit: TRANSCODE_BATCH_SIZE, ignoreMinAge: true, source: 'manual' });
     res.json({ ok: true, ...result });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -3914,10 +4422,83 @@ app.post('/api/teacher/archive-run', teacherAuth, async (req, res) => {
     if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
     const auth = await ensureTeacherCanAccessActivity(req, activity_id);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
-    const result = await processArchiveQueue({ activityId: activity_id, limit: ARCHIVE_BATCH_SIZE });
+    const result = await processArchiveQueue({ activityId: activity_id, limit: ARCHIVE_BATCH_SIZE, source: 'manual' });
     res.json({ ok: true, ...result });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/teacher/backup-snapshot/export', teacherAuth, async (req, res) => {
+  try {
+    const activity_id = String(req.query.activity_id ?? '').trim();
+    if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
+    const auth = await ensureTeacherCanAccessActivity(req, activity_id);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const snapshot = await buildActivitySnapshot(activity_id);
+    const snapshotId = formatSnapshotStamp(new Date(snapshot.generated_at || Date.now()));
+    const { json, sha256 } = serializeActivitySnapshot({
+      ...snapshot,
+      snapshot_id: snapshotId
+    });
+
+    res.setHeader('Content-Type', 'application/json; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${buildSnapshotDownloadFilename(snapshot.activity, snapshotId)}"`);
+    res.setHeader('X-ClassShow-Snapshot-Sha256', sha256);
+    res.send(json);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+app.post('/api/teacher/backup-snapshot/archive', teacherAuth, async (req, res) => {
+  try {
+    const activity_id = String(req.body.activity_id ?? req.query.activity_id ?? '').trim();
+    if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
+    const auth = await ensureTeacherCanAccessActivity(req, activity_id);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const snapshot = await buildActivitySnapshot(activity_id);
+    const provider = getArchiveProviderInfo(resolveActivityArchivePolicy(snapshot.activity));
+    if (!provider.configured) {
+      return res.status(400).json({ error: 'Archive provider is not configured' });
+    }
+
+    const snapshotId = formatSnapshotStamp(new Date(snapshot.generated_at || Date.now()));
+    const snapshotPayload = {
+      ...snapshot,
+      snapshot_id: snapshotId
+    };
+    const { json, sha256 } = serializeActivitySnapshot(snapshotPayload);
+    const tempPath = createTempDerivedPath('json');
+    try {
+      await fs.promises.writeFile(tempPath, json, 'utf8');
+      const objectKey = buildArchiveSnapshotObjectKey(snapshot.activity, snapshotId);
+      const archived = await uploadLocalFileToArchiveObject(tempPath, objectKey, contentTypeForExtension('json'), provider);
+      if (!archived) throw new Error('Snapshot archive upload failed');
+      invalidateArchiveSnapshotListCache(activity_id);
+      const snapshots = await listArchiveSnapshots(activity_id, { provider, force: true }).catch(() => ({ provider, items: [] }));
+      res.json({
+        ok: true,
+        snapshot: {
+          id: snapshotId,
+          filename: buildSnapshotDownloadFilename(snapshot.activity, snapshotId),
+          sha256,
+          bytes: Buffer.byteLength(json, 'utf8'),
+          generated_at: snapshot.generated_at,
+          provider: archived.provider,
+          key: archived.key,
+          url: archived.url || null,
+          view_url: archived.view_url || null
+        },
+        snapshots
+      });
+    } finally {
+      await safeUnlink(tempPath);
+    }
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
   }
 });
 
