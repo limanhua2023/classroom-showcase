@@ -2991,6 +2991,41 @@ app.use(express.json({ limit: '10mb' }));
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 app.use(express.static(path.join(__dirname, 'public')));
 
+app.get('/api/health', async (_req, res) => {
+  const startedAt = Date.now();
+  const health = {
+    ok: true,
+    service: 'classshow',
+    version: process.env.RENDER_GIT_COMMIT || process.env.npm_package_version || 'local',
+    environment: process.env.RENDER ? 'render' : (process.env.NODE_ENV || 'development'),
+    time: new Date().toISOString(),
+    uptime_seconds: Math.round(process.uptime()),
+    supabase_configured: !!supabase,
+    archive_provider: getArchiveProviderInfo(),
+    tasks: buildTaskOpsOverview()
+  };
+
+  if (!supabase) {
+    health.supabase_ok = false;
+  } else {
+    try {
+      const { error } = await supabase
+        .from('activities')
+        .select('id', { count: 'exact', head: true })
+        .limit(1);
+      health.supabase_ok = !error;
+      if (error) health.supabase_error = error.message;
+    } catch (error) {
+      health.supabase_ok = false;
+      health.supabase_error = error.message;
+    }
+  }
+
+  health.ok = !!health.supabase_ok;
+  health.latency_ms = Date.now() - startedAt;
+  res.status(health.ok ? 200 : 503).json(health);
+});
+
 // ─── Teacher Auth Middleware ───
 function teacherAuth(req, res, next) {
   const auth = req.headers['x-teacher-auth'];
@@ -4201,7 +4236,7 @@ app.delete('/api/activity-feedback/:id', studentAuth, async (req, res) => {
     }
 
     const { data: feedback, error: feedbackError } = await supabase.from('comments')
-      .select('id,activity_id,user_id,submission_id')
+      .select('id,activity_id,user_id,submission_id,content')
       .eq('id', req.params.id)
       .single();
     if (feedbackError || !feedback || feedback.submission_id) {

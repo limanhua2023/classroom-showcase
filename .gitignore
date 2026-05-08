@@ -3,3 +3,15 @@ node_modules
 data/assignments.json
 dist
 .env
+
+# Generated local/ops reports and temporary diagnostics
+tmp_*.csv
+tmp_*.err
+tmp_*.json
+tmp_*.mjs
+tmp_*.out
+tmp_*.txt
+tmp_e2e_media/
+tmp_e2e_report/
+tmp_e2e_report_local/
+tmp_uploads/
