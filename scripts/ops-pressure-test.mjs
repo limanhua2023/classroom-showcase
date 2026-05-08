@@ -108,6 +108,12 @@ async function requestJson(method, route, { headers = {}, body, formData = null,
   }
 }
 
+function responseSizeBytes(data) {
+  if (typeof data === 'string') return Buffer.byteLength(data);
+  if (data === null || data === undefined) return 0;
+  return Buffer.byteLength(JSON.stringify(data));
+}
+
 function requireOk(result, label) {
   if (!result.ok) {
     const detail = result.error || result.data?.error || JSON.stringify(result.data || {});
@@ -436,7 +442,7 @@ async function main() {
     status: snapshotResult.status,
     latency_ms: snapshotResult.latency_ms,
     sha256_present: !!snapshotResult.headers?.['x-classshow-snapshot-sha256'],
-    size_bytes: typeof snapshotResult.data === 'string' ? Buffer.byteLength(snapshotResult.data) : 0
+    size_bytes: responseSizeBytes(snapshotResult.data)
   };
 
   const archiveRun = await requestJson('POST', '/api/teacher/archive-run', {

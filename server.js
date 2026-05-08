@@ -87,6 +87,7 @@ const STORAGE_WARNING_LIMIT_BYTES = Math.max(128 * 1024 * 1024, Number(process.e
 const STORAGE_SAFE_DELETE = !/^false$/i.test(String(process.env.STORAGE_SAFE_DELETE || 'true'));
 const ARCHIVE_PERMANENT_DELETE = /^true$/i.test(String(process.env.ARCHIVE_PERMANENT_DELETE || 'false'));
 const OPS_SNAPSHOT_LIST_TTL_MS = 60 * 1000;
+const OPS_HEAVY_QUERY_CACHE_TTL_MS = Math.max(5 * 1000, Number(process.env.OPS_HEAVY_QUERY_CACHE_TTL_MS || 30 * 1000));
 const TASK_STUCK_GRACE_MS = 5 * 60 * 1000;
 
 function escapeHtml(input = '') {
@@ -645,6 +646,8 @@ async function deleteStorageObject(storagePath, options = {}) {
 }
 
 const mediaManifestCache = new Map();
+const storageSummaryCache = new Map();
+const missingMediaExportCache = new Map();
 let googleDriveClientPromise = null;
 let googleDriveDestinationInfoPromise = null;
 let googleDriveDestinationInfoExpiresAt = 0;
@@ -681,6 +684,49 @@ function getCachedSubmissionMediaManifest(submissionId) {
     return null;
   }
   return cached.manifest ? JSON.parse(JSON.stringify(cached.manifest)) : null;
+}
+
+async function getCachedOpsValue(cache, key, ttlMs, loader) {
+  const now = Date.now();
+  const current = cache.get(key);
+  if (current?.value !== undefined && current.expiresAt > now) return current.value;
+  if (current?.promise) return current.promise;
+
+  const promise = Promise.resolve()
+    .then(loader)
+    .then(value => {
+      cache.set(key, {
+        value,
+        expiresAt: Date.now() + ttlMs
+      });
+      return value;
+    })
+    .catch(error => {
+      cache.delete(key);
+      if (current?.value !== undefined) {
+        cache.set(key, {
+          value: current.value,
+          expiresAt: Date.now() + Math.min(ttlMs, 10 * 1000),
+          stale_error: String(error?.message || error || 'cache loader failed')
+        });
+        return current.value;
+      }
+      throw error;
+    });
+
+  cache.set(key, {
+    promise,
+    value: current?.value,
+    expiresAt: current?.expiresAt || 0
+  });
+  return promise;
+}
+
+function invalidateActivityOpsCache(activityId) {
+  const key = String(activityId || '').trim();
+  if (!key) return;
+  storageSummaryCache.delete(`storage:${key}`);
+  missingMediaExportCache.delete(`missing-media:${key}`);
 }
 
 async function uploadLocalFileToPrimaryStorage(localPath, storagePath, contentType) {
@@ -2645,6 +2691,24 @@ async function buildStorageSummary(activityId) {
   return summary;
 }
 
+async function getCachedStorageSummary(activityId, options = {}) {
+  const key = `storage:${String(activityId || '').trim()}`;
+  if (options.refresh) {
+    const value = await buildStorageSummary(activityId);
+    storageSummaryCache.set(key, {
+      value,
+      expiresAt: Date.now() + OPS_HEAVY_QUERY_CACHE_TTL_MS
+    });
+    return value;
+  }
+  return getCachedOpsValue(
+    storageSummaryCache,
+    key,
+    OPS_HEAVY_QUERY_CACHE_TTL_MS,
+    () => buildStorageSummary(activityId)
+  );
+}
+
 function buildMissingMediaReport(submissions = [], storageSummary = {}) {
   const trackedPathSet = storageSummary?._tracked_path_set instanceof Set
     ? storageSummary._tracked_path_set
@@ -2786,6 +2850,53 @@ function buildMissingMediaReport(submissions = [], storageSummary = {}) {
   };
 }
 
+async function buildMissingMediaExportPayload(activityId) {
+  const [activityResult, submissionsResult, storageSummary] = await Promise.all([
+    supabase.from('activities').select('*').eq('id', activityId).single(),
+    supabase.from('submissions')
+      .select('*, users(name, student_id, class_name, group_name)')
+      .eq('activity_id', activityId)
+      .order('upload_time', { ascending: false }),
+    getCachedStorageSummary(activityId)
+  ]);
+
+  if (activityResult.error || !activityResult.data) {
+    const error = new Error('Activity not found');
+    error.status = 404;
+    throw error;
+  }
+  if (submissionsResult.error) throw submissionsResult.error;
+
+  const hydrated = await Promise.all((submissionsResult.data || []).map(async row => {
+    const manifest = await readSubmissionMediaManifest(row.id).catch(() => null);
+    return mergeSubmissionWithManifest(row, manifest);
+  }));
+
+  return {
+    activity: sanitizeActivity(activityResult.data),
+    exported_at: new Date().toISOString(),
+    missing_media: buildMissingMediaReport(hydrated, storageSummary)
+  };
+}
+
+async function getCachedMissingMediaExportPayload(activityId, options = {}) {
+  const key = `missing-media:${String(activityId || '').trim()}`;
+  if (options.refresh) {
+    const value = await buildMissingMediaExportPayload(activityId);
+    missingMediaExportCache.set(key, {
+      value,
+      expiresAt: Date.now() + OPS_HEAVY_QUERY_CACHE_TTL_MS
+    });
+    return value;
+  }
+  return getCachedOpsValue(
+    missingMediaExportCache,
+    key,
+    OPS_HEAVY_QUERY_CACHE_TTL_MS,
+    () => buildMissingMediaExportPayload(activityId)
+  );
+}
+
 async function buildActivitySnapshot(activityId) {
   let [
     activityResult,
@@ -2827,7 +2938,7 @@ async function buildActivitySnapshot(activityId) {
       .select('id,activity_id,feedback_id,user_id,created_at')
       .eq('activity_id', activityId)
       .order('created_at', { ascending: true }),
-    buildStorageSummary(activityId)
+    getCachedStorageSummary(activityId)
   ]);
 
   if (activityResult.error) throw activityResult.error;
@@ -3530,6 +3641,7 @@ app.post('/api/submissions', studentAuth, async (req, res) => {
         await deleteArchiveObject(existingManifest.archive_thumbnail_key, existingManifest.archive_provider);
       }
       const manifest = await writeSubmissionMediaManifest(existing.id, nextManifest);
+      invalidateActivityOpsCache(activity_id);
       return res.json(mergeSubmissionWithManifest(data, manifest));
     }
 
@@ -3587,6 +3699,7 @@ app.post('/api/submissions', studentAuth, async (req, res) => {
       archive_error: null,
       archived_at: null
     });
+    invalidateActivityOpsCache(activity_id);
     res.status(201).json(mergeSubmissionWithManifest(data, manifest));
   } catch (e) {
     if (shouldCleanupNewMedia && newStoragePath) await deleteStorageObject(newStoragePath);
@@ -3712,6 +3825,7 @@ app.delete('/api/teacher/submissions/:id', teacherAuth, async (req, res) => {
 
     await supabase.from('submissions').delete().eq('id', req.params.id);
     await deleteSubmissionMedia(sub);
+    invalidateActivityOpsCache(sub.activity_id);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -3728,6 +3842,7 @@ app.post('/api/teacher/submissions/:id/repair-thumbnail', teacherAuth, async (re
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
     const repaired = await repairSubmissionThumbnail(sub);
+    invalidateActivityOpsCache(sub.activity_id);
     res.json({ ok: true, submission: repaired });
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message });
@@ -3750,6 +3865,7 @@ app.post('/api/teacher/submissions/:id/repair-media', teacherAuth, upload.single
     }
 
     const repaired = await replaceTeacherSubmissionMedia(sub, req.file);
+    invalidateActivityOpsCache(sub.activity_id);
     res.json({ ok: true, submission: repaired });
   } catch (e) {
     if (req.file?.path) await safeUnlink(req.file.path);
@@ -3769,6 +3885,7 @@ app.post('/api/teacher/submissions/:id/restore-archive', teacherAuth, async (req
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
     const restored = await restoreSubmissionFromArchive(sub);
+    invalidateActivityOpsCache(sub.activity_id);
     res.json({ ok: true, submission: restored });
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message });
@@ -3806,6 +3923,7 @@ app.post('/api/teacher/submissions/:id/retry-archive', teacherAuth, async (req, 
       archive_attempts: 0,
       archive_error: null
     });
+    invalidateActivityOpsCache(sub.activity_id);
     res.json({ ok: true, submission: mergeSubmissionWithManifest(sub, nextManifest) });
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message });
@@ -3824,6 +3942,7 @@ app.delete('/api/submissions/:id', studentAuth, async (req, res) => {
     
     await supabase.from('submissions').delete().eq('id', req.params.id);
     await deleteSubmissionMedia(sub);
+    invalidateActivityOpsCache(sub.activity_id);
     res.json({ ok: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -4602,7 +4721,7 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
         .select('id,student_id,name,active,feedback_muted')
         .eq('activity_id', activity_id)
         .order('student_id', { ascending: true }),
-      buildStorageSummary(activity_id),
+      getCachedStorageSummary(activity_id),
       listActivityFeedback({ activityId: activity_id, sort: 'latest', includeUsers: true, limit: 5 }).catch(() => ({ likes_enabled: false, items: [] })),
       listActivityFeedback({ activityId: activity_id, sort: 'hot', includeUsers: true, limit: 5 }).catch(() => ({ likes_enabled: false, items: [] }))
     ]);
@@ -4789,32 +4908,11 @@ app.get('/api/teacher/missing-media-export', teacherAuth, async (req, res) => {
     const auth = await ensureTeacherCanAccessActivity(req, activity_id);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
-    const [activityResult, submissionsResult, storageSummary] = await Promise.all([
-      supabase.from('activities').select('*').eq('id', activity_id).single(),
-      supabase.from('submissions')
-        .select('*, users(name, student_id, class_name, group_name)')
-        .eq('activity_id', activity_id)
-        .order('upload_time', { ascending: false }),
-      buildStorageSummary(activity_id)
-    ]);
-
-    if (activityResult.error || !activityResult.data) {
-      return res.status(404).json({ error: 'Activity not found' });
-    }
-    if (submissionsResult.error) throw submissionsResult.error;
-
-    const hydrated = await Promise.all((submissionsResult.data || []).map(async row => {
-      const manifest = await readSubmissionMediaManifest(row.id).catch(() => null);
-      return mergeSubmissionWithManifest(row, manifest);
-    }));
-    const report = buildMissingMediaReport(hydrated, storageSummary);
+    const exportPayload = await getCachedMissingMediaExportPayload(activity_id);
+    const report = exportPayload.missing_media;
 
     if (format === 'json') {
-      return res.json({
-        activity: sanitizeActivity(activityResult.data),
-        exported_at: new Date().toISOString(),
-        missing_media: report
-      });
+      return res.json(exportPayload);
     }
 
     const BOM = '\uFEFF';
@@ -4872,12 +4970,12 @@ app.get('/api/teacher/missing-media-export', teacherAuth, async (req, res) => {
     }
 
     const stamp = formatSnapshotStamp(new Date());
-    const inviteCode = String(activityResult.data.invite_code || 'activity').trim() || 'activity';
+    const inviteCode = String(exportPayload.activity?.invite_code || 'activity').trim() || 'activity';
     res.setHeader('Content-Type', 'text/csv; charset=utf-8');
     res.setHeader('Content-Disposition', `attachment; filename="missing_media_${inviteCode}_${stamp}.csv"`);
     res.send(BOM + lines.join('\n'));
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(e.status || 500).json({ error: e.message });
   }
 });
 
@@ -4888,7 +4986,7 @@ app.post('/api/teacher/storage-cleanup', teacherAuth, async (req, res) => {
     const auth = await ensureTeacherCanAccessActivity(req, activity_id);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
-    const storageSummary = await buildStorageSummary(activity_id);
+    const storageSummary = await getCachedStorageSummary(activity_id, { refresh: true });
     const paths = storageSummary.orphan_files.map(item => item.path).filter(Boolean);
     if (!paths.length) {
       return res.json({ ok: true, removed: 0, bytes_freed: 0, summary: storageSummary });
@@ -4900,6 +4998,7 @@ app.post('/api/teacher/storage-cleanup', teacherAuth, async (req, res) => {
         quarantined += 1;
       }
     }
+    invalidateActivityOpsCache(activity_id);
 
     res.json({
       ok: true,
@@ -4921,6 +5020,7 @@ app.post('/api/teacher/transcode-run', teacherAuth, async (req, res) => {
     const auth = await ensureTeacherCanAccessActivity(req, activity_id);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
     const result = await processPendingVideoTranscodes({ activityId: activity_id, limit: TRANSCODE_BATCH_SIZE, ignoreMinAge: true, source: 'manual' });
+    invalidateActivityOpsCache(activity_id);
     res.json({ ok: true, ...result });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -4934,6 +5034,7 @@ app.post('/api/teacher/archive-run', teacherAuth, async (req, res) => {
     const auth = await ensureTeacherCanAccessActivity(req, activity_id);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
     const result = await processArchiveQueue({ activityId: activity_id, limit: ARCHIVE_BATCH_SIZE, source: 'manual' });
+    invalidateActivityOpsCache(activity_id);
     res.json({ ok: true, ...result });
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message });
