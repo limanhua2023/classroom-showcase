@@ -1,7 +1,9 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { spawn } from 'node:child_process';
 import sharp from 'sharp';
+import ffmpegStatic from 'ffmpeg-static';
 
 const BASE_URL = String(process.env.CLASS_SHOW_BASE_URL || 'https://classroom-showcase.onrender.com').replace(/\/+$/, '');
 const INVITE_CODE = String(process.env.CLASS_SHOW_INVITE_CODE || 'DPU139').trim();
@@ -11,6 +13,7 @@ const STUDENT_COUNT = Math.max(1, Number(process.env.OPS_PRESSURE_STUDENTS || 3)
 const WORKS_PER_STUDENT = Math.max(1, Number(process.env.OPS_PRESSURE_WORKS_PER_STUDENT || 2));
 const READ_CONCURRENCY = Math.max(1, Number(process.env.OPS_PRESSURE_READ_CONCURRENCY || 20));
 const READ_ROUNDS = Math.max(1, Number(process.env.OPS_PRESSURE_READ_ROUNDS || 4));
+const INCLUDE_VIDEO = /^true$/i.test(String(process.env.OPS_PRESSURE_INCLUDE_VIDEO || 'true'));
 const REPORT_DIR = path.resolve('tmp_e2e_report');
 const MEDIA_DIR = path.resolve('tmp_e2e_media', 'ops_pressure');
 const RUN_ID = new Date().toISOString().replace(/[-:TZ.]/g, '').slice(0, 14);
@@ -153,6 +156,59 @@ async function createSyntheticImage(studentIndex, workIndex) {
   return { buffer, filename, title, filePath };
 }
 
+async function runFfmpeg(args) {
+  if (!ffmpegStatic) throw new Error('ffmpeg-static is unavailable');
+  await new Promise((resolve, reject) => {
+    const child = spawn(ffmpegStatic, args, { windowsHide: true });
+    let stderr = '';
+    child.stderr.on('data', chunk => { stderr += chunk.toString(); });
+    child.on('error', reject);
+    child.on('close', code => {
+      if (code === 0) resolve();
+      else reject(new Error(stderr.slice(-1000) || `ffmpeg exited with ${code}`));
+    });
+  });
+}
+
+async function createSyntheticVideo(studentIndex, workIndex) {
+  await fs.mkdir(MEDIA_DIR, { recursive: true });
+  const title = `OPS VIDEO ${RUN_ID}-${studentIndex + 1}-${workIndex + 1}`;
+  const filename = `ops_${RUN_ID}_${studentIndex + 1}_${workIndex + 1}.mp4`;
+  const filePath = path.join(MEDIA_DIR, filename);
+  const hue = (studentIndex * 45 + workIndex * 90) % 360;
+  await runFfmpeg([
+    '-y',
+    '-f', 'lavfi',
+    '-i', `testsrc2=size=960x540:rate=24:duration=4`,
+    '-f', 'lavfi',
+    '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
+    '-vf', `hue=h=${hue}:s=1.2`,
+    '-shortest',
+    '-c:v', 'libx264',
+    '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac',
+    '-movflags', '+faststart',
+    filePath
+  ]);
+  const buffer = await fs.readFile(filePath);
+  return { buffer, filename, title, filePath, contentType: 'video/mp4', mediaKind: 'video' };
+}
+
+async function createSyntheticMedia(studentIndex, workIndex) {
+  const shouldCreateVideo = INCLUDE_VIDEO
+    && workIndex === WORKS_PER_STUDENT - 1
+    && studentIndex % 3 === 0;
+  if (shouldCreateVideo) {
+    try {
+      return await createSyntheticVideo(studentIndex, workIndex);
+    } catch (error) {
+      console.warn(`Video generation failed, falling back to image: ${error.message}`);
+    }
+  }
+  const image = await createSyntheticImage(studentIndex, workIndex);
+  return { ...image, contentType: 'image/png', mediaKind: 'image' };
+}
+
 function buildTeacherHeaders(token) {
   return { 'x-teacher-auth': token };
 }
@@ -255,11 +311,11 @@ async function main() {
       }), `refresh student token ${student.student_id}`).token;
 
       for (let workIndex = 0; workIndex < WORKS_PER_STUDENT; workIndex += 1) {
-        const image = await createSyntheticImage(studentIndex, workIndex);
+        const image = await createSyntheticMedia(studentIndex, workIndex);
         const formData = new FormData();
         formData.set('activity_id', activityId);
         formData.set('user_id', student.id);
-        formData.set('image', new Blob([image.buffer], { type: 'image/png' }), image.filename);
+        formData.set('image', new Blob([image.buffer], { type: image.contentType }), image.filename);
 
         const upload = requireOk(await requestJson('POST', '/api/upload', {
           headers: buildStudentHeaders(token),
@@ -292,6 +348,7 @@ async function main() {
           user_id: student.id,
           title: submission.title,
           media_type: submission.media_type,
+          generated_media_kind: image.mediaKind,
           thumbnail_present: !!submission.thumbnail_url,
           storage_path: submission.storage_path
         });
