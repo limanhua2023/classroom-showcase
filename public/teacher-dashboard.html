@@ -344,6 +344,27 @@
       color: #ffffff;
       border-color: #2563eb;
     }
+    .quarantine-search-wrap {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .quarantine-search-input {
+      min-width: 240px;
+      padding: 8px 12px;
+      border-radius: 999px;
+      border: 1px solid rgba(15, 23, 42, 0.12);
+      background: rgba(255, 255, 255, 0.82);
+      color: var(--text-main);
+      font: inherit;
+      font-size: 0.82rem;
+    }
+    .quarantine-search-input:focus {
+      outline: none;
+      border-color: rgba(37, 99, 235, 0.48);
+      box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
+    }
     .missing-media-item {
       display: flex;
       justify-content: space-between;
@@ -840,14 +861,31 @@
     let pendingRepairSubmissionId = null;
     let pendingRepairSubmissionContext = 'visible';
     let missingMediaFilter = 'all';
-    let quarantineFilter = (() => {
+    function getQuarantinePreferenceKey(name) {
+      return `classshow:quarantine:${name}:${actId || 'default'}`;
+    }
+
+    function readQuarantinePreference(name, fallback = '') {
       try {
-        const saved = localStorage.getItem(`classshow:quarantineFilter:${actId || 'default'}`);
-        return ['all', 'today', 'overdue'].includes(saved) ? saved : 'all';
+        const saved = localStorage.getItem(getQuarantinePreferenceKey(name));
+        return saved == null ? fallback : saved;
       } catch {
-        return 'all';
+        return fallback;
       }
+    }
+
+    function writeQuarantinePreference(name, value) {
+      try {
+        localStorage.setItem(getQuarantinePreferenceKey(name), String(value ?? ''));
+      } catch {}
+    }
+
+    let quarantineFilter = (() => {
+      const saved = readQuarantinePreference('filter', 'all');
+      return ['all', 'today', 'overdue'].includes(saved) ? saved : 'all';
     })();
+    let quarantineRecoverableOnly = readQuarantinePreference('recoverable', '0') === '1';
+    let quarantineSearchQuery = readQuarantinePreference('search', '').trim();
     let dashboardBaseTitle = '教师后台 - ClassShow';
     let lastQuarantineExpiryReminderKey = '';
 
@@ -876,7 +914,7 @@
       const panel = document.getElementById('quarantinePanel');
       panel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       if (focusDue && hasOverdueQuarantineRows()) {
-        setQuarantineFilter('overdue', { focusFirst: true, suppressScroll: true });
+        setQuarantineFilter('overdue', { focusFirst: true, suppressScroll: true, resetSearch: true, resetRecoverable: true });
       }
     }
 
@@ -902,9 +940,26 @@
           <button class="missing-media-filter active" type="button" data-quarantine-filter="all" id="quarantineFilterAllBtn">全部</button>
           <button class="missing-media-filter" type="button" data-quarantine-filter="today" id="quarantineFilterTodayBtn">今天到期</button>
           <button class="missing-media-filter attention" type="button" data-quarantine-filter="overdue" id="quarantineFilterOverdueBtn">已超期</button>
+          <button class="missing-media-filter" type="button" id="quarantineRecoverableToggleBtn">只看可恢复</button>
+          <div class="quarantine-search-wrap">
+            <input class="quarantine-search-input" type="search" id="quarantineSearchInput" placeholder="按姓名或学号搜索回收区">
+            <button class="btn btn-secondary btn-sm" type="button" id="quarantineSearchClearBtn">清空</button>
+          </div>
         `;
         filters.querySelectorAll('[data-quarantine-filter]').forEach(btn => {
           btn.addEventListener('click', () => setQuarantineFilter(btn.dataset.quarantineFilter || 'all'));
+        });
+        const recoverableBtn = filters.querySelector('#quarantineRecoverableToggleBtn');
+        recoverableBtn?.addEventListener('click', () => setQuarantineRecoverableOnly(!quarantineRecoverableOnly));
+        const searchInput = filters.querySelector('#quarantineSearchInput');
+        const clearBtn = filters.querySelector('#quarantineSearchClearBtn');
+        if (searchInput) {
+          searchInput.value = quarantineSearchQuery;
+          searchInput.addEventListener('input', event => setQuarantineSearchQuery(event.target.value || ''));
+        }
+        clearBtn?.addEventListener('click', () => {
+          if (searchInput) searchInput.value = '';
+          setQuarantineSearchQuery('');
         });
         toolbar.insertBefore(filters, toolbar.firstElementChild || null);
       }
@@ -1430,16 +1485,33 @@
       return !!item?.purge_unlock_at && getQuarantineDueDayKey(item) === todayKey;
     }
 
+    function normalizeQuarantineSearch(value) {
+      return String(value || '').toLowerCase().replace(/\s+/g, '');
+    }
+
+    function canRestoreQuarantinedItem(item) {
+      return !item?.source_missing || !!item?.can_restore_archive;
+    }
+
     function hasOverdueQuarantineRows(rows = getQuarantinedRows()) {
       return rows.some(item => item?.purge_allowed);
     }
 
     function getFilteredQuarantinedRows(rows = getQuarantinedRows(), filter = quarantineFilter) {
       const todayKey = getBangkokDayKey();
+      const searchQuery = normalizeQuarantineSearch(quarantineSearchQuery);
       return rows.filter(item => {
-        if (filter === 'today') return isQuarantineDueToday(item, todayKey);
-        if (filter === 'overdue') return !!item?.purge_allowed;
-        return true;
+        const user = item?.users || {};
+        const haystack = normalizeQuarantineSearch([user.name, user.student_id, item?.title].filter(Boolean).join(' '));
+        const matchesSearch = !searchQuery || haystack.includes(searchQuery);
+        const matchesRecoverable = !quarantineRecoverableOnly || canRestoreQuarantinedItem(item);
+        const matchesTimeFilter =
+          filter === 'today'
+            ? isQuarantineDueToday(item, todayKey)
+            : filter === 'overdue'
+              ? !!item?.purge_allowed
+              : true;
+        return matchesSearch && matchesRecoverable && matchesTimeFilter;
       });
     }
 
@@ -1452,10 +1524,12 @@
     }
 
     function setQuarantineFilter(filter, options = {}) {
+      if (options.resetSearch) quarantineSearchQuery = '';
+      if (options.resetRecoverable) quarantineRecoverableOnly = false;
       quarantineFilter = filter || 'all';
-      try {
-        localStorage.setItem(`classshow:quarantineFilter:${actId || 'default'}`, quarantineFilter);
-      } catch {}
+      writeQuarantinePreference('filter', quarantineFilter);
+      writeQuarantinePreference('recoverable', quarantineRecoverableOnly ? '1' : '0');
+      writeQuarantinePreference('search', quarantineSearchQuery);
       renderQuarantineBin(dashboardSummary || {});
       renderQuarantineAlerts(dashboardSummary || {});
       if (options.focusFirst) {
@@ -1466,6 +1540,18 @@
           focusFirstQuarantineDueItem();
         });
       }
+    }
+
+    function setQuarantineRecoverableOnly(enabled) {
+      quarantineRecoverableOnly = !!enabled;
+      writeQuarantinePreference('recoverable', quarantineRecoverableOnly ? '1' : '0');
+      renderQuarantineBin(dashboardSummary || {});
+    }
+
+    function setQuarantineSearchQuery(query) {
+      quarantineSearchQuery = String(query || '').trim();
+      writeQuarantinePreference('search', quarantineSearchQuery);
+      renderQuarantineBin(dashboardSummary || {});
     }
 
     function renderMissingMedia(summary) {
@@ -1576,16 +1662,19 @@
       const restoreBtn = document.getElementById('batchRestoreQuarantineBtn');
       const purgeBtn = document.getElementById('batchPurgeQuarantineBtn');
       const filterBar = document.getElementById('quarantineFilterBar');
+      const recoverableBtn = document.getElementById('quarantineRecoverableToggleBtn');
+      const searchInput = document.getElementById('quarantineSearchInput');
+      const searchClearBtn = document.getElementById('quarantineSearchClearBtn');
       if (!summaryBadge || !metaBox || !listBox) return;
 
-      const readyToRestoreCount = rows.filter(item => !item.source_missing || item.can_restore_archive).length;
+      const readyToRestoreCount = rows.filter(item => canRestoreQuarantinedItem(item)).length;
       const sourceStillMissingCount = rows.filter(item => item.source_missing).length;
       const archiveCopyCount = rows.filter(item => item.has_archive_copy).length;
       const failedArchiveCount = rows.filter(item => item.archive_failed).length;
       const purgeReadyCount = rows.filter(item => item.purge_allowed).length;
       const purgeLockedCount = rows.filter(item => !item.purge_allowed).length;
       const dueTodayCount = rows.filter(item => isQuarantineDueToday(item, todayKey)).length;
-      const filteredRestoreCount = filteredRows.filter(item => !item.source_missing || item.can_restore_archive).length;
+      const filteredRestoreCount = filteredRows.filter(item => canRestoreQuarantinedItem(item)).length;
       const filteredPurgeReadyCount = filteredRows.filter(item => item.purge_allowed).length;
 
       summaryBadge.textContent = rows.length ? `${rows.length} 项待确认` : '回收区为空';
@@ -1603,6 +1692,12 @@
       if (todayBtn) todayBtn.textContent = `今天到期 ${dueTodayCount}`;
       if (overdueBtn) overdueBtn.textContent = `已超期 ${purgeReadyCount}`;
       if (todayBtn) todayBtn.classList.toggle('attention', dueTodayCount > 0);
+      if (recoverableBtn) {
+        recoverableBtn.classList.toggle('active', quarantineRecoverableOnly);
+        recoverableBtn.textContent = `只看可恢复 ${readyToRestoreCount}`;
+      }
+      if (searchInput && searchInput.value !== quarantineSearchQuery) searchInput.value = quarantineSearchQuery;
+      if (searchClearBtn) searchClearBtn.disabled = !quarantineSearchQuery;
       metaBox.innerHTML = [
         `回收区总数 ${rows.length}`,
         `可直接恢复 ${readyToRestoreCount}`,
@@ -1611,6 +1706,7 @@
         `归档失败 ${failedArchiveCount}`,
         `到期可删 ${purgeReadyCount}`,
         `保留锁定 ${purgeLockedCount}`,
+        `当前命中 ${filteredRows.length}`,
         `当前保留期 ${retentionDays} 天`,
         rows.length ? '先修复或恢复，再决定是否永久删除' : '当前没有隔离中的缺失作品'
       ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
@@ -1621,7 +1717,7 @@
       }
 
       if (!filteredRows.length) {
-        listBox.innerHTML = '<div class="dashboard-panel-note">当前筛选下没有符合条件的回收区作品。</div>';
+        listBox.innerHTML = '<div class="dashboard-panel-note">当前筛选与搜索条件下没有符合条件的回收区作品。</div>';
         return;
       }
 
@@ -1650,7 +1746,7 @@
           );
         }
         if (item.quarantine_timestamp_missing) archiveMeta.push('保留期时间戳刚补建，请刷新后再看');
-        const canRestore = !item.source_missing || item.can_restore_archive;
+        const canRestore = canRestoreQuarantinedItem(item);
         const purgeDisabledReason = item.purge_allowed
           ? ''
           : `disabled title="${escapeHtml(`仍需保留 ${formatRetentionDuration(item.remaining_retention_ms)}`)}"`;

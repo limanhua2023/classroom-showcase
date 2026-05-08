@@ -1,6 +1,12 @@
 # ClassShow 维护日志
 
 ## 2026-05-08
+### Quarantine Search and Recoverable Filter
+- Added recycle-bin search by student name or student ID, so teachers can quickly locate a quarantined work without scanning the full list.
+- Added a one-click `recoverable only` filter in the recycle area. Items count as recoverable when the source file still exists or when an archive restore path is available.
+- Search text and the recoverable-only toggle are now persisted per activity in browser local storage, so a full refresh keeps the teacher's current recycle-bin working context.
+- When the top overdue red badge jumps into the recycle bin, auxiliary filters are cleared first to ensure the first truly overdue work is always brought into focus.
+
 ### Quarantine Due Reminder and Red Badge
 - Added recycle-bin due reminders in the teacher dashboard. The recycle area now shows an inline expiry alert when quarantined works become eligible for handling.
 - Added a recycle-bin quick button in the top bar with a red dot and numeric badge that reflects the current `purge_ready_count`.
