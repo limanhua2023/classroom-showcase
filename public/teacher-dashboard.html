@@ -71,6 +71,52 @@
       border-color: rgba(239, 68, 68, 0.2);
       color: #b91c1c;
     }
+    .inline-expiry-alert {
+      display: none;
+      margin-top: 12px;
+    }
+    .inline-expiry-alert strong {
+      font-weight: 900;
+    }
+    .topbar-alert-btn {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .topbar-alert-btn.attention-pulse {
+      border-color: rgba(239, 68, 68, 0.3);
+      background: rgba(239, 68, 68, 0.08);
+      color: #b91c1c;
+    }
+    .nav-attention-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 999px;
+      background: #ef4444;
+      box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.12);
+      flex: 0 0 auto;
+    }
+    .nav-attention-count {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 20px;
+      height: 20px;
+      padding: 0 6px;
+      border-radius: 999px;
+      background: #ef4444;
+      color: #fff;
+      font-size: 0.74rem;
+      font-weight: 900;
+      line-height: 1;
+      flex: 0 0 auto;
+    }
+    .card-badge.attention {
+      background: rgba(239, 68, 68, 0.12);
+      border-color: rgba(239, 68, 68, 0.2);
+      color: #b91c1c;
+    }
     .storage-control-panel {
       margin-top: 18px;
       padding: 16px;
@@ -773,6 +819,8 @@
     let pendingRepairSubmissionId = null;
     let pendingRepairSubmissionContext = 'visible';
     let missingMediaFilter = 'all';
+    let dashboardBaseTitle = '教师后台 - ClassShow';
+    let lastQuarantineExpiryReminderKey = '';
 
     const toggleMeta = {
       upload_open: { label: '上传入口', note: '控制学生是否还能继续上传或替换作品。' },
@@ -792,6 +840,38 @@
       const code = ((dashboardSummary?.activity?.invite_code) || act.invite_code || '').trim();
       const url = code ? ('display.html?code=' + encodeURIComponent(code)) : 'display.html';
       window.open(url, '_blank');
+    }
+
+    function scrollToQuarantineBin() {
+      ensureQuarantineReminderScaffold();
+      document.getElementById('quarantinePanel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function ensureQuarantineReminderScaffold() {
+      const summaryBadge = document.getElementById('quarantineSummary');
+      const panel = summaryBadge?.closest('.dashboard-panel');
+      if (panel && !panel.id) panel.id = 'quarantinePanel';
+
+      const metaBox = document.getElementById('quarantineMeta');
+      if (metaBox && !document.getElementById('quarantineExpiryAlert')) {
+        const alertBox = document.createElement('div');
+        alertBox.id = 'quarantineExpiryAlert';
+        alertBox.className = 'storage-warning warning-critical inline-expiry-alert';
+        metaBox.insertAdjacentElement('afterend', alertBox);
+      }
+
+      const topbarRight = document.querySelector('.topbar-right');
+      if (topbarRight && !document.getElementById('recycleBinQuickBtn')) {
+        const btn = document.createElement('button');
+        btn.type = 'button';
+        btn.className = 'btn btn-sm btn-secondary topbar-alert-btn';
+        btn.id = 'recycleBinQuickBtn';
+        btn.innerHTML = '回收区 <span class="nav-attention-dot" id="recycleBinNavDot" hidden></span><span class="nav-attention-count" id="recycleBinNavCount" hidden>0</span>';
+        btn.addEventListener('click', scrollToQuarantineBin);
+        const displayBtn = Array.from(topbarRight.querySelectorAll('button')).find(el => String(el.getAttribute('onclick') || '').includes('openDisplay'));
+        if (displayBtn) topbarRight.insertBefore(btn, displayBtn);
+        else topbarRight.appendChild(btn);
+      }
     }
 
     function parseRosterText(text) {
@@ -1463,6 +1543,55 @@
       }).join('');
     }
 
+    function renderQuarantineAlerts(summary) {
+      ensureQuarantineReminderScaffold();
+      const report = summary.quarantined_missing_media || {};
+      const rows = Array.isArray(report.items) ? report.items : [];
+      const total = Number(report.total_count || rows.length || 0);
+      const ready = Number(report.purge_ready_count || rows.filter(item => item.purge_allowed).length || 0);
+      const locked = Number(report.purge_locked_count || rows.filter(item => !item.purge_allowed).length || 0);
+      const summaryBadge = document.getElementById('quarantineSummary');
+      const alertBox = document.getElementById('quarantineExpiryAlert');
+      const quickBtn = document.getElementById('recycleBinQuickBtn');
+      const navDot = document.getElementById('recycleBinNavDot');
+      const navCount = document.getElementById('recycleBinNavCount');
+
+      if (quickBtn) quickBtn.classList.toggle('attention-pulse', ready > 0);
+      if (navDot) navDot.hidden = ready <= 0;
+      if (navCount) {
+        navCount.hidden = ready <= 0;
+        navCount.textContent = String(ready);
+      }
+
+      if (summaryBadge) {
+        summaryBadge.classList.toggle('attention', ready > 0);
+        if (ready > 0) summaryBadge.textContent = `到期待处理 ${ready} 项`;
+        else if (!total) summaryBadge.textContent = '回收区为空';
+        else summaryBadge.textContent = `${total} 项待确认`;
+      }
+
+      if (alertBox) {
+        if (ready > 0) {
+          const lockedText = locked > 0 ? `，另有 ${locked} 项仍在保留期内。` : '。';
+          alertBox.style.display = 'block';
+          alertBox.innerHTML = `<strong>回收区自动提醒：</strong>已有 ${ready} 项作品到达处理窗口，请优先核对并选择恢复、继续留存或彻底删除${lockedText}`;
+        } else {
+          alertBox.style.display = 'none';
+          alertBox.textContent = '';
+        }
+      }
+
+      document.title = ready > 0 ? `(${ready}) ${dashboardBaseTitle}` : dashboardBaseTitle;
+
+      const reminderKey = `${summary.activity?.id || actId}:${ready}:${locked}:${total}`;
+      if (ready > 0 && reminderKey !== lastQuarantineExpiryReminderKey) {
+        lastQuarantineExpiryReminderKey = reminderKey;
+        toast(`回收区有 ${ready} 项作品已到期待处理`, 'error');
+      } else if (ready === 0) {
+        lastQuarantineExpiryReminderKey = reminderKey;
+      }
+    }
+
     function setMissingMediaFilter(filter) {
       missingMediaFilter = filter || 'all';
       renderMissingMedia(dashboardSummary || {});
@@ -2044,6 +2173,8 @@
     }
 
     function renderMeta(activity) {
+      dashboardBaseTitle = `${activity.activity_name || 'ClassShow'} - 教师后台`;
+      document.title = dashboardBaseTitle;
       document.getElementById('heroTitle').textContent = activity.activity_name || 'ClassShow';
       document.getElementById('heroSubtitle').textContent = `${activity.course_name || ''} · ${activity.class_name || ''} · 曼谷时间显示 · 作品自动带上传时间与云端压缩存储`;
       document.getElementById('inviteCode').textContent = activity.invite_code || '-';
@@ -2091,6 +2222,7 @@
         renderSnapshots(summary);
         renderMissingMedia(summary);
         renderQuarantineBin(summary);
+        renderQuarantineAlerts(summary);
         renderWorkList('topRatedList', summary.top_rated, 'rating');
         renderWorkList('recentUploadsList', summary.recent_uploads, 'time');
         renderFeedbackList('feedbackHotList', summary.hot_feedback, 'hot');

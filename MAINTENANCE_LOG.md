@@ -1,6 +1,11 @@
 # ClassShow 维护日志
 
 ## 2026-05-08
+### Quarantine Due Reminder and Red Badge
+- Added recycle-bin due reminders in the teacher dashboard. The recycle area now shows an inline expiry alert when quarantined works become eligible for handling.
+- Added a recycle-bin quick button in the top bar with a red dot and numeric badge that reflects the current `purge_ready_count`.
+- The browser title now prefixes the due count, so teachers can see pending recycle-bin work even when the tab is in the background.
+- Reminder toasts only fire when the due-count state changes, avoiding repeated noise during manual refreshes.
 
 ### 缺失作品回收区
 
