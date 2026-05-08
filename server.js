@@ -103,6 +103,12 @@ function sanitizeText(input, maxLen = 200) {
   return escapeHtml(String(input ?? '').trim()).slice(0, maxLen);
 }
 
+function escapeCsvCell(input = '') {
+  const value = String(input ?? '');
+  if (!/[",\r\n]/.test(value)) return value;
+  return `"${value.replace(/"/g, '""')}"`;
+}
+
 function formatStorageBytes(bytes = 0) {
   const value = Number(bytes) || 0;
   if (value <= 0) return '0 B';
@@ -434,6 +440,107 @@ function storagePathFromPublicUrl(input) {
   } catch {
     return null;
   }
+}
+
+function classifyMissingMediaFailure({
+  sourceMissing = false,
+  thumbnailMissing = false,
+  archiveFailed = false,
+  archiveError = '',
+  mediaType = 'image'
+} = {}) {
+  const errorText = String(archiveError || '').trim();
+  const lower = errorText.toLowerCase();
+  if (sourceMissing) {
+    return {
+      key: 'source_missing',
+      label: '源文件缺失',
+      detail: '主存储中的源文件不存在，需上传修复文件或从归档恢复。',
+      sort_order: 10
+    };
+  }
+  if (thumbnailMissing && !archiveFailed) {
+    return {
+      key: mediaType === 'video' ? 'video_thumbnail_missing' : 'thumbnail_missing',
+      label: mediaType === 'video' ? '视频封面缺失' : '缩略图缺失',
+      detail: mediaType === 'video'
+        ? '视频作品缺少封面图，可直接重建缩略图。'
+        : '图片作品缺少缩略图，可直接重建缩略图。',
+      sort_order: 20
+    };
+  }
+  if (archiveFailed) {
+    if (lower.includes('download media: 400') || lower.includes('download media: 404')) {
+      return {
+        key: 'archive_download_failed',
+        label: '归档源文件下载失败',
+        detail: errorText || '归档时无法下载源文件，请检查主文件链路。',
+        sort_order: 30
+      };
+    }
+    if (lower.includes('permission') || lower.includes('forbidden') || lower.includes('unauthorized') || lower.includes('access denied')) {
+      return {
+        key: 'archive_permission_denied',
+        label: '归档权限异常',
+        detail: errorText || '归档目标无写入权限，请检查认证与文件夹授权。',
+        sort_order: 40
+      };
+    }
+    if (lower.includes('quota') || lower.includes('storage quota') || lower.includes('insufficient storage')) {
+      return {
+        key: 'archive_quota_exceeded',
+        label: '归档配额不足',
+        detail: errorText || '归档目标空间不足，请清理容量或切换目标。',
+        sort_order: 50
+      };
+    }
+    if (lower.includes('too many requests') || lower.includes('rate limit') || lower.includes('429')) {
+      return {
+        key: 'archive_rate_limited',
+        label: '归档频率受限',
+        detail: errorText || '归档请求过于频繁，可稍后重试。',
+        sort_order: 60
+      };
+    }
+    if (lower.includes('timeout') || lower.includes('network') || lower.includes('socket') || lower.includes('econnreset') || lower.includes('fetch failed')) {
+      return {
+        key: 'archive_network_error',
+        label: '归档网络异常',
+        detail: errorText || '归档过程中网络不稳定，可稍后重试。',
+        sort_order: 70
+      };
+    }
+    if (lower.includes('thumbnail')) {
+      return {
+        key: 'archive_thumbnail_error',
+        label: '归档缩略图异常',
+        detail: errorText || '归档缩略图时发生异常，可先重建缩略图后重试。',
+        sort_order: 80
+      };
+    }
+    return {
+      key: 'archive_unknown_error',
+      label: '归档未知异常',
+      detail: errorText || '归档失败，但未匹配到具体原因。',
+      sort_order: 90
+    };
+  }
+  if (thumbnailMissing) {
+    return {
+      key: mediaType === 'video' ? 'video_thumbnail_missing' : 'thumbnail_missing',
+      label: mediaType === 'video' ? '视频封面缺失' : '缩略图缺失',
+      detail: mediaType === 'video'
+        ? '视频作品缺少封面图，可直接重建缩略图。'
+        : '图片作品缺少缩略图，可直接重建缩略图。',
+      sort_order: 20
+    };
+  }
+  return {
+    key: 'other_media_issue',
+    label: '其他媒体异常',
+    detail: errorText || '媒体状态存在异常，请进一步检查。',
+    sort_order: 999
+  };
 }
 
 function publicUrlForStoragePath(storagePath) {
@@ -2543,6 +2650,7 @@ function buildMissingMediaReport(submissions = [], storageSummary = {}) {
     ? storageSummary._tracked_path_set
     : new Set();
   const items = [];
+  const failureReasonMap = new Map();
   let sourceMissingCount = 0;
   let thumbnailMissingCount = 0;
   let archiveFailedCount = 0;
@@ -2575,6 +2683,14 @@ function buildMissingMediaReport(submissions = [], storageSummary = {}) {
     if (archiveFailed) archiveFailedCount += 1;
     if (canRetryArchive) archiveRetryableCount += 1;
 
+    const failureInfo = classifyMissingMediaFailure({
+      sourceMissing,
+      thumbnailMissing,
+      archiveFailed,
+      archiveError,
+      mediaType
+    });
+
     const issueCodes = [];
     const issueLabels = [];
     if (sourceMissing) {
@@ -2592,6 +2708,7 @@ function buildMissingMediaReport(submissions = [], storageSummary = {}) {
 
     items.push({
       id: submission.id,
+      anonymous_code: submission.anonymous_code || '',
       title: submission.title || '未命名作品',
       upload_time: submission.upload_time || null,
       media_type: mediaType,
@@ -2613,8 +2730,29 @@ function buildMissingMediaReport(submissions = [], storageSummary = {}) {
       archive_tier: submission.archive_tier || null,
       archive_attempts: Number(submission.archive_attempts || 0),
       archive_error: archiveError,
+      failure_category_key: failureInfo.key,
+      failure_category_label: failureInfo.label,
+      failure_detail: failureInfo.detail,
+      failure_sort_order: Number(failureInfo.sort_order || 999),
       users: submission.users || {}
     });
+
+    const statsKey = failureInfo.key || 'other_media_issue';
+    const current = failureReasonMap.get(statsKey) || {
+      key: statsKey,
+      label: failureInfo.label || '其他媒体异常',
+      detail: failureInfo.detail || '',
+      count: 0,
+      retryable_count: 0,
+      source_missing_count: 0,
+      thumbnail_missing_count: 0,
+      sort_order: Number(failureInfo.sort_order || 999)
+    };
+    current.count += 1;
+    current.retryable_count += canRetryArchive ? 1 : 0;
+    current.source_missing_count += sourceMissing ? 1 : 0;
+    current.thumbnail_missing_count += thumbnailMissing ? 1 : 0;
+    failureReasonMap.set(statsKey, current);
   }
 
   items.sort((a, b) => {
@@ -2630,12 +2768,20 @@ function buildMissingMediaReport(submissions = [], storageSummary = {}) {
     return new Date(b.upload_time || 0).getTime() - new Date(a.upload_time || 0).getTime();
   });
 
+  const failure_reason_stats = Array.from(failureReasonMap.values())
+    .sort((a, b) => {
+      if (b.count !== a.count) return b.count - a.count;
+      if (a.sort_order !== b.sort_order) return a.sort_order - b.sort_order;
+      return String(a.label || '').localeCompare(String(b.label || ''), 'zh-CN');
+    });
+
   return {
     total_count: items.length,
     source_missing_count: sourceMissingCount,
     thumbnail_missing_count: thumbnailMissingCount,
     archive_failed_count: archiveFailedCount,
     archive_retryable_count: archiveRetryableCount,
+    failure_reason_stats,
     items
   };
 }
@@ -4595,6 +4741,106 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
       hot_feedback: hotFeedback.items || [],
       feedback_likes_enabled: !!(latestFeedback.likes_enabled || hotFeedback.likes_enabled || feedbackLikesEnabled)
     });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/teacher/missing-media-export', teacherAuth, async (req, res) => {
+  try {
+    const activity_id = String(req.query.activity_id ?? '').trim();
+    const format = String(req.query.format ?? 'csv').trim().toLowerCase();
+    if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
+    const auth = await ensureTeacherCanAccessActivity(req, activity_id);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const [activityResult, submissionsResult, storageSummary] = await Promise.all([
+      supabase.from('activities').select('*').eq('id', activity_id).single(),
+      supabase.from('submissions')
+        .select('*, users(name, student_id, class_name, group_name)')
+        .eq('activity_id', activity_id)
+        .order('upload_time', { ascending: false }),
+      buildStorageSummary(activity_id)
+    ]);
+
+    if (activityResult.error || !activityResult.data) {
+      return res.status(404).json({ error: 'Activity not found' });
+    }
+    if (submissionsResult.error) throw submissionsResult.error;
+
+    const hydrated = await Promise.all((submissionsResult.data || []).map(async row => {
+      const manifest = await readSubmissionMediaManifest(row.id).catch(() => null);
+      return mergeSubmissionWithManifest(row, manifest);
+    }));
+    const report = buildMissingMediaReport(hydrated, storageSummary);
+
+    if (format === 'json') {
+      return res.json({
+        activity: sanitizeActivity(activityResult.data),
+        exported_at: new Date().toISOString(),
+        missing_media: report
+      });
+    }
+
+    const BOM = '\uFEFF';
+    const header = [
+      '分类',
+      '分类说明',
+      '失败原因',
+      '可重试归档',
+      '可从归档恢复',
+      '源文件缺失',
+      '缩略图缺失',
+      '匿名编号',
+      '学生姓名',
+      '学号',
+      '班级',
+      '小组',
+      '作品标题',
+      '媒体类型',
+      '上传时间',
+      '主文件路径',
+      '缩略图路径',
+      '归档状态',
+      '归档层级',
+      '归档尝试次数',
+      '归档副本',
+      '不可重试原因'
+    ];
+    const lines = [header.map(escapeCsvCell).join(',')];
+    for (const item of report.items || []) {
+      const user = item.users || {};
+      lines.push([
+        item.failure_category_label || '',
+        item.failure_detail || '',
+        item.archive_error || '',
+        item.can_retry_archive ? '是' : '否',
+        item.can_restore_archive ? '是' : '否',
+        item.source_missing ? '是' : '否',
+        item.thumbnail_missing ? '是' : '否',
+        item.anonymous_code || '',
+        user.name || '',
+        user.student_id || '',
+        user.class_name || '',
+        user.group_name || '',
+        item.title || '',
+        item.media_type === 'video' ? '视频' : '图片',
+        item.upload_time ? formatAppTimestampCN(new Date(item.upload_time)) : '',
+        item.storage_path || '',
+        item.thumbnail_path || '',
+        item.archive_status || '',
+        item.archive_tier || '',
+        Number(item.archive_attempts || 0),
+        item.has_archive_copy ? '是' : '否',
+        item.retry_disabled_reason || ''
+      ].map(escapeCsvCell).join(','));
+    }
+
+    const stamp = formatSnapshotStamp(new Date());
+    const inviteCode = String(activityResult.data.invite_code || 'activity').trim() || 'activity';
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="missing_media_${inviteCode}_${stamp}.csv"`);
+    res.send(BOM + lines.join('\n'));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

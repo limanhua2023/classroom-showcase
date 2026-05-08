@@ -594,6 +594,7 @@
           </div>
           <input id="missingMediaRepairInput" type="file" accept=".jpg,.jpeg,.png,.webp,.gif,.mp4,.mov" style="display:none;">
           <div class="storage-meta-row" id="missingMediaMeta"></div>
+          <div class="mini-stat-grid" id="missingMediaReasonStats" style="margin-top:14px;"></div>
           <div class="missing-media-toolbar">
             <div class="missing-media-filters">
               <button class="missing-media-filter active" type="button" data-missing-filter="all" onclick="setMissingMediaFilter('all')">全部</button>
@@ -604,6 +605,7 @@
               <button class="missing-media-filter" type="button" data-missing-filter="archive" onclick="setMissingMediaFilter('archive')">可归档恢复</button>
             </div>
             <div class="missing-media-batch">
+              <button class="btn btn-secondary btn-sm" type="button" id="exportMissingMediaBtn" onclick="exportMissingMediaReport()">导出清单</button>
               <button class="btn btn-secondary btn-sm" type="button" id="batchRetryArchiveBtn" onclick="batchRetryFailedArchive()">批量重试失败归档</button>
               <button class="btn btn-secondary btn-sm" type="button" id="batchRebuildThumbBtn" onclick="batchRebuildMissingThumbnails()">批量重建缩略图</button>
               <button class="btn btn-primary btn-sm" type="button" id="batchRestoreArchiveBtn" onclick="batchRestoreMissingFromArchive()">批量从归档恢复</button>
@@ -1224,20 +1226,24 @@
       });
       const summaryBadge = document.getElementById('missingMediaSummary');
       const metaBox = document.getElementById('missingMediaMeta');
+      const reasonStatsBox = document.getElementById('missingMediaReasonStats');
       const listBox = document.getElementById('missingMediaList');
-      if (!summaryBadge || !metaBox || !listBox) return;
+      if (!summaryBadge || !metaBox || !reasonStatsBox || !listBox) return;
 
       summaryBadge.textContent = rows.length ? `${rows.length} 项待修复` : '当前无缺失';
       document.querySelectorAll('[data-missing-filter]').forEach(btn => {
         btn.classList.toggle('active', btn.dataset.missingFilter === missingMediaFilter);
       });
+      const failureReasonStats = Array.isArray(report.failure_reason_stats) ? report.failure_reason_stats : [];
       const rebuildableCount = rows.filter(item => item.can_rebuild_thumbnail).length;
       const restorableCount = rows.filter(item => item.can_restore_archive).length;
       const failedArchiveCount = rows.filter(item => item.archive_failed).length;
       const retryableArchiveCount = rows.filter(item => item.can_retry_archive).length;
+      const exportBtn = document.getElementById('exportMissingMediaBtn');
       const retryBtn = document.getElementById('batchRetryArchiveBtn');
       const rebuildBtn = document.getElementById('batchRebuildThumbBtn');
       const restoreBtn = document.getElementById('batchRestoreArchiveBtn');
+      if (exportBtn) exportBtn.disabled = rows.length === 0;
       if (retryBtn) retryBtn.disabled = retryableArchiveCount === 0;
       if (rebuildBtn) rebuildBtn.disabled = rebuildableCount === 0;
       if (restoreBtn) restoreBtn.disabled = restorableCount === 0;
@@ -1250,6 +1256,18 @@
         `可归档恢复 ${restorableCount}`,
         rows.length ? '支持直接重建、归档恢复、失败归档重试或上传替换' : '当前活动媒体状态正常'
       ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+
+      reasonStatsBox.innerHTML = failureReasonStats.length
+        ? failureReasonStats.map(item => `
+          <div class="mini-stat" title="${escapeHtml(item.detail || '')}">
+            <strong>${escapeHtml(item.count || 0)}</strong>
+            <span>${escapeHtml(item.label || '其他异常')}</span>
+            <small style="display:block;margin-top:6px;color:var(--text-light);font-size:0.74rem;">
+              ${escapeHtml(`可重试 ${item.retryable_count || 0} · 源缺失 ${item.source_missing_count || 0}`)}
+            </small>
+          </div>
+        `).join('')
+        : '<div class="dashboard-panel-note">当前没有可归类的失败原因。</div>';
 
       if (!rows.length) {
         listBox.innerHTML = '<div class="dashboard-panel-note">当前活动没有检测到缺失媒体，旧作品和缩略图都可正常读取。</div>';
@@ -1279,8 +1297,9 @@
               <div class="missing-media-meta">${escapeHtml(user.name || '未实名')} · ${escapeHtml(user.student_id || '-')} · ${item.media_type === 'video' ? '视频' : '图片'} · ${escapeHtml(formatBangkokTime(item.upload_time))}</div>
               <div class="missing-media-meta">${escapeHtml(item.storage_path || '无主存路径')}</div>
               ${archiveMeta.length ? `<div class="missing-media-meta">${escapeHtml(archiveMeta.join(' · '))}</div>` : ''}
+              ${item.failure_category_label ? `<div class="missing-media-meta">分类：${escapeHtml(item.failure_category_label)}</div>` : ''}
               <div>${chips.join('')}</div>
-              ${item.archive_error ? `<div class="missing-media-error">失败原因：${escapeHtml(item.archive_error)}</div>` : ''}
+              ${(item.archive_error || item.failure_detail) ? `<div class="missing-media-error">失败原因：${escapeHtml(item.archive_error || item.failure_detail || '')}</div>` : ''}
             </div>
             <div class="missing-media-actions">
               <button class="btn btn-secondary btn-sm" type="button" onclick="openRepairMediaPicker('${encodeURIComponent(item.id || '')}')">上传修复文件</button>
@@ -1547,6 +1566,41 @@
         toast('活动快照已下载，可作为本地恢复底稿', 'success');
       } catch (e) {
         toast('导出活动快照失败：' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    }
+
+    async function exportMissingMediaReport() {
+      const btn = document.getElementById('exportMissingMediaBtn');
+      if (!btn) return;
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '导出中...';
+      try {
+        const res = await fetch('/api/teacher/missing-media-export?activity_id=' + encodeURIComponent(actId), {
+          headers: { 'x-teacher-auth': token }
+        });
+        if (!res.ok) {
+          const data = await res.json().catch(() => ({}));
+          throw new Error(data.error || res.statusText);
+        }
+        const blob = await res.blob();
+        const contentDisposition = res.headers.get('content-disposition') || '';
+        const filenameMatch = contentDisposition.match(/filename=\"?([^\";]+)\"?/i);
+        const filename = filenameMatch ? filenameMatch[1] : `classshow_missing_media_${Date.now()}.csv`;
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        URL.revokeObjectURL(url);
+        toast('缺失媒体清单已导出，可直接给老师留档或发给运维排查。', 'success');
+      } catch (e) {
+        toast('导出缺失媒体清单失败：' + e.message, 'error');
       } finally {
         btn.disabled = false;
         btn.textContent = originalText;
