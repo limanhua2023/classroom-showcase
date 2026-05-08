@@ -13,6 +13,11 @@
 - Overdue recycle items now carry dedicated DOM markers and visual emphasis so the first actionable work can be scrolled into view and highlighted safely.
 - Batch restore and batch permanent-delete actions now respect the active recycle-bin filter instead of always operating on the full recycle list.
 
+### Quarantine Today Highlight and Filter Persistence
+- Added an orange highlight style for recycle-bin works whose retention lock expires on the current Bangkok day, making same-day review items stand out before they become overdue.
+- The `today due` recycle filter now gains attention styling when there are same-day items waiting.
+- The recycle-bin filter state is now stored per activity in browser local storage, so a full teacher-page refresh keeps the current `all / today / overdue` view instead of resetting to `all`.
+
 ### 缺失作品回收区
 
 - 教师后台将“当前筛选结果一键删除缺失作品”改为“当前筛选结果一键隔离缺失作品”，先移出公开展示，再进入“缺失作品回收区”等待教师二次确认。

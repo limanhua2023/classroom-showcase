@@ -359,6 +359,11 @@
       border-color: rgba(239, 68, 68, 0.2);
       box-shadow: 0 10px 24px rgba(239, 68, 68, 0.1);
     }
+    .missing-media-item.quarantine-today {
+      border-color: rgba(245, 158, 11, 0.26);
+      box-shadow: 0 10px 24px rgba(245, 158, 11, 0.12);
+      background: linear-gradient(180deg, rgba(255, 251, 235, 0.92), rgba(255, 255, 255, 0.98));
+    }
     .missing-media-item.quarantine-focus {
       border-color: rgba(239, 68, 68, 0.36);
       box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.12), 0 14px 28px rgba(239, 68, 68, 0.16);
@@ -835,7 +840,14 @@
     let pendingRepairSubmissionId = null;
     let pendingRepairSubmissionContext = 'visible';
     let missingMediaFilter = 'all';
-    let quarantineFilter = 'all';
+    let quarantineFilter = (() => {
+      try {
+        const saved = localStorage.getItem(`classshow:quarantineFilter:${actId || 'default'}`);
+        return ['all', 'today', 'overdue'].includes(saved) ? saved : 'all';
+      } catch {
+        return 'all';
+      }
+    })();
     let dashboardBaseTitle = '教师后台 - ClassShow';
     let lastQuarantineExpiryReminderKey = '';
 
@@ -1441,6 +1453,9 @@
 
     function setQuarantineFilter(filter, options = {}) {
       quarantineFilter = filter || 'all';
+      try {
+        localStorage.setItem(`classshow:quarantineFilter:${actId || 'default'}`, quarantineFilter);
+      } catch {}
       renderQuarantineBin(dashboardSummary || {});
       renderQuarantineAlerts(dashboardSummary || {});
       if (options.focusFirst) {
@@ -1587,6 +1602,7 @@
       if (allBtn) allBtn.textContent = `全部 ${rows.length}`;
       if (todayBtn) todayBtn.textContent = `今天到期 ${dueTodayCount}`;
       if (overdueBtn) overdueBtn.textContent = `已超期 ${purgeReadyCount}`;
+      if (todayBtn) todayBtn.classList.toggle('attention', dueTodayCount > 0);
       metaBox.innerHTML = [
         `回收区总数 ${rows.length}`,
         `可直接恢复 ${readyToRestoreCount}`,
@@ -1639,7 +1655,9 @@
           ? ''
           : `disabled title="${escapeHtml(`仍需保留 ${formatRetentionDuration(item.remaining_retention_ms)}`)}"`;
         const dueStatus = item.purge_allowed ? 'overdue' : (isQuarantineDueToday(item, todayKey) ? 'today' : 'locked');
-        const dueClass = item.purge_allowed ? ' quarantine-due' : '';
+        const dueClass = item.purge_allowed
+          ? ' quarantine-due'
+          : (isQuarantineDueToday(item, todayKey) ? ' quarantine-today' : '');
         return `
           <div class="missing-media-item${dueClass}" data-quarantine-id="${escapeHtml(item.id || '')}" data-quarantine-status="${dueStatus}" data-quarantine-unlock-day="${escapeHtml(getQuarantineDueDayKey(item))}">
             <div class="missing-media-main">
