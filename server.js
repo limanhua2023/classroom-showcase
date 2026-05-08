@@ -3830,6 +3830,87 @@ app.delete('/api/teacher/submissions/:id', teacherAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.post('/api/teacher/missing-media-delete', teacherAuth, async (req, res) => {
+  try {
+    const activity_id = String(req.body?.activity_id || '').trim();
+    const submission_ids = Array.from(new Set(
+      (Array.isArray(req.body?.submission_ids) ? req.body.submission_ids : [])
+        .map(value => String(value || '').trim())
+        .filter(Boolean)
+    ));
+
+    if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
+    if (!submission_ids.length) return res.status(400).json({ error: 'Missing submission_ids' });
+    if (submission_ids.length > 200) {
+      return res.status(400).json({ error: 'Too many submission_ids in one request' });
+    }
+
+    const auth = await ensureTeacherCanAccessActivity(req, activity_id);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const [submissionsResult, storageSummary] = await Promise.all([
+      supabase.from('submissions')
+        .select('*, users(name, student_id, class_name, group_name)')
+        .eq('activity_id', activity_id)
+        .in('id', submission_ids),
+      getCachedStorageSummary(activity_id, { refresh: true })
+    ]);
+    if (submissionsResult.error) throw submissionsResult.error;
+
+    const hydrated = await enrichSubmissionMediaRows((submissionsResult.data || []).map(item => ({
+      ...item,
+      image_url: sanitizeMediaUrl(item.image_url) || ''
+    })));
+    const missingMediaRows = buildMissingMediaReport(hydrated, storageSummary).items;
+    const missingMediaMap = new Map(missingMediaRows.map(item => [String(item.id || ''), item]));
+    const deletableIds = submission_ids.filter(id => missingMediaMap.get(id)?.source_missing);
+    const skipped_ids = submission_ids.filter(id => !deletableIds.includes(id));
+
+    if (!deletableIds.length) {
+      return res.status(400).json({ error: 'No source-missing submissions matched the current selection' });
+    }
+
+    const { data: submissions, error: submissionsError } = await supabase.from('submissions')
+      .select('id,activity_id,image_url,storage_path')
+      .eq('activity_id', activity_id)
+      .in('id', deletableIds);
+    if (submissionsError) throw submissionsError;
+
+    const submissionMap = new Map((submissions || []).map(item => [String(item.id || ''), item]));
+    const failed = [];
+    let removed_count = 0;
+
+    for (const submissionId of deletableIds) {
+      const submission = submissionMap.get(submissionId);
+      if (!submission) {
+        failed.push({ id: submissionId, error: 'Submission not found' });
+        continue;
+      }
+
+      try {
+        const { error: deleteError } = await supabase.from('submissions').delete().eq('id', submissionId);
+        if (deleteError) throw deleteError;
+        await deleteSubmissionMedia(submission);
+        removed_count += 1;
+      } catch (error) {
+        failed.push({ id: submissionId, error: String(error?.message || error || 'Delete failed') });
+      }
+    }
+
+    invalidateActivityOpsCache(activity_id);
+    res.json({
+      ok: true,
+      requested_count: submission_ids.length,
+      removed_count,
+      skipped_count: skipped_ids.length,
+      skipped_ids,
+      failed
+    });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
 app.post('/api/teacher/submissions/:id/repair-thumbnail', teacherAuth, async (req, res) => {
   try {
     const { data: sub, error: subErr } = await supabase.from('submissions')

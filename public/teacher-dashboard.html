@@ -606,6 +606,7 @@
             </div>
             <div class="missing-media-batch">
               <button class="btn btn-secondary btn-sm" type="button" id="exportMissingMediaBtn" onclick="exportMissingMediaReport()">导出清单</button>
+              <button class="btn btn-danger btn-sm" type="button" id="batchDeleteMissingBtn" onclick="batchDeleteMissingSubmissions()">一键删除缺失作品</button>
               <button class="btn btn-secondary btn-sm" type="button" id="batchRetryArchiveBtn" onclick="batchRetryFailedArchive()">批量重试失败归档</button>
               <button class="btn btn-secondary btn-sm" type="button" id="batchRebuildThumbBtn" onclick="batchRebuildMissingThumbnails()">批量重建缩略图</button>
               <button class="btn btn-primary btn-sm" type="button" id="batchRestoreArchiveBtn" onclick="batchRestoreMissingFromArchive()">批量从归档恢复</button>
@@ -1213,17 +1214,22 @@
       `).join('');
     }
 
+    function getFilteredMissingMediaRows(filter = missingMediaFilter) {
+      const rows = Array.isArray(dashboardSummary?.missing_media?.items) ? dashboardSummary.missing_media.items : [];
+      return rows.filter(item => {
+        if (filter === 'source') return item.source_missing;
+        if (filter === 'thumbnail') return item.thumbnail_missing;
+        if (filter === 'failed') return item.archive_failed;
+        if (filter === 'rebuildable') return item.can_rebuild_thumbnail;
+        if (filter === 'archive') return item.can_restore_archive;
+        return true;
+      });
+    }
+
     function renderMissingMedia(summary) {
       const report = summary.missing_media || {};
       const rows = Array.isArray(report.items) ? report.items : [];
-      const filteredRows = rows.filter(item => {
-        if (missingMediaFilter === 'source') return item.source_missing;
-        if (missingMediaFilter === 'thumbnail') return item.thumbnail_missing;
-        if (missingMediaFilter === 'failed') return item.archive_failed;
-        if (missingMediaFilter === 'rebuildable') return item.can_rebuild_thumbnail;
-        if (missingMediaFilter === 'archive') return item.can_restore_archive;
-        return true;
-      });
+      const filteredRows = getFilteredMissingMediaRows();
       const summaryBadge = document.getElementById('missingMediaSummary');
       const metaBox = document.getElementById('missingMediaMeta');
       const reasonStatsBox = document.getElementById('missingMediaReasonStats');
@@ -1240,10 +1246,13 @@
       const failedArchiveCount = rows.filter(item => item.archive_failed).length;
       const retryableArchiveCount = rows.filter(item => item.can_retry_archive).length;
       const exportBtn = document.getElementById('exportMissingMediaBtn');
+      const deleteBtn = document.getElementById('batchDeleteMissingBtn');
       const retryBtn = document.getElementById('batchRetryArchiveBtn');
       const rebuildBtn = document.getElementById('batchRebuildThumbBtn');
       const restoreBtn = document.getElementById('batchRestoreArchiveBtn');
+      const currentFilterDeleteCount = filteredRows.filter(item => item.source_missing).length;
       if (exportBtn) exportBtn.disabled = rows.length === 0;
+      if (deleteBtn) deleteBtn.disabled = currentFilterDeleteCount === 0;
       if (retryBtn) retryBtn.disabled = retryableArchiveCount === 0;
       if (rebuildBtn) rebuildBtn.disabled = rebuildableCount === 0;
       if (restoreBtn) restoreBtn.disabled = restorableCount === 0;
@@ -1306,6 +1315,7 @@
               <button class="btn btn-secondary btn-sm" type="button" ${item.can_restore_archive ? '' : 'disabled'} onclick="restoreMissingFromArchive('${encodeURIComponent(item.id || '')}')">从归档恢复</button>
               <button class="btn btn-secondary btn-sm" type="button" ${item.can_retry_archive ? '' : `disabled title="${escapeHtml(item.retry_disabled_reason || '当前不可重试')}"`} onclick="retryFailedArchive('${encodeURIComponent(item.id || '')}')">重试归档</button>
               <button class="btn btn-primary btn-sm" type="button" ${item.can_rebuild_thumbnail ? '' : 'disabled'} onclick="rebuildMissingThumbnail('${encodeURIComponent(item.id || '')}')">重建缩略图</button>
+              <button class="btn btn-danger btn-sm" type="button" ${item.source_missing ? '' : 'disabled'} onclick="deleteMissingSubmissionRecord('${encodeURIComponent(item.id || '')}')">删除记录</button>
             </div>
           </div>
         `;
@@ -1394,6 +1404,58 @@
         toast('失败归档项已重新加入队列，可立即再跑归档队列', 'success');
       } catch (e) {
         toast('重试归档失败：' + e.message, 'error');
+      }
+    }
+
+    async function deleteMissingSubmissionRecord(submissionId) {
+      submissionId = decodeURIComponent(submissionId || '');
+      if (!submissionId) return;
+      if (!confirm('确认删除这个源文件已缺失的作品记录吗？删除后它将不再出现在作品展示、画廊和排行榜中。')) return;
+      try {
+        await api('/teacher/submissions/' + encodeURIComponent(submissionId), {
+          method: 'DELETE'
+        });
+        await reloadDashboard();
+        toast('缺失作品记录已删除', 'success');
+      } catch (e) {
+        toast('删除失败：' + e.message, 'error');
+      }
+    }
+
+    async function batchDeleteMissingSubmissions() {
+      const rows = getFilteredMissingMediaRows().filter(item => item.source_missing);
+      if (!rows.length) return toast('当前筛选结果下没有可一键删除的源文件缺失作品', 'error');
+      const confirmed = confirm(
+        `确认一键删除当前筛选结果下的 ${rows.length} 个源文件缺失作品吗？\n\n` +
+        '如需保留作品，请先使用“从归档恢复”或“上传修复文件”。'
+      );
+      if (!confirmed) return;
+      const btn = document.getElementById('batchDeleteMissingBtn');
+      const originalText = btn?.textContent || '';
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = '删除中...';
+      }
+      try {
+        const result = await api('/teacher/missing-media-delete', {
+          method: 'POST',
+          body: JSON.stringify({
+            activity_id: actId,
+            submission_ids: rows.map(item => item.id)
+          })
+        });
+        await reloadDashboard();
+        const removed = Number(result?.removed_count || 0);
+        const skipped = Number(result?.skipped_count || 0);
+        const failed = Array.isArray(result?.failed) ? result.failed.length : 0;
+        toast(`批量删除完成：成功 ${removed} 项，跳过 ${skipped} 项，失败 ${failed} 项`, failed ? 'error' : 'success');
+      } catch (e) {
+        toast('批量删除失败：' + e.message, 'error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
       }
     }
 
