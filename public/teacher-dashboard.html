@@ -117,6 +117,11 @@
       border-color: rgba(239, 68, 68, 0.2);
       color: #b91c1c;
     }
+    .missing-media-filter.attention {
+      border-color: rgba(239, 68, 68, 0.18);
+      color: #b91c1c;
+      background: rgba(239, 68, 68, 0.06);
+    }
     .storage-control-panel {
       margin-top: 18px;
       padding: 16px;
@@ -347,6 +352,17 @@
       border-radius: 18px;
       background: rgba(15, 23, 42, 0.04);
       border: 1px solid rgba(15, 23, 42, 0.08);
+      scroll-margin-top: 120px;
+      transition: border-color 0.18s ease, box-shadow 0.18s ease, transform 0.18s ease;
+    }
+    .missing-media-item.quarantine-due {
+      border-color: rgba(239, 68, 68, 0.2);
+      box-shadow: 0 10px 24px rgba(239, 68, 68, 0.1);
+    }
+    .missing-media-item.quarantine-focus {
+      border-color: rgba(239, 68, 68, 0.36);
+      box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.12), 0 14px 28px rgba(239, 68, 68, 0.16);
+      transform: translateY(-2px);
     }
     .missing-media-main {
       min-width: 0;
@@ -819,6 +835,7 @@
     let pendingRepairSubmissionId = null;
     let pendingRepairSubmissionContext = 'visible';
     let missingMediaFilter = 'all';
+    let quarantineFilter = 'all';
     let dashboardBaseTitle = '教师后台 - ClassShow';
     let lastQuarantineExpiryReminderKey = '';
 
@@ -842,9 +859,13 @@
       window.open(url, '_blank');
     }
 
-    function scrollToQuarantineBin() {
+    function scrollToQuarantineBin(focusDue = false) {
       ensureQuarantineReminderScaffold();
-      document.getElementById('quarantinePanel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const panel = document.getElementById('quarantinePanel');
+      panel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      if (focusDue && hasOverdueQuarantineRows()) {
+        setQuarantineFilter('overdue', { focusFirst: true, suppressScroll: true });
+      }
     }
 
     function ensureQuarantineReminderScaffold() {
@@ -860,6 +881,22 @@
         metaBox.insertAdjacentElement('afterend', alertBox);
       }
 
+      const toolbar = panel?.querySelector('.missing-media-toolbar');
+      if (toolbar && !document.getElementById('quarantineFilterBar')) {
+        const filters = document.createElement('div');
+        filters.className = 'missing-media-filters';
+        filters.id = 'quarantineFilterBar';
+        filters.innerHTML = `
+          <button class="missing-media-filter active" type="button" data-quarantine-filter="all" id="quarantineFilterAllBtn">全部</button>
+          <button class="missing-media-filter" type="button" data-quarantine-filter="today" id="quarantineFilterTodayBtn">今天到期</button>
+          <button class="missing-media-filter attention" type="button" data-quarantine-filter="overdue" id="quarantineFilterOverdueBtn">已超期</button>
+        `;
+        filters.querySelectorAll('[data-quarantine-filter]').forEach(btn => {
+          btn.addEventListener('click', () => setQuarantineFilter(btn.dataset.quarantineFilter || 'all'));
+        });
+        toolbar.insertBefore(filters, toolbar.firstElementChild || null);
+      }
+
       const topbarRight = document.querySelector('.topbar-right');
       if (topbarRight && !document.getElementById('recycleBinQuickBtn')) {
         const btn = document.createElement('button');
@@ -867,7 +904,7 @@
         btn.className = 'btn btn-sm btn-secondary topbar-alert-btn';
         btn.id = 'recycleBinQuickBtn';
         btn.innerHTML = '回收区 <span class="nav-attention-dot" id="recycleBinNavDot" hidden></span><span class="nav-attention-count" id="recycleBinNavCount" hidden>0</span>';
-        btn.addEventListener('click', scrollToQuarantineBin);
+        btn.addEventListener('click', () => scrollToQuarantineBin(true));
         const displayBtn = Array.from(topbarRight.querySelectorAll('button')).find(el => String(el.getAttribute('onclick') || '').includes('openDisplay'));
         if (displayBtn) topbarRight.insertBefore(btn, displayBtn);
         else topbarRight.appendChild(btn);
@@ -1361,6 +1398,61 @@
       return rows.slice();
     }
 
+    function getBangkokDayKey(value = new Date()) {
+      if (!value) return '';
+      const date = value instanceof Date ? value : new Date(value);
+      if (!(date instanceof Date) || Number.isNaN(date.getTime())) return '';
+      return new Intl.DateTimeFormat('sv-SE', {
+        timeZone: 'Asia/Bangkok',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }).format(date);
+    }
+
+    function getQuarantineDueDayKey(item) {
+      return getBangkokDayKey(item?.purge_unlock_at);
+    }
+
+    function isQuarantineDueToday(item, todayKey = getBangkokDayKey()) {
+      return !!item?.purge_unlock_at && getQuarantineDueDayKey(item) === todayKey;
+    }
+
+    function hasOverdueQuarantineRows(rows = getQuarantinedRows()) {
+      return rows.some(item => item?.purge_allowed);
+    }
+
+    function getFilteredQuarantinedRows(rows = getQuarantinedRows(), filter = quarantineFilter) {
+      const todayKey = getBangkokDayKey();
+      return rows.filter(item => {
+        if (filter === 'today') return isQuarantineDueToday(item, todayKey);
+        if (filter === 'overdue') return !!item?.purge_allowed;
+        return true;
+      });
+    }
+
+    function focusFirstQuarantineDueItem() {
+      const firstDueItem = document.querySelector('#quarantineList .missing-media-item[data-quarantine-status="overdue"]');
+      if (!firstDueItem) return;
+      firstDueItem.classList.add('quarantine-focus');
+      firstDueItem.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      window.setTimeout(() => firstDueItem.classList.remove('quarantine-focus'), 2200);
+    }
+
+    function setQuarantineFilter(filter, options = {}) {
+      quarantineFilter = filter || 'all';
+      renderQuarantineBin(dashboardSummary || {});
+      renderQuarantineAlerts(dashboardSummary || {});
+      if (options.focusFirst) {
+        window.requestAnimationFrame(() => {
+          if (!options.suppressScroll) {
+            document.getElementById('quarantinePanel')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          }
+          focusFirstQuarantineDueItem();
+        });
+      }
+    }
+
     function renderMissingMedia(summary) {
       const report = summary.missing_media || {};
       const rows = Array.isArray(report.items) ? report.items : [];
@@ -1460,12 +1552,15 @@
     function renderQuarantineBin(summary) {
       const report = summary.quarantined_missing_media || {};
       const rows = Array.isArray(report.items) ? report.items : [];
+      const filteredRows = getFilteredQuarantinedRows(rows);
+      const todayKey = getBangkokDayKey();
       const retentionDays = Number(report.retention_days ?? summary.activity?.quarantine_retention_days ?? 3);
       const summaryBadge = document.getElementById('quarantineSummary');
       const metaBox = document.getElementById('quarantineMeta');
       const listBox = document.getElementById('quarantineList');
       const restoreBtn = document.getElementById('batchRestoreQuarantineBtn');
       const purgeBtn = document.getElementById('batchPurgeQuarantineBtn');
+      const filterBar = document.getElementById('quarantineFilterBar');
       if (!summaryBadge || !metaBox || !listBox) return;
 
       const readyToRestoreCount = rows.filter(item => !item.source_missing || item.can_restore_archive).length;
@@ -1474,10 +1569,24 @@
       const failedArchiveCount = rows.filter(item => item.archive_failed).length;
       const purgeReadyCount = rows.filter(item => item.purge_allowed).length;
       const purgeLockedCount = rows.filter(item => !item.purge_allowed).length;
+      const dueTodayCount = rows.filter(item => isQuarantineDueToday(item, todayKey)).length;
+      const filteredRestoreCount = filteredRows.filter(item => !item.source_missing || item.can_restore_archive).length;
+      const filteredPurgeReadyCount = filteredRows.filter(item => item.purge_allowed).length;
 
       summaryBadge.textContent = rows.length ? `${rows.length} 项待确认` : '回收区为空';
-      if (restoreBtn) restoreBtn.disabled = readyToRestoreCount === 0;
-      if (purgeBtn) purgeBtn.disabled = purgeReadyCount === 0;
+      if (restoreBtn) restoreBtn.disabled = filteredRestoreCount === 0;
+      if (purgeBtn) purgeBtn.disabled = filteredPurgeReadyCount === 0;
+      if (filterBar) {
+        filterBar.querySelectorAll('[data-quarantine-filter]').forEach(btn => {
+          btn.classList.toggle('active', btn.dataset.quarantineFilter === quarantineFilter);
+        });
+      }
+      const allBtn = document.getElementById('quarantineFilterAllBtn');
+      const todayBtn = document.getElementById('quarantineFilterTodayBtn');
+      const overdueBtn = document.getElementById('quarantineFilterOverdueBtn');
+      if (allBtn) allBtn.textContent = `全部 ${rows.length}`;
+      if (todayBtn) todayBtn.textContent = `今天到期 ${dueTodayCount}`;
+      if (overdueBtn) overdueBtn.textContent = `已超期 ${purgeReadyCount}`;
       metaBox.innerHTML = [
         `回收区总数 ${rows.length}`,
         `可直接恢复 ${readyToRestoreCount}`,
@@ -1495,7 +1604,12 @@
         return;
       }
 
-      listBox.innerHTML = rows.map(item => {
+      if (!filteredRows.length) {
+        listBox.innerHTML = '<div class="dashboard-panel-note">当前筛选下没有符合条件的回收区作品。</div>';
+        return;
+      }
+
+      listBox.innerHTML = filteredRows.map(item => {
         const user = item.users || {};
         const chips = ['<span class="issue-chip neutral">已隔离</span>'];
         if (item.source_missing) chips.push('<span class="issue-chip">源文件仍缺失</span>');
@@ -1504,6 +1618,7 @@
         if (item.has_archive_copy) chips.push('<span class="issue-chip warning">已有归档副本</span>');
         if (item.archive_failed) chips.push('<span class="issue-chip neutral">归档失败</span>');
         if (item.purge_allowed) chips.push('<span class="issue-chip warning">已到可删时间</span>');
+        else if (isQuarantineDueToday(item, todayKey)) chips.push('<span class="issue-chip warning">今天到期</span>');
         else chips.push(`<span class="issue-chip neutral">仍需保留 ${escapeHtml(formatRetentionDuration(item.remaining_retention_ms))}</span>`);
         const archiveMeta = [];
         if (item.archive_status) archiveMeta.push(`状态：${item.archive_status}`);
@@ -1523,8 +1638,10 @@
         const purgeDisabledReason = item.purge_allowed
           ? ''
           : `disabled title="${escapeHtml(`仍需保留 ${formatRetentionDuration(item.remaining_retention_ms)}`)}"`;
+        const dueStatus = item.purge_allowed ? 'overdue' : (isQuarantineDueToday(item, todayKey) ? 'today' : 'locked');
+        const dueClass = item.purge_allowed ? ' quarantine-due' : '';
         return `
-          <div class="missing-media-item">
+          <div class="missing-media-item${dueClass}" data-quarantine-id="${escapeHtml(item.id || '')}" data-quarantine-status="${dueStatus}" data-quarantine-unlock-day="${escapeHtml(getQuarantineDueDayKey(item))}">
             <div class="missing-media-main">
               <div class="missing-media-title">${escapeHtml(item.title || '未命名作品')}</div>
               <div class="missing-media-meta">${escapeHtml(user.name || '未实名')} · ${escapeHtml(user.student_id || '-')} · ${item.media_type === 'video' ? '视频' : '图片'} · ${escapeHtml(formatBangkokTime(item.upload_time))}</div>
@@ -1761,28 +1878,8 @@
       }
     }
 
-    async function deleteQuarantinedSubmissionPermanently(submissionId) {
-      submissionId = decodeURIComponent(submissionId || '');
-      if (!submissionId) return;
-      if (!confirm('确认彻底删除这条回收区作品吗？这一步会删除数据库记录，并尝试清理仍残留的媒体文件。')) return;
-      try {
-        const result = await api('/teacher/quarantined-submissions-purge', {
-          method: 'POST',
-          body: JSON.stringify({
-            activity_id: actId,
-            submission_ids: [submissionId]
-          })
-        });
-        await reloadDashboard();
-        const removed = Number(result?.removed_count || 0);
-        toast(removed ? '回收区作品已彻底删除' : '没有删除到任何回收区作品', removed ? 'success' : 'error');
-      } catch (e) {
-        toast('彻底删除失败：' + e.message, 'error');
-      }
-    }
-
     async function batchRestoreQuarantinedSubmissions() {
-      const rows = getQuarantinedRows().filter(item => !item.source_missing || item.can_restore_archive);
+      const rows = getFilteredQuarantinedRows().filter(item => !item.source_missing || item.can_restore_archive);
       if (!rows.length) return toast('当前回收区没有可直接恢复的作品', 'error');
       if (!confirm(`确认批量恢复 ${rows.length} 个回收区作品吗？`)) return;
       const btn = document.getElementById('batchRestoreQuarantineBtn');
@@ -1808,39 +1905,6 @@
         toast(`批量恢复完成：成功 ${restored} 项${archiveNote}，跳过 ${skipped} 项，失败 ${failed} 项`, failed ? 'error' : 'success');
       } catch (e) {
         toast('批量恢复失败：' + e.message, 'error');
-      } finally {
-        if (btn) {
-          btn.disabled = false;
-          btn.textContent = originalText;
-        }
-      }
-    }
-
-    async function batchPurgeQuarantinedSubmissions() {
-      const rows = getQuarantinedRows();
-      if (!rows.length) return toast('当前回收区没有可彻底删除的作品', 'error');
-      if (!confirm(`确认彻底删除回收区中的 ${rows.length} 个作品吗？\n\n这一步会永久删除记录，仅建议对确认无法恢复或已不再需要的作品执行。`)) return;
-      const btn = document.getElementById('batchPurgeQuarantineBtn');
-      const originalText = btn?.textContent || '';
-      if (btn) {
-        btn.disabled = true;
-        btn.textContent = '删除中...';
-      }
-      try {
-        const result = await api('/teacher/quarantined-submissions-purge', {
-          method: 'POST',
-          body: JSON.stringify({
-            activity_id: actId,
-            submission_ids: rows.map(item => item.id)
-          })
-        });
-        await reloadDashboard();
-        const removed = Number(result?.removed_count || 0);
-        const skipped = Array.isArray(result?.skipped_ids) ? result.skipped_ids.length : 0;
-        const failed = Array.isArray(result?.failed) ? result.failed.length : 0;
-        toast(`批量彻底删除完成：成功 ${removed} 项，跳过 ${skipped} 项，失败 ${failed} 项`, failed ? 'error' : 'success');
-      } catch (e) {
-        toast('批量彻底删除失败：' + e.message, 'error');
       } finally {
         if (btn) {
           btn.disabled = false;
@@ -2036,7 +2100,7 @@
     }
 
     async function batchPurgeQuarantinedSubmissions() {
-      const rows = getQuarantinedRows();
+      const rows = getFilteredQuarantinedRows();
       const purgeableRows = rows.filter(item => item.purge_allowed);
       const lockedRows = rows.filter(item => !item.purge_allowed);
       if (!purgeableRows.length) {

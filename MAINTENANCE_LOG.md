@@ -7,6 +7,12 @@
 - The browser title now prefixes the due count, so teachers can see pending recycle-bin work even when the tab is in the background.
 - Reminder toasts only fire when the due-count state changes, avoiding repeated noise during manual refreshes.
 
+### Quarantine Due Filters and Focus Jump
+- Added recycle-bin filters for `all`, `today due`, and `overdue`, allowing teachers to narrow the recycle list to the works that need same-day review or are already past the retention lock.
+- The top recycle-bin red badge now jumps directly to the recycle area and focuses the first overdue work, reducing scan time when teachers return to the dashboard.
+- Overdue recycle items now carry dedicated DOM markers and visual emphasis so the first actionable work can be scrolled into view and highlighted safely.
+- Batch restore and batch permanent-delete actions now respect the active recycle-bin filter instead of always operating on the full recycle list.
+
 ### 缺失作品回收区
 
 - 教师后台将“当前筛选结果一键删除缺失作品”改为“当前筛选结果一键隔离缺失作品”，先移出公开展示，再进入“缺失作品回收区”等待教师二次确认。
