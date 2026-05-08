@@ -365,6 +365,9 @@
       border-color: rgba(37, 99, 235, 0.48);
       box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.08);
     }
+    select.quarantine-search-input {
+      padding-right: 36px;
+    }
     .missing-media-item {
       display: flex;
       justify-content: space-between;
@@ -727,8 +730,9 @@
           <div class="missing-media-toolbar">
             <div class="dashboard-panel-note">回收区仅教师可见，学生端、画廊、大屏和排行榜都不会展示这些作品。</div>
             <div class="missing-media-batch">
-              <button class="btn btn-secondary btn-sm" type="button" id="batchRestoreQuarantineBtn" onclick="batchRestoreQuarantinedSubmissions()">批量恢复到公开展示</button>
-              <button class="btn btn-danger btn-sm" type="button" id="batchPurgeQuarantineBtn" onclick="batchPurgeQuarantinedSubmissions()">批量彻底删除</button>
+              <button class="btn btn-secondary btn-sm" type="button" id="batchRestoreQuarantineBtn" onclick="batchRestoreQuarantinedSubmissions()">按当前结果批量恢复</button>
+              <button class="btn btn-secondary btn-sm" type="button" id="exportQuarantineCsvBtn" onclick="exportFilteredQuarantinedSubmissions()">导出当前结果</button>
+              <button class="btn btn-danger btn-sm" type="button" id="batchPurgeQuarantineBtn" onclick="batchPurgeQuarantinedSubmissions()">按当前结果批量彻底删除</button>
             </div>
           </div>
           <div class="missing-media-list" id="quarantineList">
@@ -886,6 +890,8 @@
     })();
     let quarantineRecoverableOnly = readQuarantinePreference('recoverable', '0') === '1';
     let quarantineSearchQuery = readQuarantinePreference('search', '').trim();
+    let quarantineClassFilter = readQuarantinePreference('class', '').trim();
+    let quarantineGroupFilter = readQuarantinePreference('group', '').trim();
     let dashboardBaseTitle = '教师后台 - ClassShow';
     let lastQuarantineExpiryReminderKey = '';
 
@@ -914,7 +920,14 @@
       const panel = document.getElementById('quarantinePanel');
       panel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
       if (focusDue && hasOverdueQuarantineRows()) {
-        setQuarantineFilter('overdue', { focusFirst: true, suppressScroll: true, resetSearch: true, resetRecoverable: true });
+        setQuarantineFilter('overdue', {
+          focusFirst: true,
+          suppressScroll: true,
+          resetSearch: true,
+          resetRecoverable: true,
+          resetClass: true,
+          resetGroup: true
+        });
       }
     }
 
@@ -942,6 +955,12 @@
           <button class="missing-media-filter attention" type="button" data-quarantine-filter="overdue" id="quarantineFilterOverdueBtn">已超期</button>
           <button class="missing-media-filter" type="button" id="quarantineRecoverableToggleBtn">只看可恢复</button>
           <div class="quarantine-search-wrap">
+            <select class="quarantine-search-input" id="quarantineClassFilter">
+              <option value="">全部班级</option>
+            </select>
+            <select class="quarantine-search-input" id="quarantineGroupFilter">
+              <option value="">全部小组</option>
+            </select>
             <input class="quarantine-search-input" type="search" id="quarantineSearchInput" placeholder="按姓名或学号搜索回收区">
             <button class="btn btn-secondary btn-sm" type="button" id="quarantineSearchClearBtn">清空</button>
           </div>
@@ -951,8 +970,12 @@
         });
         const recoverableBtn = filters.querySelector('#quarantineRecoverableToggleBtn');
         recoverableBtn?.addEventListener('click', () => setQuarantineRecoverableOnly(!quarantineRecoverableOnly));
+        const classFilter = filters.querySelector('#quarantineClassFilter');
+        const groupFilter = filters.querySelector('#quarantineGroupFilter');
         const searchInput = filters.querySelector('#quarantineSearchInput');
         const clearBtn = filters.querySelector('#quarantineSearchClearBtn');
+        classFilter?.addEventListener('change', event => setQuarantineClassFilter(event.target.value || ''));
+        groupFilter?.addEventListener('change', event => setQuarantineGroupFilter(event.target.value || ''));
         if (searchInput) {
           searchInput.value = quarantineSearchQuery;
           searchInput.addEventListener('input', event => setQuarantineSearchQuery(event.target.value || ''));
@@ -1489,6 +1512,36 @@
       return String(value || '').toLowerCase().replace(/\s+/g, '');
     }
 
+    function normalizeQuarantineFacetValue(value) {
+      return String(value || '').trim().toLowerCase();
+    }
+
+    function getQuarantineFacetLabel(value, fallbackLabel) {
+      return String(value || '').trim() || fallbackLabel;
+    }
+
+    function buildQuarantineFacetOptions(rows, field, fallbackLabel) {
+      const unique = new Map();
+      rows.forEach(item => {
+        const label = getQuarantineFacetLabel(item?.users?.[field], fallbackLabel);
+        const key = normalizeQuarantineFacetValue(label);
+        if (key && !unique.has(key)) unique.set(key, label);
+      });
+      return Array.from(unique.values()).sort((a, b) => a.localeCompare(b, 'zh-Hans-CN'));
+    }
+
+    function syncQuarantineFacetSelect(select, options, placeholder, selectedValue) {
+      if (!select) return;
+      const normalizedSelected = normalizeQuarantineFacetValue(selectedValue);
+      const html = [
+        `<option value="">${escapeHtml(placeholder)}</option>`,
+        ...options.map(option => `<option value="${escapeHtml(option)}">${escapeHtml(option)}</option>`)
+      ].join('');
+      if (select.innerHTML !== html) select.innerHTML = html;
+      const resolved = options.find(option => normalizeQuarantineFacetValue(option) === normalizedSelected) || '';
+      if (select.value !== resolved) select.value = resolved;
+    }
+
     function canRestoreQuarantinedItem(item) {
       return !item?.source_missing || !!item?.can_restore_archive;
     }
@@ -1500,18 +1553,22 @@
     function getFilteredQuarantinedRows(rows = getQuarantinedRows(), filter = quarantineFilter) {
       const todayKey = getBangkokDayKey();
       const searchQuery = normalizeQuarantineSearch(quarantineSearchQuery);
+      const classFilter = normalizeQuarantineFacetValue(quarantineClassFilter);
+      const groupFilter = normalizeQuarantineFacetValue(quarantineGroupFilter);
       return rows.filter(item => {
         const user = item?.users || {};
         const haystack = normalizeQuarantineSearch([user.name, user.student_id, item?.title].filter(Boolean).join(' '));
         const matchesSearch = !searchQuery || haystack.includes(searchQuery);
         const matchesRecoverable = !quarantineRecoverableOnly || canRestoreQuarantinedItem(item);
+        const matchesClass = !classFilter || normalizeQuarantineFacetValue(getQuarantineFacetLabel(user.class_name, '未分班')) === classFilter;
+        const matchesGroup = !groupFilter || normalizeQuarantineFacetValue(getQuarantineFacetLabel(user.group_name, '未分组')) === groupFilter;
         const matchesTimeFilter =
           filter === 'today'
             ? isQuarantineDueToday(item, todayKey)
             : filter === 'overdue'
               ? !!item?.purge_allowed
               : true;
-        return matchesSearch && matchesRecoverable && matchesTimeFilter;
+        return matchesSearch && matchesRecoverable && matchesClass && matchesGroup && matchesTimeFilter;
       });
     }
 
@@ -1526,10 +1583,14 @@
     function setQuarantineFilter(filter, options = {}) {
       if (options.resetSearch) quarantineSearchQuery = '';
       if (options.resetRecoverable) quarantineRecoverableOnly = false;
+      if (options.resetClass) quarantineClassFilter = '';
+      if (options.resetGroup) quarantineGroupFilter = '';
       quarantineFilter = filter || 'all';
       writeQuarantinePreference('filter', quarantineFilter);
       writeQuarantinePreference('recoverable', quarantineRecoverableOnly ? '1' : '0');
       writeQuarantinePreference('search', quarantineSearchQuery);
+      writeQuarantinePreference('class', quarantineClassFilter);
+      writeQuarantinePreference('group', quarantineGroupFilter);
       renderQuarantineBin(dashboardSummary || {});
       renderQuarantineAlerts(dashboardSummary || {});
       if (options.focusFirst) {
@@ -1548,10 +1609,72 @@
       renderQuarantineBin(dashboardSummary || {});
     }
 
+    function setQuarantineClassFilter(value) {
+      quarantineClassFilter = String(value || '').trim();
+      writeQuarantinePreference('class', quarantineClassFilter);
+      renderQuarantineBin(dashboardSummary || {});
+    }
+
+    function setQuarantineGroupFilter(value) {
+      quarantineGroupFilter = String(value || '').trim();
+      writeQuarantinePreference('group', quarantineGroupFilter);
+      renderQuarantineBin(dashboardSummary || {});
+    }
+
     function setQuarantineSearchQuery(query) {
       quarantineSearchQuery = String(query || '').trim();
       writeQuarantinePreference('search', quarantineSearchQuery);
       renderQuarantineBin(dashboardSummary || {});
+    }
+
+    function escapeCsvCell(value) {
+      const text = String(value ?? '');
+      if (!/[",\r\n]/.test(text)) return text;
+      return `"${text.replace(/"/g, '""')}"`;
+    }
+
+    function downloadBlobFile(blob, filename) {
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    }
+
+    function exportFilteredQuarantinedSubmissions() {
+      const rows = getFilteredQuarantinedRows();
+      if (!rows.length) return toast('当前筛选结果为空，暂无可导出的回收区作品', 'error');
+      const headers = ['作品标题', '姓名', '学号', '班级', '小组', '作品类型', '上传时间', '隔离时间', '当前状态', '可恢复', '主存路径', '归档状态', '归档异常'];
+      const csvRows = rows.map(item => {
+        const user = item?.users || {};
+        const status = item?.purge_allowed ? '已超期' : (isQuarantineDueToday(item) ? '今天到期' : '保留锁定');
+        const recoverable = canRestoreQuarantinedItem(item) ? '是' : '否';
+        return [
+          item?.title || '',
+          user.name || '',
+          user.student_id || '',
+          getQuarantineFacetLabel(user.class_name, '未分班'),
+          getQuarantineFacetLabel(user.group_name, '未分组'),
+          item?.media_type === 'video' ? '视频' : '图片',
+          formatBangkokTime(item?.upload_time),
+          formatBangkokTime(item?.quarantined_at),
+          status,
+          recoverable,
+          item?.storage_path || '',
+          item?.archive_status || '',
+          item?.archive_error || ''
+        ].map(escapeCsvCell).join(',');
+      });
+      const csv = '\uFEFF' + [headers.map(escapeCsvCell).join(','), ...csvRows].join('\r\n');
+      const timestamp = formatDateTime(new Date()).replace(/[^\d]/g, '').slice(0, 14) || String(Date.now());
+      downloadBlobFile(
+        new Blob([csv], { type: 'text/csv;charset=utf-8;' }),
+        `quarantine_filtered_${actId || 'activity'}_${timestamp}.csv`
+      );
+      toast(`已导出当前筛选结果 ${rows.length} 条`, 'success');
     }
 
     function renderMissingMedia(summary) {
@@ -1660,12 +1783,28 @@
       const metaBox = document.getElementById('quarantineMeta');
       const listBox = document.getElementById('quarantineList');
       const restoreBtn = document.getElementById('batchRestoreQuarantineBtn');
+      const exportBtn = document.getElementById('exportQuarantineCsvBtn');
       const purgeBtn = document.getElementById('batchPurgeQuarantineBtn');
       const filterBar = document.getElementById('quarantineFilterBar');
       const recoverableBtn = document.getElementById('quarantineRecoverableToggleBtn');
+      const classFilterSelect = document.getElementById('quarantineClassFilter');
+      const groupFilterSelect = document.getElementById('quarantineGroupFilter');
       const searchInput = document.getElementById('quarantineSearchInput');
       const searchClearBtn = document.getElementById('quarantineSearchClearBtn');
       if (!summaryBadge || !metaBox || !listBox) return;
+
+      const classOptions = buildQuarantineFacetOptions(rows, 'class_name', '未分班');
+      const groupOptions = buildQuarantineFacetOptions(rows, 'group_name', '未分组');
+      if (quarantineClassFilter && !classOptions.some(option => normalizeQuarantineFacetValue(option) === normalizeQuarantineFacetValue(quarantineClassFilter))) {
+        quarantineClassFilter = '';
+        writeQuarantinePreference('class', quarantineClassFilter);
+      }
+      if (quarantineGroupFilter && !groupOptions.some(option => normalizeQuarantineFacetValue(option) === normalizeQuarantineFacetValue(quarantineGroupFilter))) {
+        quarantineGroupFilter = '';
+        writeQuarantinePreference('group', quarantineGroupFilter);
+      }
+      syncQuarantineFacetSelect(classFilterSelect, classOptions, '全部班级', quarantineClassFilter);
+      syncQuarantineFacetSelect(groupFilterSelect, groupOptions, '全部小组', quarantineGroupFilter);
 
       const readyToRestoreCount = rows.filter(item => canRestoreQuarantinedItem(item)).length;
       const sourceStillMissingCount = rows.filter(item => item.source_missing).length;
@@ -1679,6 +1818,7 @@
 
       summaryBadge.textContent = rows.length ? `${rows.length} 项待确认` : '回收区为空';
       if (restoreBtn) restoreBtn.disabled = filteredRestoreCount === 0;
+      if (exportBtn) exportBtn.disabled = filteredRows.length === 0;
       if (purgeBtn) purgeBtn.disabled = filteredPurgeReadyCount === 0;
       if (filterBar) {
         filterBar.querySelectorAll('[data-quarantine-filter]').forEach(btn => {
@@ -1696,6 +1836,9 @@
         recoverableBtn.classList.toggle('active', quarantineRecoverableOnly);
         recoverableBtn.textContent = `只看可恢复 ${readyToRestoreCount}`;
       }
+      if (restoreBtn) restoreBtn.textContent = `按当前结果批量恢复 ${filteredRestoreCount}`;
+      if (exportBtn) exportBtn.textContent = `导出当前结果 ${filteredRows.length}`;
+      if (purgeBtn) purgeBtn.textContent = `按当前结果批量彻底删除 ${filteredPurgeReadyCount}`;
       if (searchInput && searchInput.value !== quarantineSearchQuery) searchInput.value = quarantineSearchQuery;
       if (searchClearBtn) searchClearBtn.disabled = !quarantineSearchQuery;
       metaBox.innerHTML = [
@@ -1706,6 +1849,8 @@
         `归档失败 ${failedArchiveCount}`,
         `到期可删 ${purgeReadyCount}`,
         `保留锁定 ${purgeLockedCount}`,
+        `班级筛选 ${quarantineClassFilter || '全部'}`,
+        `小组筛选 ${quarantineGroupFilter || '全部'}`,
         `当前命中 ${filteredRows.length}`,
         `当前保留期 ${retentionDays} 天`,
         rows.length ? '先修复或恢复，再决定是否永久删除' : '当前没有隔离中的缺失作品'
@@ -1758,7 +1903,7 @@
           <div class="missing-media-item${dueClass}" data-quarantine-id="${escapeHtml(item.id || '')}" data-quarantine-status="${dueStatus}" data-quarantine-unlock-day="${escapeHtml(getQuarantineDueDayKey(item))}">
             <div class="missing-media-main">
               <div class="missing-media-title">${escapeHtml(item.title || '未命名作品')}</div>
-              <div class="missing-media-meta">${escapeHtml(user.name || '未实名')} · ${escapeHtml(user.student_id || '-')} · ${item.media_type === 'video' ? '视频' : '图片'} · ${escapeHtml(formatBangkokTime(item.upload_time))}</div>
+              <div class="missing-media-meta">${escapeHtml(user.name || '未实名')} · ${escapeHtml(user.student_id || '-')} · ${escapeHtml(getQuarantineFacetLabel(user.class_name, '未分班'))} · ${escapeHtml(getQuarantineFacetLabel(user.group_name, '未分组'))} · ${item.media_type === 'video' ? '视频' : '图片'} · ${escapeHtml(formatBangkokTime(item.upload_time))}</div>
               <div class="missing-media-meta">${escapeHtml(item.storage_path || '无主存路径')}</div>
               ${archiveMeta.length ? `<div class="missing-media-meta">${escapeHtml(archiveMeta.join(' · '))}</div>` : ''}
               <div>${chips.join('')}</div>

@@ -1,6 +1,12 @@
 # ClassShow 维护日志
 
 ## 2026-05-08
+### Quarantine Class/Group Filters and Export
+- Added recycle-bin secondary filters for `class` and `group`, populated from the currently loaded quarantined works. Teachers can now narrow the recycle list by organizational slice before acting.
+- Added one-click CSV export for the current recycle-bin result set, including title, student identity, class, group, media type, upload time, quarantine time, restore status, archive status, and error reason.
+- The class filter and group filter are persisted per activity in browser local storage alongside the existing time filter, recoverable-only toggle, and search text.
+- The recycle-bin batch restore and batch delete actions remain tied to the current filtered result set, so export, restore, and cleanup now operate on the same visible scope.
+
 ### Quarantine Search and Recoverable Filter
 - Added recycle-bin search by student name or student ID, so teachers can quickly locate a quarantined work without scanning the full list.
 - Added a one-click `recoverable only` filter in the recycle area. Items count as recoverable when the source file still exists or when an archive restore path is available.
