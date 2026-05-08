@@ -588,7 +588,7 @@
           <div class="dashboard-panel-head">
             <div>
               <div class="dashboard-panel-title">缺失媒体告警与修复</div>
-              <div class="dashboard-panel-note">自动列出源文件、缩略图异常或归档失败的作品。教师可直接重建缩略图、重试归档，或上传原文件进行替换修复。</div>
+              <div class="dashboard-panel-note">自动列出源文件、缩略图异常或归档失败的作品。教师可先隔离到回收区，再决定恢复还是彻底删除。</div>
             </div>
             <div class="card-badge" id="missingMediaSummary">正在检查</div>
           </div>
@@ -606,7 +606,7 @@
             </div>
             <div class="missing-media-batch">
               <button class="btn btn-secondary btn-sm" type="button" id="exportMissingMediaBtn" onclick="exportMissingMediaReport()">导出清单</button>
-              <button class="btn btn-danger btn-sm" type="button" id="batchDeleteMissingBtn" onclick="batchDeleteMissingSubmissions()">一键删除缺失作品</button>
+              <button class="btn btn-danger btn-sm" type="button" id="batchQuarantineMissingBtn" onclick="batchQuarantineMissingSubmissions()">一键隔离缺失作品</button>
               <button class="btn btn-secondary btn-sm" type="button" id="batchRetryArchiveBtn" onclick="batchRetryFailedArchive()">批量重试失败归档</button>
               <button class="btn btn-secondary btn-sm" type="button" id="batchRebuildThumbBtn" onclick="batchRebuildMissingThumbnails()">批量重建缩略图</button>
               <button class="btn btn-primary btn-sm" type="button" id="batchRestoreArchiveBtn" onclick="batchRestoreMissingFromArchive()">批量从归档恢复</button>
@@ -614,6 +614,29 @@
           </div>
           <div class="missing-media-list" id="missingMediaList">
             <div class="dashboard-panel-note">正在检查缺失媒体...</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="dashboard-panel">
+        <div class="dashboard-panel-body">
+          <div class="dashboard-panel-head">
+            <div>
+              <div class="dashboard-panel-title">缺失作品回收区</div>
+              <div class="dashboard-panel-note">先把疑似丢失作品移出公开展示；确认无需恢复后再彻底删除。修复主文件后，也可从这里重新恢复到画廊与大屏。</div>
+            </div>
+            <div class="card-badge" id="quarantineSummary">回收区为空</div>
+          </div>
+          <div class="storage-meta-row" id="quarantineMeta"></div>
+          <div class="missing-media-toolbar">
+            <div class="dashboard-panel-note">回收区仅教师可见，学生端、画廊、大屏和排行榜都不会展示这些作品。</div>
+            <div class="missing-media-batch">
+              <button class="btn btn-secondary btn-sm" type="button" id="batchRestoreQuarantineBtn" onclick="batchRestoreQuarantinedSubmissions()">批量恢复到公开展示</button>
+              <button class="btn btn-danger btn-sm" type="button" id="batchPurgeQuarantineBtn" onclick="batchPurgeQuarantinedSubmissions()">批量彻底删除</button>
+            </div>
+          </div>
+          <div class="missing-media-list" id="quarantineList">
+            <div class="dashboard-panel-note">正在读取回收区...</div>
           </div>
         </div>
       </div>
@@ -740,6 +763,7 @@
 
     let dashboardSummary = null;
     let pendingRepairSubmissionId = null;
+    let pendingRepairSubmissionContext = 'visible';
     let missingMediaFilter = 'all';
 
     const toggleMeta = {
@@ -1226,6 +1250,13 @@
       });
     }
 
+    function getQuarantinedRows() {
+      const rows = Array.isArray(dashboardSummary?.quarantined_missing_media?.items)
+        ? dashboardSummary.quarantined_missing_media.items
+        : [];
+      return rows.slice();
+    }
+
     function renderMissingMedia(summary) {
       const report = summary.missing_media || {};
       const rows = Array.isArray(report.items) ? report.items : [];
@@ -1246,13 +1277,13 @@
       const failedArchiveCount = rows.filter(item => item.archive_failed).length;
       const retryableArchiveCount = rows.filter(item => item.can_retry_archive).length;
       const exportBtn = document.getElementById('exportMissingMediaBtn');
-      const deleteBtn = document.getElementById('batchDeleteMissingBtn');
+      const quarantineBtn = document.getElementById('batchQuarantineMissingBtn');
       const retryBtn = document.getElementById('batchRetryArchiveBtn');
       const rebuildBtn = document.getElementById('batchRebuildThumbBtn');
       const restoreBtn = document.getElementById('batchRestoreArchiveBtn');
-      const currentFilterDeleteCount = filteredRows.filter(item => item.source_missing).length;
+      const currentFilterQuarantineCount = filteredRows.filter(item => item.source_missing).length;
       if (exportBtn) exportBtn.disabled = rows.length === 0;
-      if (deleteBtn) deleteBtn.disabled = currentFilterDeleteCount === 0;
+      if (quarantineBtn) quarantineBtn.disabled = currentFilterQuarantineCount === 0;
       if (retryBtn) retryBtn.disabled = retryableArchiveCount === 0;
       if (rebuildBtn) rebuildBtn.disabled = rebuildableCount === 0;
       if (restoreBtn) restoreBtn.disabled = restorableCount === 0;
@@ -1263,7 +1294,7 @@
         `可重试归档 ${report.archive_retryable_count || retryableArchiveCount}`,
         `可重建 ${rebuildableCount}`,
         `可归档恢复 ${restorableCount}`,
-        rows.length ? '支持直接重建、归档恢复、失败归档重试或上传替换' : '当前活动媒体状态正常'
+        rows.length ? '支持先隔离到回收区，再恢复、重试或彻底删除' : '当前活动媒体状态正常'
       ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
 
       reasonStatsBox.innerHTML = failureReasonStats.length
@@ -1315,7 +1346,73 @@
               <button class="btn btn-secondary btn-sm" type="button" ${item.can_restore_archive ? '' : 'disabled'} onclick="restoreMissingFromArchive('${encodeURIComponent(item.id || '')}')">从归档恢复</button>
               <button class="btn btn-secondary btn-sm" type="button" ${item.can_retry_archive ? '' : `disabled title="${escapeHtml(item.retry_disabled_reason || '当前不可重试')}"`} onclick="retryFailedArchive('${encodeURIComponent(item.id || '')}')">重试归档</button>
               <button class="btn btn-primary btn-sm" type="button" ${item.can_rebuild_thumbnail ? '' : 'disabled'} onclick="rebuildMissingThumbnail('${encodeURIComponent(item.id || '')}')">重建缩略图</button>
-              <button class="btn btn-danger btn-sm" type="button" ${item.source_missing ? '' : 'disabled'} onclick="deleteMissingSubmissionRecord('${encodeURIComponent(item.id || '')}')">删除记录</button>
+              <button class="btn btn-danger btn-sm" type="button" ${item.source_missing ? '' : 'disabled'} onclick="quarantineMissingSubmissionRecord('${encodeURIComponent(item.id || '')}')">隔离到回收区</button>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderQuarantineBin(summary) {
+      const report = summary.quarantined_missing_media || {};
+      const rows = Array.isArray(report.items) ? report.items : [];
+      const summaryBadge = document.getElementById('quarantineSummary');
+      const metaBox = document.getElementById('quarantineMeta');
+      const listBox = document.getElementById('quarantineList');
+      const restoreBtn = document.getElementById('batchRestoreQuarantineBtn');
+      const purgeBtn = document.getElementById('batchPurgeQuarantineBtn');
+      if (!summaryBadge || !metaBox || !listBox) return;
+
+      const readyToRestoreCount = rows.filter(item => !item.source_missing || item.can_restore_archive).length;
+      const sourceStillMissingCount = rows.filter(item => item.source_missing).length;
+      const archiveCopyCount = rows.filter(item => item.has_archive_copy).length;
+      const failedArchiveCount = rows.filter(item => item.archive_failed).length;
+
+      summaryBadge.textContent = rows.length ? `${rows.length} 项待确认` : '回收区为空';
+      if (restoreBtn) restoreBtn.disabled = readyToRestoreCount === 0;
+      if (purgeBtn) purgeBtn.disabled = rows.length === 0;
+      metaBox.innerHTML = [
+        `回收区总数 ${rows.length}`,
+        `可直接恢复 ${readyToRestoreCount}`,
+        `源文件仍缺失 ${sourceStillMissingCount}`,
+        `已有归档副本 ${archiveCopyCount}`,
+        `归档失败 ${failedArchiveCount}`,
+        rows.length ? '先修复或恢复，再决定是否永久删除' : '当前没有隔离中的缺失作品'
+      ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+
+      if (!rows.length) {
+        listBox.innerHTML = '<div class="dashboard-panel-note">回收区为空。缺失作品隔离后会先在这里等待教师确认，不会直接删库。</div>';
+        return;
+      }
+
+      listBox.innerHTML = rows.map(item => {
+        const user = item.users || {};
+        const chips = ['<span class="issue-chip neutral">已隔离</span>'];
+        if (item.source_missing) chips.push('<span class="issue-chip">源文件仍缺失</span>');
+        else chips.push('<span class="issue-chip warning">主文件已补回</span>');
+        if (item.thumbnail_missing) chips.push('<span class="issue-chip warning">缩略图缺失</span>');
+        if (item.has_archive_copy) chips.push('<span class="issue-chip warning">已有归档副本</span>');
+        if (item.archive_failed) chips.push('<span class="issue-chip neutral">归档失败</span>');
+        const archiveMeta = [];
+        if (item.archive_status) archiveMeta.push(`状态：${item.archive_status}`);
+        if (Number.isFinite(Number(item.archive_attempts)) && Number(item.archive_attempts) > 0) {
+          archiveMeta.push(`尝试 ${Number(item.archive_attempts)} 次`);
+        }
+        const canRestore = !item.source_missing || item.can_restore_archive;
+        return `
+          <div class="missing-media-item">
+            <div class="missing-media-main">
+              <div class="missing-media-title">${escapeHtml(item.title || '未命名作品')}</div>
+              <div class="missing-media-meta">${escapeHtml(user.name || '未实名')} · ${escapeHtml(user.student_id || '-')} · ${item.media_type === 'video' ? '视频' : '图片'} · ${escapeHtml(formatBangkokTime(item.upload_time))}</div>
+              <div class="missing-media-meta">${escapeHtml(item.storage_path || '无主存路径')}</div>
+              ${archiveMeta.length ? `<div class="missing-media-meta">${escapeHtml(archiveMeta.join(' · '))}</div>` : ''}
+              <div>${chips.join('')}</div>
+              ${item.archive_error ? `<div class="missing-media-error">归档异常：${escapeHtml(item.archive_error)}</div>` : ''}
+            </div>
+            <div class="missing-media-actions">
+              <button class="btn btn-secondary btn-sm" type="button" onclick="openRepairMediaPicker('${encodeURIComponent(item.id || '')}')">上传修复文件</button>
+              <button class="btn btn-primary btn-sm" type="button" ${canRestore ? '' : 'disabled'} onclick="restoreQuarantinedSubmission('${encodeURIComponent(item.id || '')}')">恢复到公开展示</button>
+              <button class="btn btn-danger btn-sm" type="button" onclick="deleteQuarantinedSubmissionPermanently('${encodeURIComponent(item.id || '')}')">彻底删除</button>
             </div>
           </div>
         `;
@@ -1331,6 +1428,7 @@
       submissionId = decodeURIComponent(submissionId || '');
       if (!submissionId) return;
       pendingRepairSubmissionId = submissionId;
+      pendingRepairSubmissionContext = getQuarantinedRows().some(item => item.id === submissionId) ? 'quarantine' : 'visible';
       const input = document.getElementById('missingMediaRepairInput');
       if (!input) return;
       input.value = '';
@@ -1353,11 +1451,17 @@
         const data = await res.json().catch(() => ({}));
         if (!res.ok) throw new Error(data.error || res.statusText);
         await reloadDashboard();
-        toast('媒体修复成功，作品已重新挂回主存与缩略图链路', 'success');
+        toast(
+          pendingRepairSubmissionContext === 'quarantine'
+            ? '媒体修复成功，作品仍在回收区；确认无误后可点“恢复到公开展示”'
+            : '媒体修复成功，作品已重新挂回主存与缩略图链路',
+          'success'
+        );
       } catch (e) {
         toast('修复失败：' + e.message, 'error');
       } finally {
         pendingRepairSubmissionId = null;
+        pendingRepairSubmissionContext = 'visible';
         if (input) input.value = '';
       }
     }
@@ -1407,37 +1511,150 @@
       }
     }
 
-    async function deleteMissingSubmissionRecord(submissionId) {
+    async function quarantineMissingSubmissionRecord(submissionId) {
       submissionId = decodeURIComponent(submissionId || '');
       if (!submissionId) return;
-      if (!confirm('确认删除这个源文件已缺失的作品记录吗？删除后它将不再出现在作品展示、画廊和排行榜中。')) return;
+      if (!confirm('确认先把这个源文件已缺失的作品隔离到回收区吗？隔离后学生端、画廊、大屏和排行榜都会暂时隐藏它。')) return;
       try {
-        await api('/teacher/submissions/' + encodeURIComponent(submissionId), {
-          method: 'DELETE'
+        const result = await api('/teacher/missing-media-quarantine', {
+          method: 'POST',
+          body: JSON.stringify({
+            activity_id: actId,
+            submission_ids: [submissionId]
+          })
         });
         await reloadDashboard();
-        toast('缺失作品记录已删除', 'success');
+        const ok = Number(result?.quarantined_count || 0);
+        toast(ok ? '作品已移入回收区，可继续修复或确认删除' : '这条作品未被隔离，可能已经被其他操作处理', ok ? 'success' : 'error');
       } catch (e) {
-        toast('删除失败：' + e.message, 'error');
+        toast('隔离失败：' + e.message, 'error');
       }
     }
 
-    async function batchDeleteMissingSubmissions() {
+    async function batchQuarantineMissingSubmissions() {
       const rows = getFilteredMissingMediaRows().filter(item => item.source_missing);
-      if (!rows.length) return toast('当前筛选结果下没有可一键删除的源文件缺失作品', 'error');
+      if (!rows.length) return toast('当前筛选结果下没有可一键隔离的源文件缺失作品', 'error');
       const confirmed = confirm(
-        `确认一键删除当前筛选结果下的 ${rows.length} 个源文件缺失作品吗？\n\n` +
-        '如需保留作品，请先使用“从归档恢复”或“上传修复文件”。'
+        `确认一键隔离当前筛选结果下的 ${rows.length} 个源文件缺失作品吗？\n\n` +
+        '隔离后不会立刻删库，作品会先进入“缺失作品回收区”等待教师确认。'
       );
       if (!confirmed) return;
-      const btn = document.getElementById('batchDeleteMissingBtn');
+      const btn = document.getElementById('batchQuarantineMissingBtn');
+      const originalText = btn?.textContent || '';
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = '隔离中...';
+      }
+      try {
+        const result = await api('/teacher/missing-media-quarantine', {
+          method: 'POST',
+          body: JSON.stringify({
+            activity_id: actId,
+            submission_ids: rows.map(item => item.id)
+          })
+        });
+        await reloadDashboard();
+        const quarantined = Number(result?.quarantined_count || 0);
+        const skipped = Array.isArray(result?.skipped_ids) ? result.skipped_ids.length : 0;
+        const failed = Array.isArray(result?.failed) ? result.failed.length : 0;
+        toast(`批量隔离完成：成功 ${quarantined} 项，跳过 ${skipped} 项，失败 ${failed} 项`, failed ? 'error' : 'success');
+      } catch (e) {
+        toast('批量隔离失败：' + e.message, 'error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
+      }
+    }
+
+    async function restoreQuarantinedSubmission(submissionId) {
+      submissionId = decodeURIComponent(submissionId || '');
+      if (!submissionId) return;
+      if (!confirm('确认把这条回收区作品恢复到公开展示吗？恢复后学生端、画廊和大屏会重新看到它。')) return;
+      try {
+        const result = await api('/teacher/quarantined-submissions-restore', {
+          method: 'POST',
+          body: JSON.stringify({
+            activity_id: actId,
+            submission_ids: [submissionId]
+          })
+        });
+        await reloadDashboard();
+        const restoredViaArchive = Number(result?.archive_restored_count || 0);
+        toast(restoredViaArchive ? '作品已从归档补回并恢复展示' : '作品已恢复到公开展示', 'success');
+      } catch (e) {
+        toast('恢复失败：' + e.message, 'error');
+      }
+    }
+
+    async function deleteQuarantinedSubmissionPermanently(submissionId) {
+      submissionId = decodeURIComponent(submissionId || '');
+      if (!submissionId) return;
+      if (!confirm('确认彻底删除这条回收区作品吗？这一步会删除数据库记录，并尝试清理仍残留的媒体文件。')) return;
+      try {
+        const result = await api('/teacher/quarantined-submissions-purge', {
+          method: 'POST',
+          body: JSON.stringify({
+            activity_id: actId,
+            submission_ids: [submissionId]
+          })
+        });
+        await reloadDashboard();
+        const removed = Number(result?.removed_count || 0);
+        toast(removed ? '回收区作品已彻底删除' : '没有删除到任何回收区作品', removed ? 'success' : 'error');
+      } catch (e) {
+        toast('彻底删除失败：' + e.message, 'error');
+      }
+    }
+
+    async function batchRestoreQuarantinedSubmissions() {
+      const rows = getQuarantinedRows().filter(item => !item.source_missing || item.can_restore_archive);
+      if (!rows.length) return toast('当前回收区没有可直接恢复的作品', 'error');
+      if (!confirm(`确认批量恢复 ${rows.length} 个回收区作品吗？`)) return;
+      const btn = document.getElementById('batchRestoreQuarantineBtn');
+      const originalText = btn?.textContent || '';
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = '恢复中...';
+      }
+      try {
+        const result = await api('/teacher/quarantined-submissions-restore', {
+          method: 'POST',
+          body: JSON.stringify({
+            activity_id: actId,
+            submission_ids: rows.map(item => item.id)
+          })
+        });
+        await reloadDashboard();
+        const restored = Number(result?.restored_count || 0);
+        const archiveRestored = Number(result?.archive_restored_count || 0);
+        const skipped = Array.isArray(result?.skipped_ids) ? result.skipped_ids.length : 0;
+        const failed = Array.isArray(result?.failed) ? result.failed.length : 0;
+        const archiveNote = archiveRestored ? `，其中 ${archiveRestored} 项先从归档补回` : '';
+        toast(`批量恢复完成：成功 ${restored} 项${archiveNote}，跳过 ${skipped} 项，失败 ${failed} 项`, failed ? 'error' : 'success');
+      } catch (e) {
+        toast('批量恢复失败：' + e.message, 'error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
+      }
+    }
+
+    async function batchPurgeQuarantinedSubmissions() {
+      const rows = getQuarantinedRows();
+      if (!rows.length) return toast('当前回收区没有可彻底删除的作品', 'error');
+      if (!confirm(`确认彻底删除回收区中的 ${rows.length} 个作品吗？\n\n这一步会永久删除记录，仅建议对确认无法恢复或已不再需要的作品执行。`)) return;
+      const btn = document.getElementById('batchPurgeQuarantineBtn');
       const originalText = btn?.textContent || '';
       if (btn) {
         btn.disabled = true;
         btn.textContent = '删除中...';
       }
       try {
-        const result = await api('/teacher/missing-media-delete', {
+        const result = await api('/teacher/quarantined-submissions-purge', {
           method: 'POST',
           body: JSON.stringify({
             activity_id: actId,
@@ -1446,11 +1663,11 @@
         });
         await reloadDashboard();
         const removed = Number(result?.removed_count || 0);
-        const skipped = Number(result?.skipped_count || 0);
+        const skipped = Array.isArray(result?.skipped_ids) ? result.skipped_ids.length : 0;
         const failed = Array.isArray(result?.failed) ? result.failed.length : 0;
-        toast(`批量删除完成：成功 ${removed} 项，跳过 ${skipped} 项，失败 ${failed} 项`, failed ? 'error' : 'success');
+        toast(`批量彻底删除完成：成功 ${removed} 项，跳过 ${skipped} 项，失败 ${failed} 项`, failed ? 'error' : 'success');
       } catch (e) {
-        toast('批量删除失败：' + e.message, 'error');
+        toast('批量彻底删除失败：' + e.message, 'error');
       } finally {
         if (btn) {
           btn.disabled = false;
@@ -1742,6 +1959,7 @@
         renderOps(summary);
         renderSnapshots(summary);
         renderMissingMedia(summary);
+        renderQuarantineBin(summary);
         renderWorkList('topRatedList', summary.top_rated, 'rating');
         renderWorkList('recentUploadsList', summary.recent_uploads, 'time');
         renderFeedbackList('feedbackHotList', summary.hot_feedback, 'hot');

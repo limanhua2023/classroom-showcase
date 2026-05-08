@@ -89,6 +89,7 @@ const ARCHIVE_PERMANENT_DELETE = /^true$/i.test(String(process.env.ARCHIVE_PERMA
 const OPS_SNAPSHOT_LIST_TTL_MS = 60 * 1000;
 const OPS_HEAVY_QUERY_CACHE_TTL_MS = Math.max(5 * 1000, Number(process.env.OPS_HEAVY_QUERY_CACHE_TTL_MS || 30 * 1000));
 const TASK_STUCK_GRACE_MS = 5 * 60 * 1000;
+const QUARANTINED_MISSING_MEDIA_STATUS = 'quarantined_missing_media';
 
 function escapeHtml(input = '') {
   const str = String(input);
@@ -2856,6 +2857,7 @@ async function buildMissingMediaExportPayload(activityId) {
     supabase.from('submissions')
       .select('*, users(name, student_id, class_name, group_name)')
       .eq('activity_id', activityId)
+      .neq('status', QUARANTINED_MISSING_MEDIA_STATUS)
       .order('upload_time', { ascending: false }),
     getCachedStorageSummary(activityId)
   ]);
@@ -3751,11 +3753,14 @@ app.get('/api/submissions/:id', async (req, res) => {
     const { viewer_user_id } = req.query;
     const [subResult, commentsResult] = await Promise.all([
       supabase.from('submissions')
-        .select('id,anonymous_code,title,description,image_url,storage_path,media_type,media_size,upload_time,view_count,rating_count,average_rating,user_id,activity_id')
+        .select('id,anonymous_code,title,description,image_url,storage_path,media_type,media_size,upload_time,view_count,rating_count,average_rating,user_id,activity_id,status')
         .eq('id', req.params.id).single(),
       supabase.from('comments').select('id', { count: 'exact', head: true }).eq('submission_id', req.params.id)
     ]);
     if (subResult.error) throw subResult.error;
+    if (String(subResult.data?.status || 'visible') !== 'visible') {
+      return res.status(404).json({ error: 'Not found' });
+    }
     let is_owner = false;
     if (req.headers['x-user-token'] && viewer_user_id && subResult.data?.activity_id) {
       const auth = await validateStudentToken({
@@ -3765,7 +3770,7 @@ app.get('/api/submissions/:id', async (req, res) => {
       });
       if (auth.ok && String(subResult.data.user_id) === String(viewer_user_id)) is_owner = true;
     }
-    const { user_id, activity_id, ...safe } = subResult.data;
+    const { user_id, activity_id, status, ...safe } = subResult.data;
     const [enriched] = await enrichSubmissionMediaRows([{ ...safe, image_url: sanitizeMediaUrl(safe.image_url) || '', is_owner, comment_count: commentsResult.count || 0 }]);
     res.json(enriched);
   } catch (e) { res.status(404).json({ error: 'Not found' }); }
@@ -3779,10 +3784,14 @@ app.get('/api/teacher/submissions', teacherAuth, async (req, res) => {
     const auth = await ensureTeacherCanAccessActivity(req, activity_id);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
+    let submissionsQuery = supabase.from('submissions')
+      .select('*, users(name, student_id, class_name, group_name)')
+      .eq('activity_id', activity_id)
+      .neq('status', QUARANTINED_MISSING_MEDIA_STATUS)
+      .order('upload_time', { ascending: true });
+
     const [subsResult, commentsResult] = await Promise.all([
-      supabase.from('submissions')
-        .select('*, users(name, student_id, class_name, group_name)')
-        .eq('activity_id', activity_id).order('upload_time', { ascending: true }),
+      submissionsQuery,
       supabase.from('comments').select('submission_id').eq('activity_id', activity_id)
     ]);
     if (subsResult.error) throw subsResult.error;
@@ -3894,6 +3903,233 @@ app.post('/api/teacher/missing-media-delete', teacherAuth, async (req, res) => {
         removed_count += 1;
       } catch (error) {
         failed.push({ id: submissionId, error: String(error?.message || error || 'Delete failed') });
+      }
+    }
+
+    invalidateActivityOpsCache(activity_id);
+    res.json({
+      ok: true,
+      requested_count: submission_ids.length,
+      removed_count,
+      skipped_count: skipped_ids.length,
+      skipped_ids,
+      failed
+    });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+app.post('/api/teacher/missing-media-quarantine', teacherAuth, async (req, res) => {
+  try {
+    const activity_id = String(req.body?.activity_id || '').trim();
+    const submission_ids = Array.from(new Set(
+      (Array.isArray(req.body?.submission_ids) ? req.body.submission_ids : [])
+        .map(value => String(value || '').trim())
+        .filter(Boolean)
+    ));
+
+    if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
+    if (!submission_ids.length) return res.status(400).json({ error: 'Missing submission_ids' });
+    if (submission_ids.length > 200) {
+      return res.status(400).json({ error: 'Too many submission_ids in one request' });
+    }
+
+    const auth = await ensureTeacherCanAccessActivity(req, activity_id);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const [submissionsResult, storageSummary] = await Promise.all([
+      supabase.from('submissions')
+        .select('*, users(name, student_id, class_name, group_name)')
+        .eq('activity_id', activity_id)
+        .in('id', submission_ids),
+      getCachedStorageSummary(activity_id, { refresh: true })
+    ]);
+    if (submissionsResult.error) throw submissionsResult.error;
+
+    const hydrated = await enrichSubmissionMediaRows((submissionsResult.data || []).map(item => ({
+      ...item,
+      image_url: sanitizeMediaUrl(item.image_url) || ''
+    })));
+    const submissionMap = new Map(hydrated.map(item => [String(item.id || ''), item]));
+    const missingMediaRows = buildMissingMediaReport(hydrated, storageSummary).items;
+    const missingMediaMap = new Map(missingMediaRows.map(item => [String(item.id || ''), item]));
+    const quarantinableIds = submission_ids.filter(id => {
+      const submission = submissionMap.get(id);
+      return !!submission
+        && submission.status !== QUARANTINED_MISSING_MEDIA_STATUS
+        && !!missingMediaMap.get(id)?.source_missing;
+    });
+    const skipped_ids = submission_ids.filter(id => !quarantinableIds.includes(id));
+
+    if (!quarantinableIds.length) {
+      return res.status(400).json({ error: 'No source-missing submissions matched the current selection' });
+    }
+
+    const failed = [];
+    let quarantined_count = 0;
+
+    for (const submissionId of quarantinableIds) {
+      try {
+        const { error: updateError } = await supabase.from('submissions')
+          .update({ status: QUARANTINED_MISSING_MEDIA_STATUS })
+          .eq('id', submissionId)
+          .eq('activity_id', activity_id);
+        if (updateError) throw updateError;
+        quarantined_count += 1;
+      } catch (error) {
+        failed.push({ id: submissionId, error: String(error?.message || error || 'Quarantine failed') });
+      }
+    }
+
+    invalidateActivityOpsCache(activity_id);
+    res.json({
+      ok: true,
+      requested_count: submission_ids.length,
+      quarantined_count,
+      skipped_count: skipped_ids.length,
+      skipped_ids,
+      failed
+    });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+app.post('/api/teacher/quarantined-submissions-restore', teacherAuth, async (req, res) => {
+  try {
+    const activity_id = String(req.body?.activity_id || '').trim();
+    const submission_ids = Array.from(new Set(
+      (Array.isArray(req.body?.submission_ids) ? req.body.submission_ids : [])
+        .map(value => String(value || '').trim())
+        .filter(Boolean)
+    ));
+
+    if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
+    if (!submission_ids.length) return res.status(400).json({ error: 'Missing submission_ids' });
+    if (submission_ids.length > 200) {
+      return res.status(400).json({ error: 'Too many submission_ids in one request' });
+    }
+
+    const auth = await ensureTeacherCanAccessActivity(req, activity_id);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const [submissionsResult, storageSummary] = await Promise.all([
+      supabase.from('submissions')
+        .select('id,activity_id,title,image_url,storage_path,media_type,media_size,upload_time,user_id,status,users(name,student_id,class_name,group_name)')
+        .eq('activity_id', activity_id)
+        .in('id', submission_ids),
+      getCachedStorageSummary(activity_id, { refresh: true })
+    ]);
+    if (submissionsResult.error) throw submissionsResult.error;
+
+    const hydrated = await enrichSubmissionMediaRows((submissionsResult.data || []).map(item => ({
+      ...item,
+      image_url: sanitizeMediaUrl(item.image_url) || ''
+    })));
+    const submissionMap = new Map(hydrated.map(item => [String(item.id || ''), item]));
+    const missingMediaRows = buildMissingMediaReport(hydrated, storageSummary).items;
+    const missingMediaMap = new Map(missingMediaRows.map(item => [String(item.id || ''), item]));
+
+    const failed = [];
+    const skipped_ids = [];
+    let restored_count = 0;
+    let archive_restored_count = 0;
+
+    for (const submissionId of submission_ids) {
+      const submission = submissionMap.get(submissionId);
+      if (!submission) {
+        failed.push({ id: submissionId, error: 'Submission not found' });
+        continue;
+      }
+      if (submission.status !== QUARANTINED_MISSING_MEDIA_STATUS) {
+        skipped_ids.push(submissionId);
+        continue;
+      }
+
+      const missingItem = missingMediaMap.get(submissionId);
+      try {
+        if (missingItem?.source_missing) {
+          if (!missingItem.can_restore_archive) {
+            throw new Error('Source is still missing and no archive copy is available. Upload a repair file first.');
+          }
+          await restoreSubmissionFromArchive(submission);
+          archive_restored_count += 1;
+        }
+
+        const { error: updateError } = await supabase.from('submissions')
+          .update({ status: 'visible' })
+          .eq('id', submissionId)
+          .eq('activity_id', activity_id);
+        if (updateError) throw updateError;
+        restored_count += 1;
+      } catch (error) {
+        failed.push({ id: submissionId, error: String(error?.message || error || 'Restore failed') });
+      }
+    }
+
+    invalidateActivityOpsCache(activity_id);
+    res.json({
+      ok: true,
+      requested_count: submission_ids.length,
+      restored_count,
+      archive_restored_count,
+      skipped_count: skipped_ids.length,
+      skipped_ids,
+      failed
+    });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+app.post('/api/teacher/quarantined-submissions-purge', teacherAuth, async (req, res) => {
+  try {
+    const activity_id = String(req.body?.activity_id || '').trim();
+    const submission_ids = Array.from(new Set(
+      (Array.isArray(req.body?.submission_ids) ? req.body.submission_ids : [])
+        .map(value => String(value || '').trim())
+        .filter(Boolean)
+    ));
+
+    if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
+    if (!submission_ids.length) return res.status(400).json({ error: 'Missing submission_ids' });
+    if (submission_ids.length > 200) {
+      return res.status(400).json({ error: 'Too many submission_ids in one request' });
+    }
+
+    const auth = await ensureTeacherCanAccessActivity(req, activity_id);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const { data: submissions, error: submissionsError } = await supabase.from('submissions')
+      .select('id,activity_id,image_url,storage_path,status')
+      .eq('activity_id', activity_id)
+      .in('id', submission_ids);
+    if (submissionsError) throw submissionsError;
+
+    const submissionMap = new Map((submissions || []).map(item => [String(item.id || ''), item]));
+    const failed = [];
+    const skipped_ids = [];
+    let removed_count = 0;
+
+    for (const submissionId of submission_ids) {
+      const submission = submissionMap.get(submissionId);
+      if (!submission) {
+        failed.push({ id: submissionId, error: 'Submission not found' });
+        continue;
+      }
+      if (submission.status !== QUARANTINED_MISSING_MEDIA_STATUS) {
+        skipped_ids.push(submissionId);
+        continue;
+      }
+
+      try {
+        const { error: deleteError } = await supabase.from('submissions').delete().eq('id', submissionId);
+        if (deleteError) throw deleteError;
+        await deleteSubmissionMedia(submission);
+        removed_count += 1;
+      } catch (error) {
+        failed.push({ id: submissionId, error: String(error?.message || error || 'Permanent delete failed') });
       }
     }
 
@@ -4038,9 +4274,12 @@ app.post('/api/ratings', studentAuth, async (req, res) => {
     }
 
     // Check: can't rate own submission
-    const { data: sub } = await supabase.from('submissions').select('user_id,activity_id').eq('id', submission_id).single();
+    const { data: sub } = await supabase.from('submissions').select('user_id,activity_id,status').eq('id', submission_id).single();
     if (!sub || String(sub.activity_id) !== String(activity_id)) {
       return res.status(400).json({ error: 'Submission/activity mismatch' });
+    }
+    if (String(sub.status || 'visible') !== 'visible') {
+      return res.status(404).json({ error: 'Submission is not publicly available' });
     }
     if (sub && String(sub.user_id) === String(rater_user_id)) return res.status(403).json({ error: 'Cannot rate your own work' });
 
@@ -4101,9 +4340,12 @@ app.post('/api/comments', studentAuth, async (req, res) => {
     if (!activity_id || !submission_id || !user_id || !content?.trim()) {
       return res.status(400).json({ error: '缂哄皯蹇呰瀛楁' });
     }
-    const { data: sub } = await supabase.from('submissions').select('id,activity_id,user_id').eq('id', submission_id).single();
+    const { data: sub } = await supabase.from('submissions').select('id,activity_id,user_id,status').eq('id', submission_id).single();
     if (!sub || String(sub.activity_id) !== String(activity_id)) {
       return res.status(400).json({ error: 'Submission/activity mismatch' });
+    }
+    if (String(sub.status || 'visible') !== 'visible') {
+      return res.status(404).json({ error: 'Submission is not publicly available' });
     }
     if (String(sub.user_id) === String(user_id)) {
       return res.status(403).json({ error: 'Cannot comment on your own work' });
@@ -4132,6 +4374,13 @@ app.get('/api/comments', async (req, res) => {
   try {
     const { submission_id } = req.query;
     if (!submission_id) return res.json([]);
+    const { data: submission, error: submissionError } = await supabase.from('submissions')
+      .select('id,status')
+      .eq('id', submission_id)
+      .single();
+    if (submissionError || !submission || String(submission.status || 'visible') !== 'visible') {
+      return res.json([]);
+    }
     const { data, error } = await supabase.from('comments')
       .select('id, content, created_at')
       .eq('submission_id', submission_id).order('created_at', { ascending: true });
@@ -4656,9 +4905,12 @@ app.post('/api/views', studentAuth, async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const { data: sub } = await supabase.from('submissions').select('id,activity_id,user_id,view_count').eq('id', submission_id).single();
+    const { data: sub } = await supabase.from('submissions').select('id,activity_id,user_id,view_count,status').eq('id', submission_id).single();
     if (!sub || String(sub.activity_id) !== String(activity_id)) {
       return res.status(400).json({ error: 'Submission/activity mismatch' });
+    }
+    if (String(sub.status || 'visible') !== 'visible') {
+      return res.status(404).json({ error: 'Submission is not publicly available' });
     }
     if (String(sub.user_id) === String(viewer_user_id)) {
       return res.json({ ok: true, owner: true });
@@ -4777,6 +5029,7 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
       activityResult,
       usersResult,
       subsResult,
+      quarantinedSubsResult,
       ratingsCountResult,
       commentsResult,
       rosterResult,
@@ -4792,6 +5045,11 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
         .select('id,title,description,image_url,storage_path,media_type,media_size,upload_time,view_count,rating_count,average_rating,composite_score,is_pinned,is_teacher_selected,user_id,users(name,student_id,class_name,group_name)')
         .eq('activity_id', activity_id)
         .eq('status', 'visible'),
+      supabase.from('submissions')
+        .select('id,title,description,image_url,storage_path,media_type,media_size,upload_time,view_count,rating_count,average_rating,composite_score,status,user_id,users(name,student_id,class_name,group_name)')
+        .eq('activity_id', activity_id)
+        .eq('status', QUARANTINED_MISSING_MEDIA_STATUS)
+        .order('upload_time', { ascending: false }),
       supabase.from('ratings')
         .select('id', { count: 'exact', head: true })
         .eq('activity_id', activity_id),
@@ -4810,6 +5068,7 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
     if (activityResult.error) throw activityResult.error;
     if (usersResult.error) throw usersResult.error;
     if (subsResult.error) throw subsResult.error;
+    if (quarantinedSubsResult.error) throw quarantinedSubsResult.error;
     if (ratingsCountResult.error) throw ratingsCountResult.error;
     if (commentsResult.error && !/comments|does not exist|schema cache/i.test(commentsResult.error.message || '')) {
       throw commentsResult.error;
@@ -4839,6 +5098,14 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
 
     const users = usersResult.data || [];
     const submissions = await enrichSubmissionMediaRows((subsResult.data || []).map(item => ({
+      ...item,
+      media_size: Number(item.media_size) || 0,
+      view_count: Number(item.view_count) || 0,
+      rating_count: Number(item.rating_count) || 0,
+      average_rating: Number(item.average_rating) || 0,
+      composite_score: Number(item.composite_score) || 0
+    })));
+    const quarantinedSubmissions = await enrichSubmissionMediaRows((quarantinedSubsResult.data || []).map(item => ({
       ...item,
       media_size: Number(item.media_size) || 0,
       view_count: Number(item.view_count) || 0,
@@ -4916,6 +5183,43 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
       .sort((a, b) => new Date(b.upload_time).getTime() - new Date(a.upload_time).getTime())
       .slice(0, 8);
     const missingMedia = buildMissingMediaReport(submissions, storageSummary);
+    const quarantinedMissingMap = new Map(
+      buildMissingMediaReport(quarantinedSubmissions, storageSummary).items
+        .map(item => [String(item.id || ''), item])
+    );
+    let quarantinedSourceMissingCount = 0;
+    let quarantinedArchiveRestorableCount = 0;
+    const quarantinedItems = quarantinedSubmissions.map(item => {
+      const missingItem = quarantinedMissingMap.get(String(item.id || '')) || {};
+      const sourceMissing = !!missingItem.source_missing;
+      const canRestoreArchive = !!missingItem.can_restore_archive;
+      if (sourceMissing) quarantinedSourceMissingCount += 1;
+      if (canRestoreArchive) quarantinedArchiveRestorableCount += 1;
+      return {
+        id: item.id,
+        anonymous_code: item.anonymous_code || '',
+        title: item.title || '未命名作品',
+        upload_time: item.upload_time || null,
+        media_type: item.media_type || 'image',
+        storage_path: sanitizeStoragePath(item.storage_path) || storagePathFromPublicUrl(item.image_url) || '',
+        source_missing: sourceMissing,
+        thumbnail_missing: !!missingItem.thumbnail_missing,
+        has_archive_copy: !!missingItem.has_archive_copy,
+        can_restore_archive: canRestoreArchive,
+        archive_failed: !!missingItem.archive_failed,
+        archive_status: item.archive_status || missingItem.archive_status || null,
+        archive_tier: item.archive_tier || missingItem.archive_tier || null,
+        archive_attempts: Number(item.archive_attempts || missingItem.archive_attempts || 0),
+        archive_error: item.archive_error || missingItem.archive_error || null,
+        users: item.users || {}
+      };
+    });
+    const quarantinedMissingMedia = {
+      total_count: quarantinedItems.length,
+      source_missing_count: quarantinedSourceMissingCount,
+      archive_restorable_count: quarantinedArchiveRestorableCount,
+      items: quarantinedItems
+    };
     const snapshotOverview = await listArchiveSnapshots(activity_id, { provider: archiveProvider }).catch(error => ({
       provider: archiveProvider,
       items: [],
@@ -4942,6 +5246,7 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
         uploads_24h: uploads24h,
         uploads_7d: uploads7d,
         feedback_muted_count: mutedRosterRows.length,
+        quarantined_missing_media_count: quarantinedMissingMedia.total_count,
         roster_ready: rosterReady
       },
       storage: storageSummary,
@@ -4967,6 +5272,7 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
       most_viewed: mostViewed,
       recent_uploads: recentUploads,
       missing_media: missingMedia,
+      quarantined_missing_media: quarantinedMissingMedia,
       ops: {
         server_time: new Date().toISOString(),
         tasks: buildTaskOpsOverview(),
