@@ -9,6 +9,13 @@
 - 学生端、作品详情、评分、评论、浏览量与教师作品列表全部只对 `visible` 状态开放；被隔离作品不会再出现在学生端、大屏、画廊和排行榜。
 - 回收区支持三条安全路径：上传修复文件后恢复、从归档恢复后恢复、确认无保留价值后彻底删除。
 
+### Quarantine Retention Lock
+- Added activity-level `quarantine_retention_days` with a teacher control in the archive panel. Default is 3 days and the UI accepts 0 to 365 days.
+- Added `submissions.quarantined_at` for new environments. Older environments without that column still persist the timestamp into the media manifest so the safety window remains enforceable.
+- Permanent purge now checks the retention window first. Items still inside the protection window stay in the recycle bin and cannot be hard deleted.
+- Batch purge only submits items whose protection window has already expired. Locked items show remaining retention time and unlock time in the recycle bin.
+- Legacy quarantined items without a timestamp are backfilled automatically on dashboard load, then follow the same retention policy afterward.
+
 ### 缺失作品一键清理
 
 - 教师后台“缺失媒体告警列表”新增两类删除入口：单条“删除记录”和“当前筛选结果一键删除缺失作品”。

@@ -69,6 +69,7 @@ const ARCHIVE_LOOP_INTERVAL_MS = 15 * 60 * 1000;
 const ARCHIVE_BATCH_SIZE = 2;
 const ARCHIVE_MAX_ATTEMPTS = 3;
 const DEFAULT_ARCHIVE_AFTER_DAYS = Math.max(0, Number(process.env.ARCHIVE_AFTER_DAYS || 30));
+const DEFAULT_QUARANTINE_RETENTION_DAYS = Math.max(0, Number(process.env.QUARANTINE_RETENTION_DAYS || 3));
 const ARCHIVE_PROVIDER = String(process.env.ARCHIVE_PROVIDER || 'none').trim().toLowerCase();
 const DEFAULT_ARCHIVE_DELETE_PRIMARY_AFTER_SUCCESS = /^true$/i.test(String(process.env.ARCHIVE_DELETE_PRIMARY_AFTER_SUCCESS || 'false'));
 const GOOGLE_DRIVE_FOLDER_ID = String(process.env.GOOGLE_DRIVE_FOLDER_ID || '').trim();
@@ -345,6 +346,22 @@ function parseArchiveAfterDaysInput(value) {
   return num;
 }
 
+function normalizeQuarantineRetentionDays(value) {
+  const num = Number(value);
+  if (!Number.isInteger(num) || num < 0) return DEFAULT_QUARANTINE_RETENTION_DAYS;
+  return Math.min(num, 365);
+}
+
+function parseQuarantineRetentionDaysInput(value) {
+  const num = Number(value);
+  if (!Number.isInteger(num) || num < 0 || num > 365) {
+    const err = new Error('Quarantine retention days must be an integer between 0 and 365');
+    err.status = 400;
+    throw err;
+  }
+  return num;
+}
+
 function normalizeArchiveDeletePrimary(value) {
   if (value === null || value === undefined) return DEFAULT_ARCHIVE_DELETE_PRIMARY_AFTER_SUCCESS;
   return !!value;
@@ -354,6 +371,44 @@ function resolveActivityArchivePolicy(activity = null) {
   return {
     after_days: normalizeArchiveAfterDays(activity?.archive_after_days),
     delete_primary_after_success: normalizeArchiveDeletePrimary(activity?.archive_delete_primary_after_success)
+  };
+}
+
+function resolveActivityQuarantinePolicy(activity = null) {
+  return {
+    retention_days: normalizeQuarantineRetentionDays(activity?.quarantine_retention_days)
+  };
+}
+
+function normalizeIsoTimestampOrNull(value) {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
+function getQuarantineRetentionWindow(quarantinedAt, retentionDays = DEFAULT_QUARANTINE_RETENTION_DAYS, nowMs = Date.now()) {
+  const effectiveDays = normalizeQuarantineRetentionDays(retentionDays);
+  const safeQuarantinedAt = normalizeIsoTimestampOrNull(quarantinedAt);
+  if (!safeQuarantinedAt) {
+    return {
+      quarantined_at: null,
+      retention_days: effectiveDays,
+      purge_unlock_at: null,
+      remaining_retention_ms: effectiveDays * 24 * 60 * 60 * 1000,
+      purge_allowed: false,
+      timestamp_missing: true
+    };
+  }
+  const unlockMs = new Date(safeQuarantinedAt).getTime() + (effectiveDays * 24 * 60 * 60 * 1000);
+  const remainingMs = Math.max(0, unlockMs - nowMs);
+  return {
+    quarantined_at: safeQuarantinedAt,
+    retention_days: effectiveDays,
+    purge_unlock_at: new Date(unlockMs).toISOString(),
+    remaining_retention_ms: remainingMs,
+    purge_allowed: remainingMs <= 0,
+    timestamp_missing: false
   };
 }
 
@@ -408,6 +463,7 @@ function sanitizeActivity(activity) {
   safe.feedback_daily_limit = normalizeFeedbackDailyLimit(safe.feedback_daily_limit);
   safe.archive_after_days = normalizeArchiveAfterDays(safe.archive_after_days);
   safe.archive_delete_primary_after_success = normalizeArchiveDeletePrimary(safe.archive_delete_primary_after_success);
+  safe.quarantine_retention_days = normalizeQuarantineRetentionDays(safe.quarantine_retention_days);
   return safe;
 }
 
@@ -790,6 +846,7 @@ function buildDefaultSubmissionMediaManifest(submission = {}) {
     archive_attempts: 0,
     archive_error: null,
     archived_at: null,
+    quarantined_at: normalizeIsoTimestampOrNull(submission.quarantined_at),
     updated_at: new Date().toISOString()
   };
 }
@@ -817,6 +874,7 @@ function normalizeSubmissionMediaManifest(submission = {}, manifest = null) {
   merged.archive_thumbnail_key = merged.archive_thumbnail_key ? String(merged.archive_thumbnail_key) : null;
   merged.archive_thumbnail_url = sanitizeMediaUrl(merged.archive_thumbnail_url) || null;
   merged.archive_attempts = Number(merged.archive_attempts || 0);
+  merged.quarantined_at = normalizeIsoTimestampOrNull(merged.quarantined_at);
   merged.updated_at = merged.updated_at || new Date().toISOString();
   return merged;
 }
@@ -854,6 +912,7 @@ function mergeSubmissionWithManifest(submission = {}, manifest = null) {
     archive_attempts: normalized.archive_attempts,
     archive_error: normalized.archive_error || null,
     archived_at: normalized.archived_at || null,
+    quarantined_at: normalized.quarantined_at || null,
     original_media_size: normalized.original_media_size,
     compression_saved_bytes: normalized.saved_bytes,
     compression_saved_percent: normalized.saved_percent,
@@ -902,6 +961,75 @@ async function writeSubmissionMediaManifest(submissionId, manifest) {
   await replaceBufferInPrimaryStorage(storagePath, payload, contentTypeForExtension('json'));
   cacheSubmissionMediaManifest(submissionId, normalized);
   return normalized;
+}
+
+function isQuarantineTimestampSchemaError(message = '') {
+  return /quarantined_at/i.test(message || '');
+}
+
+async function updateSubmissionQuarantineColumns({ submissionId, activityId, status, quarantinedAt }) {
+  const basePayload = { status };
+  const payloadWithTimestamp = { ...basePayload, quarantined_at: normalizeIsoTimestampOrNull(quarantinedAt) };
+  let result = await supabase.from('submissions')
+    .update(payloadWithTimestamp)
+    .eq('id', submissionId)
+    .eq('activity_id', activityId);
+  if (result.error && isQuarantineTimestampSchemaError(result.error.message || '')) {
+    result = await supabase.from('submissions')
+      .update(basePayload)
+      .eq('id', submissionId)
+      .eq('activity_id', activityId);
+  }
+  if (result.error) throw result.error;
+}
+
+async function setSubmissionQuarantineState(submission = {}, { activityId = null, status = QUARANTINED_MISSING_MEDIA_STATUS, quarantinedAt = null } = {}) {
+  if (!submission?.id) throw new Error('Submission id is required');
+  const effectiveActivityId = String(activityId || submission.activity_id || '').trim();
+  if (!effectiveActivityId) throw new Error('Submission activity_id is required');
+  const nextQuarantinedAt = normalizeIsoTimestampOrNull(quarantinedAt);
+  const manifest = normalizeSubmissionMediaManifest(submission, await readSubmissionMediaManifest(submission.id).catch(() => null));
+  await writeSubmissionMediaManifest(submission.id, {
+    ...manifest,
+    quarantined_at: nextQuarantinedAt
+  });
+  await updateSubmissionQuarantineColumns({
+    submissionId: submission.id,
+    activityId: effectiveActivityId,
+    status,
+    quarantinedAt: nextQuarantinedAt
+  });
+  return {
+    ...submission,
+    status,
+    quarantined_at: nextQuarantinedAt
+  };
+}
+
+async function ensureSubmissionQuarantineTimestamp(submission = {}) {
+  if (!submission?.id || submission.status !== QUARANTINED_MISSING_MEDIA_STATUS) return submission;
+  const manifest = normalizeSubmissionMediaManifest(submission, await readSubmissionMediaManifest(submission.id).catch(() => null));
+  const existingTimestamp = normalizeIsoTimestampOrNull(submission.quarantined_at) || manifest.quarantined_at;
+  if (existingTimestamp) {
+    if (!normalizeIsoTimestampOrNull(submission.quarantined_at)) {
+      await updateSubmissionQuarantineColumns({
+        submissionId: submission.id,
+        activityId: submission.activity_id,
+        status: QUARANTINED_MISSING_MEDIA_STATUS,
+        quarantinedAt: existingTimestamp
+      }).catch(() => {});
+    }
+    return {
+      ...submission,
+      quarantined_at: existingTimestamp
+    };
+  }
+  const fallbackTimestamp = new Date().toISOString();
+  return setSubmissionQuarantineState(submission, {
+    activityId: submission.activity_id,
+    status: QUARANTINED_MISSING_MEDIA_STATUS,
+    quarantinedAt: fallbackTimestamp
+  });
 }
 
 async function deleteSubmissionMediaManifest(submissionId) {
@@ -1583,12 +1711,14 @@ function normalizeRosterRows(rows, defaultClassName = '') {
     .filter(row => row.name && row.student_id);
 }
 
-const ACTIVITY_PUBLIC_FIELDS = 'id,course_name,class_name,activity_name,description,invite_code,upload_open,voting_open,comments_open,show_live_ranking,roster_enabled,pin_required,feedback_daily_limit,archive_after_days,archive_delete_primary_after_success,created_at';
+const ACTIVITY_PUBLIC_FIELDS = 'id,course_name,class_name,activity_name,description,invite_code,upload_open,voting_open,comments_open,show_live_ranking,roster_enabled,pin_required,feedback_daily_limit,archive_after_days,archive_delete_primary_after_success,quarantine_retention_days,created_at';
 const ACTIVITY_LEGACY_FIELDS = 'id,course_name,class_name,activity_name,description,invite_code,upload_open,voting_open,comments_open,show_live_ranking,created_at';
+const QUARANTINED_SUBMISSION_FIELDS = 'id,title,description,image_url,storage_path,media_type,media_size,upload_time,view_count,rating_count,average_rating,composite_score,status,quarantined_at,user_id,activity_id,users(name,student_id,class_name,group_name)';
+const QUARANTINED_SUBMISSION_LEGACY_FIELDS = 'id,title,description,image_url,storage_path,media_type,media_size,upload_time,view_count,rating_count,average_rating,composite_score,status,user_id,activity_id,users(name,student_id,class_name,group_name)';
 
 async function fetchActivityById(activityId) {
   let result = await supabase.from('activities').select(ACTIVITY_PUBLIC_FIELDS).eq('id', activityId).single();
-  if (result.error && /roster_enabled|pin_required|comments_open|feedback_daily_limit|archive_after_days|archive_delete_primary_after_success/i.test(result.error.message || '')) {
+  if (result.error && /roster_enabled|pin_required|comments_open|feedback_daily_limit|archive_after_days|archive_delete_primary_after_success|quarantine_retention_days/i.test(result.error.message || '')) {
     result = await supabase.from('activities').select(ACTIVITY_LEGACY_FIELDS).eq('id', activityId).single();
   }
   if (result.data) result.data = sanitizeActivity(result.data);
@@ -1598,10 +1728,26 @@ async function fetchActivityById(activityId) {
 async function fetchActivityByCode(code) {
   const normalized = normalizeInviteCode(code);
   let result = await supabase.from('activities').select(ACTIVITY_PUBLIC_FIELDS).eq('invite_code', normalized).single();
-  if (result.error && /roster_enabled|pin_required|comments_open|feedback_daily_limit|archive_after_days|archive_delete_primary_after_success/i.test(result.error.message || '')) {
+  if (result.error && /roster_enabled|pin_required|comments_open|feedback_daily_limit|archive_after_days|archive_delete_primary_after_success|quarantine_retention_days/i.test(result.error.message || '')) {
     result = await supabase.from('activities').select(ACTIVITY_LEGACY_FIELDS).eq('invite_code', normalized).single();
   }
   if (result.data) result.data = sanitizeActivity(result.data);
+  return result;
+}
+
+async function fetchQuarantinedSubmissions(activityId) {
+  let result = await supabase.from('submissions')
+    .select(QUARANTINED_SUBMISSION_FIELDS)
+    .eq('activity_id', activityId)
+    .eq('status', QUARANTINED_MISSING_MEDIA_STATUS)
+    .order('upload_time', { ascending: false });
+  if (result.error && /quarantined_at/i.test(result.error.message || '')) {
+    result = await supabase.from('submissions')
+      .select(QUARANTINED_SUBMISSION_LEGACY_FIELDS)
+      .eq('activity_id', activityId)
+      .eq('status', QUARANTINED_MISSING_MEDIA_STATUS)
+      .order('upload_time', { ascending: false });
+  }
   return result;
 }
 
@@ -3211,7 +3357,7 @@ app.put('/api/activities/:id', teacherAuth, async (req, res) => {
     const auth = await ensureTeacherCanAccessActivity(req, req.params.id);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
-    const allowed = ['upload_open', 'voting_open', 'comments_open', 'show_live_ranking', 'roster_enabled', 'pin_required', 'description', 'activity_name', 'feedback_daily_limit', 'archive_after_days', 'archive_delete_primary_after_success'];
+    const allowed = ['upload_open', 'voting_open', 'comments_open', 'show_live_ranking', 'roster_enabled', 'pin_required', 'description', 'activity_name', 'feedback_daily_limit', 'archive_after_days', 'archive_delete_primary_after_success', 'quarantine_retention_days'];
     const payload = {};
     for (const key of allowed) {
       if (!(key in req.body)) continue;
@@ -3219,11 +3365,12 @@ app.put('/api/activities/:id', teacherAuth, async (req, res) => {
       else if (key === 'activity_name') payload[key] = sanitizeText(req.body[key], 120);
       else if (key === 'feedback_daily_limit') payload[key] = parseFeedbackDailyLimitInput(req.body[key]);
       else if (key === 'archive_after_days') payload[key] = parseArchiveAfterDaysInput(req.body[key]);
+      else if (key === 'quarantine_retention_days') payload[key] = parseQuarantineRetentionDaysInput(req.body[key]);
       else payload[key] = coerceBoolean(req.body[key]);
     }
 
     const { data, error } = await supabase.from('activities').update(payload).eq('id', req.params.id).select().single();
-    if (error && /feedback_daily_limit|archive_after_days|archive_delete_primary_after_success/i.test(error.message || '')) {
+    if (error && /feedback_daily_limit|archive_after_days|archive_delete_primary_after_success|quarantine_retention_days/i.test(error.message || '')) {
       return res.status(500).json({ error: 'Archive or feedback schema is not ready. Run upgrade_v4.sql first.' });
     }
     if (error) throw error;
@@ -3968,14 +4115,17 @@ app.post('/api/teacher/missing-media-quarantine', teacherAuth, async (req, res) 
 
     const failed = [];
     let quarantined_count = 0;
+    const quarantinedAt = new Date().toISOString();
 
     for (const submissionId of quarantinableIds) {
       try {
-        const { error: updateError } = await supabase.from('submissions')
-          .update({ status: QUARANTINED_MISSING_MEDIA_STATUS })
-          .eq('id', submissionId)
-          .eq('activity_id', activity_id);
-        if (updateError) throw updateError;
+        const submission = submissionMap.get(submissionId);
+        if (!submission) throw new Error('Submission not found');
+        await setSubmissionQuarantineState(submission, {
+          activityId: activity_id,
+          status: QUARANTINED_MISSING_MEDIA_STATUS,
+          quarantinedAt
+        });
         quarantined_count += 1;
       } catch (error) {
         failed.push({ id: submissionId, error: String(error?.message || error || 'Quarantine failed') });
@@ -4057,11 +4207,11 @@ app.post('/api/teacher/quarantined-submissions-restore', teacherAuth, async (req
           archive_restored_count += 1;
         }
 
-        const { error: updateError } = await supabase.from('submissions')
-          .update({ status: 'visible' })
-          .eq('id', submissionId)
-          .eq('activity_id', activity_id);
-        if (updateError) throw updateError;
+        await setSubmissionQuarantineState(submission, {
+          activityId: activity_id,
+          status: 'visible',
+          quarantinedAt: null
+        });
         restored_count += 1;
       } catch (error) {
         failed.push({ id: submissionId, error: String(error?.message || error || 'Restore failed') });
@@ -4101,15 +4251,27 @@ app.post('/api/teacher/quarantined-submissions-purge', teacherAuth, async (req, 
     const auth = await ensureTeacherCanAccessActivity(req, activity_id);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
-    const { data: submissions, error: submissionsError } = await supabase.from('submissions')
-      .select('id,activity_id,image_url,storage_path,status')
+    const { data: activity, error: activityError } = await fetchActivityById(activity_id);
+    if (activityError) throw activityError;
+    const quarantinePolicy = resolveActivityQuarantinePolicy(activity);
+
+    let submissionsResult = await supabase.from('submissions')
+      .select('id,activity_id,image_url,storage_path,status,upload_time,quarantined_at')
       .eq('activity_id', activity_id)
       .in('id', submission_ids);
-    if (submissionsError) throw submissionsError;
+    if (submissionsResult.error && /quarantined_at/i.test(submissionsResult.error.message || '')) {
+      submissionsResult = await supabase.from('submissions')
+        .select('id,activity_id,image_url,storage_path,status,upload_time')
+        .eq('activity_id', activity_id)
+        .in('id', submission_ids);
+    }
+    if (submissionsResult.error) throw submissionsResult.error;
 
-    const submissionMap = new Map((submissions || []).map(item => [String(item.id || ''), item]));
+    const hydratedSubmissions = await Promise.all(((submissionsResult.data || [])).map(item => ensureSubmissionQuarantineTimestamp(item)));
+    const submissionMap = new Map(hydratedSubmissions.map(item => [String(item.id || ''), item]));
     const failed = [];
     const skipped_ids = [];
+    const locked_ids = [];
     let removed_count = 0;
 
     for (const submissionId of submission_ids) {
@@ -4120,6 +4282,17 @@ app.post('/api/teacher/quarantined-submissions-purge', teacherAuth, async (req, 
       }
       if (submission.status !== QUARANTINED_MISSING_MEDIA_STATUS) {
         skipped_ids.push(submissionId);
+        continue;
+      }
+      const retention = getQuarantineRetentionWindow(submission.quarantined_at, quarantinePolicy.retention_days);
+      if (!retention.purge_allowed) {
+        locked_ids.push(submissionId);
+        failed.push({
+          id: submissionId,
+          error: retention.purge_unlock_at
+            ? `Retention window is still active until ${retention.purge_unlock_at}`
+            : 'Retention window is still active'
+        });
         continue;
       }
 
@@ -4138,6 +4311,8 @@ app.post('/api/teacher/quarantined-submissions-purge', teacherAuth, async (req, 
       ok: true,
       requested_count: submission_ids.length,
       removed_count,
+      locked_count: locked_ids.length,
+      locked_ids,
       skipped_count: skipped_ids.length,
       skipped_ids,
       failed
@@ -5045,11 +5220,7 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
         .select('id,title,description,image_url,storage_path,media_type,media_size,upload_time,view_count,rating_count,average_rating,composite_score,is_pinned,is_teacher_selected,user_id,users(name,student_id,class_name,group_name)')
         .eq('activity_id', activity_id)
         .eq('status', 'visible'),
-      supabase.from('submissions')
-        .select('id,title,description,image_url,storage_path,media_type,media_size,upload_time,view_count,rating_count,average_rating,composite_score,status,user_id,users(name,student_id,class_name,group_name)')
-        .eq('activity_id', activity_id)
-        .eq('status', QUARANTINED_MISSING_MEDIA_STATUS)
-        .order('upload_time', { ascending: false }),
+      fetchQuarantinedSubmissions(activity_id),
       supabase.from('ratings')
         .select('id', { count: 'exact', head: true })
         .eq('activity_id', activity_id),
@@ -5097,6 +5268,9 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
     } catch {}
 
     const users = usersResult.data || [];
+    const activitySafe = sanitizeActivity(activityResult.data);
+    const archivePolicy = resolveActivityArchivePolicy(activitySafe);
+    const quarantinePolicy = resolveActivityQuarantinePolicy(activitySafe);
     const submissions = await enrichSubmissionMediaRows((subsResult.data || []).map(item => ({
       ...item,
       media_size: Number(item.media_size) || 0,
@@ -5105,7 +5279,7 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
       average_rating: Number(item.average_rating) || 0,
       composite_score: Number(item.composite_score) || 0
     })));
-    const quarantinedSubmissions = await enrichSubmissionMediaRows((quarantinedSubsResult.data || []).map(item => ({
+    const quarantinedSubmissionsBase = await enrichSubmissionMediaRows((quarantinedSubsResult.data || []).map(item => ({
       ...item,
       media_size: Number(item.media_size) || 0,
       view_count: Number(item.view_count) || 0,
@@ -5113,6 +5287,9 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
       average_rating: Number(item.average_rating) || 0,
       composite_score: Number(item.composite_score) || 0
     })));
+    const quarantinedSubmissions = await Promise.all(
+      quarantinedSubmissionsBase.map(item => ensureSubmissionQuarantineTimestamp(item))
+    );
     const comments = commentsResult.data || [];
     const workComments = comments.filter(item => !!item.submission_id);
     const feedbackComments = comments.filter(item => !item.submission_id && !isWithdrawnFeedbackContent(item.content));
@@ -5134,7 +5311,6 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
       : 0;
     const activeRosterRows = rosterRows.filter(item => item.active !== false);
     const mutedRosterRows = rosterRows.filter(item => item.feedback_muted);
-    const archivePolicy = resolveActivityArchivePolicy(activityResult.data);
     const archiveProvider = getArchiveProviderInfo(archivePolicy);
     const archiveDestination = archiveProvider.name === 'google-drive'
       ? await inspectGoogleDriveDestination().catch(() => null)
@@ -5189,12 +5365,17 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
     );
     let quarantinedSourceMissingCount = 0;
     let quarantinedArchiveRestorableCount = 0;
+    let quarantinedPurgeReadyCount = 0;
+    let quarantinedPurgeLockedCount = 0;
     const quarantinedItems = quarantinedSubmissions.map(item => {
       const missingItem = quarantinedMissingMap.get(String(item.id || '')) || {};
       const sourceMissing = !!missingItem.source_missing;
       const canRestoreArchive = !!missingItem.can_restore_archive;
+      const retention = getQuarantineRetentionWindow(item.quarantined_at, quarantinePolicy.retention_days, now);
       if (sourceMissing) quarantinedSourceMissingCount += 1;
       if (canRestoreArchive) quarantinedArchiveRestorableCount += 1;
+      if (retention.purge_allowed) quarantinedPurgeReadyCount += 1;
+      else quarantinedPurgeLockedCount += 1;
       return {
         id: item.id,
         anonymous_code: item.anonymous_code || '',
@@ -5211,6 +5392,12 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
         archive_tier: item.archive_tier || missingItem.archive_tier || null,
         archive_attempts: Number(item.archive_attempts || missingItem.archive_attempts || 0),
         archive_error: item.archive_error || missingItem.archive_error || null,
+        quarantined_at: retention.quarantined_at,
+        quarantine_retention_days: retention.retention_days,
+        purge_allowed: retention.purge_allowed,
+        purge_unlock_at: retention.purge_unlock_at,
+        remaining_retention_ms: retention.remaining_retention_ms,
+        quarantine_timestamp_missing: retention.timestamp_missing,
         users: item.users || {}
       };
     });
@@ -5218,6 +5405,9 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
       total_count: quarantinedItems.length,
       source_missing_count: quarantinedSourceMissingCount,
       archive_restorable_count: quarantinedArchiveRestorableCount,
+      purge_ready_count: quarantinedPurgeReadyCount,
+      purge_locked_count: quarantinedPurgeLockedCount,
+      retention_days: quarantinePolicy.retention_days,
       items: quarantinedItems
     };
     const snapshotOverview = await listArchiveSnapshots(activity_id, { provider: archiveProvider }).catch(error => ({
@@ -5228,7 +5418,7 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
     }));
 
     res.json({
-      activity: sanitizeActivity(activityResult.data),
+      activity: activitySafe,
       metrics: {
         participant_count: users.length,
         roster_count: activeRosterRows.length,

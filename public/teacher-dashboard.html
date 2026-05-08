@@ -526,6 +526,11 @@
                   <span>达到这个天数的作品会被纳入归档队列。填 7 表示作品上传满 7 天后可归档，填 0 表示立即可归档。</span>
                   <input id="archiveAfterDaysInput" type="number" min="0" max="365" step="1" value="30">
                 </label>
+                <label class="archive-control-field">
+                  <strong>回收区保留期（天）</strong>
+                  <span>缺失作品隔离进回收区后，至少保留这么久；未到期前不允许彻底删除。填 0 表示允许立即删。</span>
+                  <input id="quarantineRetentionDaysInput" type="number" min="0" max="365" step="1" value="3">
+                </label>
                 <label class="archive-toggle">
                   <input id="archiveDeletePrimaryToggle" type="checkbox">
                   <div>
@@ -538,6 +543,9 @@
                 <button class="btn btn-secondary btn-sm" type="button" onclick="applyArchivePreset(3)">3 天归档</button>
                 <button class="btn btn-secondary btn-sm" type="button" onclick="applyArchivePreset(7)">7 天归档</button>
                 <button class="btn btn-secondary btn-sm" type="button" onclick="applyArchivePreset(30)">30 天归档</button>
+                <button class="btn btn-secondary btn-sm" type="button" onclick="applyQuarantineRetentionPreset(1)">回收保留 1 天</button>
+                <button class="btn btn-secondary btn-sm" type="button" onclick="applyQuarantineRetentionPreset(3)">回收保留 3 天</button>
+                <button class="btn btn-secondary btn-sm" type="button" onclick="applyQuarantineRetentionPreset(7)">回收保留 7 天</button>
                 <button class="btn btn-primary btn-sm" id="saveArchivePolicyBtn" type="button" onclick="saveArchiveControls()">保存归档策略</button>
               </div>
               <div class="dashboard-panel-note" id="archiveControlHint" style="margin-top:10px;">当前活动尚未读取到归档策略。</div>
@@ -1063,20 +1071,22 @@
       const providerDestination = provider.destination || {};
       const providerWarning = provider.warning || providerDestination.warning || providerDestination.error || '';
       const daysInput = document.getElementById('archiveAfterDaysInput');
+      const quarantineInput = document.getElementById('quarantineRetentionDaysInput');
       const deleteToggle = document.getElementById('archiveDeletePrimaryToggle');
       const badge = document.getElementById('archivePolicyBadge');
       const hint = document.getElementById('archiveControlHint');
       const statsBox = document.getElementById('storageForecastStats');
       const metaBox = document.getElementById('storageForecastMeta');
 
-      if (!daysInput || !deleteToggle || !badge || !hint || !statsBox || !metaBox) return;
+      if (!daysInput || !quarantineInput || !deleteToggle || !badge || !hint || !statsBox || !metaBox) return;
 
       daysInput.value = Number(activity.archive_after_days ?? provider.after_days ?? 30);
+      quarantineInput.value = Number(activity.quarantine_retention_days ?? 3);
       deleteToggle.checked = !!activity.archive_delete_primary_after_success;
 
       badge.textContent = deleteToggle.checked
-        ? `冷存开启 · ${daysInput.value} 天`
-        : `镜像模式 · ${daysInput.value} 天`;
+        ? `冷存开启 · 归档 ${daysInput.value} 天 / 回收保留 ${quarantineInput.value} 天`
+        : `镜像模式 · 归档 ${daysInput.value} 天 / 回收保留 ${quarantineInput.value} 天`;
 
       statsBox.innerHTML = [
         ['免费配额', formatBytes(storage.quota_bytes || 0)],
@@ -1101,15 +1111,29 @@
           : providerDestination.destination_type === 'my-drive'
             ? '当前目标 My Drive'
             : '',
+        `回收区保留 ${quarantineInput.value} 天`,
         deleteToggle.checked ? '归档后将尝试释放 Supabase 主存' : '当前只归档备份，不释放 Supabase 主存'
       ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
 
       hint.textContent = provider.configured
-        ? '这里保存的是“当前活动”的归档策略，不会改动 Google Drive 凭据本身。首次建议先用镜像模式观察 1 至 2 天，再决定是否开启冷存。'
-        : '归档提供方尚未配置完成，当前只能保存策略草稿，不能真正归档。';
+        ? '这里保存的是“当前活动”的归档与回收保护策略，不会改动 Google Drive 凭据本身。首次建议先用镜像模式观察 1 至 2 天，再决定是否开启冷存。'
+        : '归档提供方尚未配置完成，当前只能保存策略草稿，不能真正归档。回收区保留期仍会照常生效。';
       if (providerWarning) {
         hint.textContent += ` 当前告警：${providerWarning}`;
       }
+    }
+
+    function formatRetentionDuration(value) {
+      const ms = Number(value || 0);
+      if (!Number.isFinite(ms) || ms <= 0) return '已到期';
+      const totalSeconds = Math.ceil(ms / 1000);
+      const days = Math.floor(totalSeconds / 86400);
+      const hours = Math.floor((totalSeconds % 86400) / 3600);
+      const minutes = Math.floor((totalSeconds % 3600) / 60);
+      if (days > 0) return `${days}天 ${hours}小时`;
+      if (hours > 0) return `${hours}小时 ${minutes}分钟`;
+      if (minutes > 0) return `${minutes}分钟`;
+      return `${totalSeconds}秒`;
     }
 
     function formatDurationMsHuman(value) {
@@ -1356,6 +1380,7 @@
     function renderQuarantineBin(summary) {
       const report = summary.quarantined_missing_media || {};
       const rows = Array.isArray(report.items) ? report.items : [];
+      const retentionDays = Number(report.retention_days ?? summary.activity?.quarantine_retention_days ?? 3);
       const summaryBadge = document.getElementById('quarantineSummary');
       const metaBox = document.getElementById('quarantineMeta');
       const listBox = document.getElementById('quarantineList');
@@ -1367,16 +1392,21 @@
       const sourceStillMissingCount = rows.filter(item => item.source_missing).length;
       const archiveCopyCount = rows.filter(item => item.has_archive_copy).length;
       const failedArchiveCount = rows.filter(item => item.archive_failed).length;
+      const purgeReadyCount = rows.filter(item => item.purge_allowed).length;
+      const purgeLockedCount = rows.filter(item => !item.purge_allowed).length;
 
       summaryBadge.textContent = rows.length ? `${rows.length} 项待确认` : '回收区为空';
       if (restoreBtn) restoreBtn.disabled = readyToRestoreCount === 0;
-      if (purgeBtn) purgeBtn.disabled = rows.length === 0;
+      if (purgeBtn) purgeBtn.disabled = purgeReadyCount === 0;
       metaBox.innerHTML = [
         `回收区总数 ${rows.length}`,
         `可直接恢复 ${readyToRestoreCount}`,
         `源文件仍缺失 ${sourceStillMissingCount}`,
         `已有归档副本 ${archiveCopyCount}`,
         `归档失败 ${failedArchiveCount}`,
+        `到期可删 ${purgeReadyCount}`,
+        `保留锁定 ${purgeLockedCount}`,
+        `当前保留期 ${retentionDays} 天`,
         rows.length ? '先修复或恢复，再决定是否永久删除' : '当前没有隔离中的缺失作品'
       ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
 
@@ -1393,12 +1423,26 @@
         if (item.thumbnail_missing) chips.push('<span class="issue-chip warning">缩略图缺失</span>');
         if (item.has_archive_copy) chips.push('<span class="issue-chip warning">已有归档副本</span>');
         if (item.archive_failed) chips.push('<span class="issue-chip neutral">归档失败</span>');
+        if (item.purge_allowed) chips.push('<span class="issue-chip warning">已到可删时间</span>');
+        else chips.push(`<span class="issue-chip neutral">仍需保留 ${escapeHtml(formatRetentionDuration(item.remaining_retention_ms))}</span>`);
         const archiveMeta = [];
         if (item.archive_status) archiveMeta.push(`状态：${item.archive_status}`);
         if (Number.isFinite(Number(item.archive_attempts)) && Number(item.archive_attempts) > 0) {
           archiveMeta.push(`尝试 ${Number(item.archive_attempts)} 次`);
         }
+        if (item.quarantined_at) archiveMeta.push(`隔离于 ${formatBangkokTime(item.quarantined_at)}`);
+        if (item.purge_unlock_at) {
+          archiveMeta.push(
+            item.purge_allowed
+              ? `已在 ${formatBangkokTime(item.purge_unlock_at)} 到期`
+              : `将于 ${formatBangkokTime(item.purge_unlock_at)} 解锁删除`
+          );
+        }
+        if (item.quarantine_timestamp_missing) archiveMeta.push('保留期时间戳刚补建，请刷新后再看');
         const canRestore = !item.source_missing || item.can_restore_archive;
+        const purgeDisabledReason = item.purge_allowed
+          ? ''
+          : `disabled title="${escapeHtml(`仍需保留 ${formatRetentionDuration(item.remaining_retention_ms)}`)}"`;
         return `
           <div class="missing-media-item">
             <div class="missing-media-main">
@@ -1412,7 +1456,7 @@
             <div class="missing-media-actions">
               <button class="btn btn-secondary btn-sm" type="button" onclick="openRepairMediaPicker('${encodeURIComponent(item.id || '')}')">上传修复文件</button>
               <button class="btn btn-primary btn-sm" type="button" ${canRestore ? '' : 'disabled'} onclick="restoreQuarantinedSubmission('${encodeURIComponent(item.id || '')}')">恢复到公开展示</button>
-              <button class="btn btn-danger btn-sm" type="button" onclick="deleteQuarantinedSubmissionPermanently('${encodeURIComponent(item.id || '')}')">彻底删除</button>
+              <button class="btn btn-danger btn-sm" type="button" ${purgeDisabledReason} onclick="deleteQuarantinedSubmissionPermanently('${encodeURIComponent(item.id || '')}')">彻底删除</button>
             </div>
           </div>
         `;
@@ -1784,15 +1828,26 @@
       input.value = String(days);
     }
 
+    function applyQuarantineRetentionPreset(days) {
+      const input = document.getElementById('quarantineRetentionDaysInput');
+      if (!input) return;
+      input.value = String(days);
+    }
+
     async function saveArchiveControls() {
       const daysInput = document.getElementById('archiveAfterDaysInput');
+      const quarantineInput = document.getElementById('quarantineRetentionDaysInput');
       const deleteToggle = document.getElementById('archiveDeletePrimaryToggle');
       const saveBtn = document.getElementById('saveArchivePolicyBtn');
-      if (!daysInput || !deleteToggle || !saveBtn) return;
+      if (!daysInput || !quarantineInput || !deleteToggle || !saveBtn) return;
 
       const archiveAfterDays = Number(daysInput.value);
+      const quarantineRetentionDays = Number(quarantineInput.value);
       if (!Number.isInteger(archiveAfterDays) || archiveAfterDays < 0 || archiveAfterDays > 365) {
         return toast('归档天数必须是 0 到 365 之间的整数', 'error');
+      }
+      if (!Number.isInteger(quarantineRetentionDays) || quarantineRetentionDays < 0 || quarantineRetentionDays > 365) {
+        return toast('回收区保留期必须是 0 到 365 之间的整数', 'error');
       }
 
       const originalText = saveBtn.textContent;
@@ -1803,7 +1858,8 @@
           method: 'PUT',
           body: JSON.stringify({
             archive_after_days: archiveAfterDays,
-            archive_delete_primary_after_success: !!deleteToggle.checked
+            archive_delete_primary_after_success: !!deleteToggle.checked,
+            quarantine_retention_days: quarantineRetentionDays
           })
         });
         await reloadDashboard();
@@ -1813,6 +1869,81 @@
       } finally {
         saveBtn.disabled = false;
         saveBtn.textContent = originalText;
+      }
+    }
+
+    async function deleteQuarantinedSubmissionPermanently(submissionId) {
+      submissionId = decodeURIComponent(submissionId || '');
+      if (!submissionId) return;
+      const row = getQuarantinedRows().find(item => item.id === submissionId);
+      if (row && !row.purge_allowed) {
+        const remaining = formatRetentionDuration(row.remaining_retention_ms);
+        const unlockAt = row.purge_unlock_at ? `，解锁时间 ${formatDateTime(row.purge_unlock_at)}` : '';
+        return toast(`该作品仍在回收保护期内，还需保留 ${remaining}${unlockAt}`, 'error');
+      }
+      if (!confirm('确认彻底删除这条回收区作品吗？这一步会永久删除数据库记录，并尝试清理仍残留的媒体文件。')) return;
+      try {
+        const result = await api('/teacher/quarantined-submissions-purge', {
+          method: 'POST',
+          body: JSON.stringify({
+            activity_id: actId,
+            submission_ids: [submissionId]
+          })
+        });
+        await reloadDashboard();
+        const removed = Number(result?.removed_count || 0);
+        const locked = Number(result?.locked_count || 0);
+        if (removed) {
+          const lockNote = locked ? `；另有 ${locked} 项仍在保留期内` : '';
+          toast(`回收区作品已彻底删除${lockNote}`, 'success');
+        } else if (locked) {
+          toast('该作品仍在回收保护期内，暂不能彻底删除', 'error');
+        } else {
+          toast('没有删除到任何回收区作品', 'error');
+        }
+      } catch (e) {
+        toast('彻底删除失败：' + e.message, 'error');
+      }
+    }
+
+    async function batchPurgeQuarantinedSubmissions() {
+      const rows = getQuarantinedRows();
+      const purgeableRows = rows.filter(item => item.purge_allowed);
+      const lockedRows = rows.filter(item => !item.purge_allowed);
+      if (!purgeableRows.length) {
+        const lockedNote = lockedRows.length ? `，当前有 ${lockedRows.length} 项仍在保留期内` : '';
+        return toast(`回收区暂时没有可彻底删除的作品${lockedNote}`, 'error');
+      }
+      const lockedNote = lockedRows.length ? `\n\n另有 ${lockedRows.length} 项仍在保留期内，本次不会删除。` : '';
+      if (!confirm(`确认彻底删除回收区中 ${purgeableRows.length} 个已到期作品吗？\n\n这一步会永久删除记录，仅建议对确认无法恢复或已不再需要的作品执行。${lockedNote}`)) return;
+      const btn = document.getElementById('batchPurgeQuarantineBtn');
+      const originalText = btn?.textContent || '';
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = '删除中...';
+      }
+      try {
+        const result = await api('/teacher/quarantined-submissions-purge', {
+          method: 'POST',
+          body: JSON.stringify({
+            activity_id: actId,
+            submission_ids: purgeableRows.map(item => item.id)
+          })
+        });
+        await reloadDashboard();
+        const removed = Number(result?.removed_count || 0);
+        const skipped = Array.isArray(result?.skipped_ids) ? result.skipped_ids.length : 0;
+        const failed = Array.isArray(result?.failed) ? result.failed.length : 0;
+        const locked = Number(result?.locked_count || 0) + lockedRows.length;
+        const lockNote = locked ? `，保留锁定 ${locked} 项` : '';
+        toast(`批量彻底删除完成：成功 ${removed} 项，跳过 ${skipped} 项，失败 ${failed} 项${lockNote}`, failed ? 'error' : 'success');
+      } catch (e) {
+        toast('批量彻底删除失败：' + e.message, 'error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
       }
     }
 
