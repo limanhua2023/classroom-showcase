@@ -393,6 +393,127 @@
       box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.12), 0 14px 28px rgba(239, 68, 68, 0.16);
       transform: translateY(-2px);
     }
+    .quarantine-preview-overlay[hidden] {
+      display: none;
+    }
+    .quarantine-preview-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 1200;
+      background: rgba(2, 6, 23, 0.56);
+      backdrop-filter: blur(6px);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .quarantine-preview-modal {
+      width: min(980px, 100%);
+      max-height: min(86vh, 920px);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      border-radius: 28px;
+      background: rgba(255, 255, 255, 0.98);
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      box-shadow: 0 32px 72px rgba(15, 23, 42, 0.26);
+    }
+    .quarantine-preview-head {
+      display: flex;
+      justify-content: space-between;
+      gap: 16px;
+      padding: 22px 24px 16px;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+    }
+    .quarantine-preview-head h3 {
+      margin: 0;
+      font-size: 1.04rem;
+      font-weight: 900;
+    }
+    .quarantine-preview-head p {
+      margin: 8px 0 0;
+      color: var(--text-muted);
+      font-size: 0.84rem;
+      line-height: 1.6;
+    }
+    .quarantine-preview-close {
+      border: 0;
+      background: rgba(15, 23, 42, 0.06);
+      color: var(--text-main);
+      width: 40px;
+      height: 40px;
+      border-radius: 999px;
+      cursor: pointer;
+      font-size: 1.3rem;
+      font-weight: 800;
+      line-height: 1;
+      flex: 0 0 auto;
+    }
+    .quarantine-preview-body {
+      padding: 18px 24px 12px;
+      overflow: auto;
+    }
+    .quarantine-preview-summary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-bottom: 16px;
+    }
+    .quarantine-preview-note {
+      margin-bottom: 14px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(245, 158, 11, 0.1);
+      border: 1px solid rgba(245, 158, 11, 0.16);
+      color: #92400e;
+      font-size: 0.84rem;
+      line-height: 1.6;
+    }
+    .quarantine-preview-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.84rem;
+    }
+    .quarantine-preview-table th,
+    .quarantine-preview-table td {
+      padding: 11px 12px;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+      text-align: left;
+      vertical-align: top;
+      line-height: 1.55;
+    }
+    .quarantine-preview-table th {
+      position: sticky;
+      top: 0;
+      background: rgba(248, 250, 252, 0.98);
+      z-index: 1;
+      font-size: 0.76rem;
+      font-weight: 900;
+      color: var(--text-muted);
+      letter-spacing: 0.02em;
+    }
+    .quarantine-preview-table td strong {
+      display: block;
+      font-size: 0.88rem;
+      font-weight: 900;
+      color: var(--text-main);
+      word-break: break-word;
+    }
+    .quarantine-preview-table td small {
+      display: block;
+      margin-top: 4px;
+      color: var(--text-light);
+      font-size: 0.74rem;
+      word-break: break-word;
+    }
+    .quarantine-preview-actions {
+      display: flex;
+      justify-content: flex-end;
+      gap: 10px;
+      padding: 16px 24px 24px;
+      border-top: 1px solid rgba(15, 23, 42, 0.08);
+      background: rgba(248, 250, 252, 0.72);
+    }
     .missing-media-main {
       min-width: 0;
       flex: 1 1 auto;
@@ -731,7 +852,8 @@
             <div class="dashboard-panel-note">回收区仅教师可见，学生端、画廊、大屏和排行榜都不会展示这些作品。</div>
             <div class="missing-media-batch">
               <button class="btn btn-secondary btn-sm" type="button" id="batchRestoreQuarantineBtn" onclick="batchRestoreQuarantinedSubmissions()">按当前结果批量恢复</button>
-              <button class="btn btn-secondary btn-sm" type="button" id="exportQuarantineCsvBtn" onclick="exportFilteredQuarantinedSubmissions()">导出当前结果</button>
+              <button class="btn btn-secondary btn-sm" type="button" id="exportQuarantineXlsxBtn" onclick="exportFilteredQuarantinedWorkbook()">导出 Excel</button>
+              <button class="btn btn-secondary btn-sm" type="button" id="exportQuarantineCsvBtn" onclick="exportFilteredQuarantinedCsv()">导出 CSV</button>
               <button class="btn btn-danger btn-sm" type="button" id="batchPurgeQuarantineBtn" onclick="batchPurgeQuarantinedSubmissions()">按当前结果批量彻底删除</button>
             </div>
           </div>
@@ -853,7 +975,44 @@
     </section>
   </div>
 
+  <div class="quarantine-preview-overlay" id="quarantinePurgePreviewOverlay" hidden>
+    <div class="quarantine-preview-modal" role="dialog" aria-modal="true" aria-labelledby="quarantinePurgePreviewTitle">
+      <div class="quarantine-preview-head">
+        <div>
+          <h3 id="quarantinePurgePreviewTitle">批量彻底删除预览</h3>
+          <p id="quarantinePurgePreviewDescription">先核对名单和筛选结果，再决定是否执行永久删除。</p>
+        </div>
+        <button class="quarantine-preview-close" type="button" onclick="closeQuarantinePurgePreview()" aria-label="关闭预览">&times;</button>
+      </div>
+      <div class="quarantine-preview-body">
+        <div class="quarantine-preview-summary" id="quarantinePurgePreviewSummary"></div>
+        <div class="quarantine-preview-note" id="quarantinePurgePreviewLockedNote" hidden></div>
+        <div class="table-wrap" style="max-height:52vh;overflow:auto;">
+          <table class="quarantine-preview-table">
+            <thead>
+              <tr>
+                <th>作品</th>
+                <th>学生</th>
+                <th>班级 / 小组</th>
+                <th>状态</th>
+                <th>隔离时间</th>
+              </tr>
+            </thead>
+            <tbody id="quarantinePurgePreviewBody">
+              <tr><td colspan="5" style="color:var(--text-muted);">暂无可预览的回收区作品。</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+      <div class="quarantine-preview-actions">
+        <button class="btn btn-secondary" type="button" onclick="closeQuarantinePurgePreview()">取消</button>
+        <button class="btn btn-danger" type="button" id="confirmQuarantinePurgeBtn" onclick="confirmQuarantinePurgePreview()">确认彻底删除</button>
+      </div>
+    </div>
+  </div>
+
   <script src="js/api.js"></script>
+  <script src="vendor/xlsx.full.min.js"></script>
   <script>
     const act = JSON.parse(sessionStorage.getItem('classshow_activity') || '{}');
     const token = sessionStorage.getItem('teacherToken');
@@ -894,6 +1053,7 @@
     let quarantineGroupFilter = readQuarantinePreference('group', '').trim();
     let dashboardBaseTitle = '教师后台 - ClassShow';
     let lastQuarantineExpiryReminderKey = '';
+    let pendingQuarantinePurgePreview = null;
 
     const toggleMeta = {
       upload_open: { label: '上传入口', note: '控制学生是否还能继续上传或替换作品。' },
@@ -1677,6 +1837,92 @@
       toast(`已导出当前筛选结果 ${rows.length} 条`, 'success');
     }
 
+    function getQuarantineStatusLabel(item) {
+      if (item?.purge_allowed) return '已超期';
+      if (isQuarantineDueToday(item)) return '今天到期';
+      return '保留锁定';
+    }
+
+    function getQuarantineExportRows(rows = getFilteredQuarantinedRows()) {
+      return rows.map(item => {
+        const user = item?.users || {};
+        return {
+          '作品标题': item?.title || '',
+          '姓名': user.name || '',
+          '学号': user.student_id || '',
+          '班级': getQuarantineFacetLabel(user.class_name, '未分班'),
+          '小组': getQuarantineFacetLabel(user.group_name, '未分组'),
+          '作品类型': item?.media_type === 'video' ? '视频' : '图片',
+          '上传时间': formatBangkokTime(item?.upload_time),
+          '隔离时间': formatBangkokTime(item?.quarantined_at),
+          '当前状态': getQuarantineStatusLabel(item),
+          '可恢复': canRestoreQuarantinedItem(item) ? '是' : '否',
+          '主存路径': item?.storage_path || '',
+          '归档状态': item?.archive_status || '',
+          '归档异常': item?.archive_error || ''
+        };
+      });
+    }
+
+    function getQuarantineExportTimestamp() {
+      return formatDateTime(new Date()).replace(/[^\d]/g, '').slice(0, 14) || String(Date.now());
+    }
+
+    function exportFilteredQuarantinedCsv() {
+      const rows = getFilteredQuarantinedRows();
+      if (!rows.length) return toast('当前筛选结果为空，暂无可导出的回收区作品', 'error');
+      const exportRows = getQuarantineExportRows(rows);
+      const headers = Object.keys(exportRows[0] || {});
+      const csvRows = exportRows.map(row => headers.map(header => escapeCsvCell(row[header] || '')).join(','));
+      const csv = '\uFEFF' + [headers.map(escapeCsvCell).join(','), ...csvRows].join('\r\n');
+      downloadBlobFile(
+        new Blob([csv], { type: 'text/csv;charset=utf-8;' }),
+        `quarantine_filtered_${actId || 'activity'}_${getQuarantineExportTimestamp()}.csv`
+      );
+      toast(`已导出当前筛选结果 ${rows.length} 条 CSV`, 'success');
+    }
+
+    function exportFilteredQuarantinedWorkbook() {
+      const rows = getFilteredQuarantinedRows();
+      if (!rows.length) return toast('当前筛选结果为空，暂无可导出的回收区作品', 'error');
+      if (!window.XLSX) {
+        exportFilteredQuarantinedCsv();
+        return toast('Excel 导出组件未就绪，已回退为 CSV 导出', 'error');
+      }
+
+      const exportRows = getQuarantineExportRows(rows);
+      const workbook = XLSX.utils.book_new();
+      const detailSheet = XLSX.utils.json_to_sheet(exportRows);
+      detailSheet['!cols'] = [
+        { wch: 28 }, { wch: 12 }, { wch: 16 }, { wch: 14 }, { wch: 14 },
+        { wch: 10 }, { wch: 22 }, { wch: 22 }, { wch: 12 }, { wch: 10 },
+        { wch: 34 }, { wch: 14 }, { wch: 24 }
+      ];
+      const summarySheet = XLSX.utils.aoa_to_sheet([
+        ['活动名称', dashboardSummary?.activity?.activity_name || actId || ''],
+        ['导出时间', formatBangkokTime(new Date())],
+        ['时间筛选', quarantineFilter === 'today' ? '今天到期' : (quarantineFilter === 'overdue' ? '已超期' : '全部')],
+        ['只看可恢复', quarantineRecoverableOnly ? '是' : '否'],
+        ['班级筛选', quarantineClassFilter || '全部'],
+        ['小组筛选', quarantineGroupFilter || '全部'],
+        ['搜索关键词', quarantineSearchQuery || '（空）'],
+        ['导出条数', rows.length]
+      ]);
+      summarySheet['!cols'] = [{ wch: 16 }, { wch: 40 }];
+      XLSX.utils.book_append_sheet(workbook, summarySheet, '导出说明');
+      XLSX.utils.book_append_sheet(workbook, detailSheet, '回收区结果');
+      const xlsxBlob = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+      downloadBlobFile(
+        new Blob([xlsxBlob], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+        `quarantine_filtered_${actId || 'activity'}_${getQuarantineExportTimestamp()}.xlsx`
+      );
+      toast(`已导出当前筛选结果 ${rows.length} 条 Excel`, 'success');
+    }
+
+    function exportFilteredQuarantinedSubmissions() {
+      exportFilteredQuarantinedWorkbook();
+    }
+
     function renderMissingMedia(summary) {
       const report = summary.missing_media || {};
       const rows = Array.isArray(report.items) ? report.items : [];
@@ -1783,7 +2029,9 @@
       const metaBox = document.getElementById('quarantineMeta');
       const listBox = document.getElementById('quarantineList');
       const restoreBtn = document.getElementById('batchRestoreQuarantineBtn');
-      const exportBtn = document.getElementById('exportQuarantineCsvBtn');
+      const exportXlsxBtn = document.getElementById('exportQuarantineXlsxBtn');
+      const exportCsvBtn = document.getElementById('exportQuarantineCsvBtn');
+      const exportBtn = exportCsvBtn;
       const purgeBtn = document.getElementById('batchPurgeQuarantineBtn');
       const filterBar = document.getElementById('quarantineFilterBar');
       const recoverableBtn = document.getElementById('quarantineRecoverableToggleBtn');
@@ -1818,7 +2066,8 @@
 
       summaryBadge.textContent = rows.length ? `${rows.length} 项待确认` : '回收区为空';
       if (restoreBtn) restoreBtn.disabled = filteredRestoreCount === 0;
-      if (exportBtn) exportBtn.disabled = filteredRows.length === 0;
+      if (exportXlsxBtn) exportXlsxBtn.disabled = filteredRows.length === 0;
+      if (exportCsvBtn) exportCsvBtn.disabled = filteredRows.length === 0;
       if (purgeBtn) purgeBtn.disabled = filteredPurgeReadyCount === 0;
       if (filterBar) {
         filterBar.querySelectorAll('[data-quarantine-filter]').forEach(btn => {
@@ -1838,6 +2087,10 @@
       }
       if (restoreBtn) restoreBtn.textContent = `按当前结果批量恢复 ${filteredRestoreCount}`;
       if (exportBtn) exportBtn.textContent = `导出当前结果 ${filteredRows.length}`;
+      if (purgeBtn) purgeBtn.textContent = `按当前结果批量彻底删除 ${filteredPurgeReadyCount}`;
+      if (restoreBtn) restoreBtn.textContent = `按当前结果批量恢复 ${filteredRestoreCount}`;
+      if (exportXlsxBtn) exportXlsxBtn.textContent = `导出 Excel ${filteredRows.length}`;
+      if (exportCsvBtn) exportCsvBtn.textContent = `导出 CSV ${filteredRows.length}`;
       if (purgeBtn) purgeBtn.textContent = `按当前结果批量彻底删除 ${filteredPurgeReadyCount}`;
       if (searchInput && searchInput.value !== quarantineSearchQuery) searchInput.value = quarantineSearchQuery;
       if (searchClearBtn) searchClearBtn.disabled = !quarantineSearchQuery;
@@ -2399,6 +2652,189 @@
       }
     }
 
+    function closeQuarantinePurgePreview() {
+      pendingQuarantinePurgePreview = null;
+      const overlay = document.getElementById('quarantinePurgePreviewOverlay');
+      const body = document.getElementById('quarantinePurgePreviewBody');
+      const summary = document.getElementById('quarantinePurgePreviewSummary');
+      const lockedNote = document.getElementById('quarantinePurgePreviewLockedNote');
+      const confirmBtn = document.getElementById('confirmQuarantinePurgeBtn');
+      if (overlay) overlay.hidden = true;
+      if (body) {
+        body.innerHTML = '<tr><td colspan="5" style="color:var(--text-muted);">暂无可预览的回收区作品。</td></tr>';
+      }
+      if (summary) summary.innerHTML = '';
+      if (lockedNote) {
+        lockedNote.hidden = true;
+        lockedNote.textContent = '';
+      }
+      if (confirmBtn) {
+        confirmBtn.disabled = false;
+        confirmBtn.textContent = '确认彻底删除';
+      }
+    }
+
+    function openQuarantinePurgePreview(purgeableRows, lockedRows = [], options = {}) {
+      const rows = Array.isArray(purgeableRows) ? purgeableRows.filter(Boolean) : [];
+      const skippedRows = Array.isArray(lockedRows) ? lockedRows.filter(Boolean) : [];
+      if (!rows.length) {
+        const lockedNote = skippedRows.length ? `，另有 ${skippedRows.length} 条仍在保留期内` : '';
+        return toast(`当前没有可彻底删除的回收区作品${lockedNote}`, 'error');
+      }
+
+      const overlay = document.getElementById('quarantinePurgePreviewOverlay');
+      const title = document.getElementById('quarantinePurgePreviewTitle');
+      const description = document.getElementById('quarantinePurgePreviewDescription');
+      const summary = document.getElementById('quarantinePurgePreviewSummary');
+      const lockedNote = document.getElementById('quarantinePurgePreviewLockedNote');
+      const body = document.getElementById('quarantinePurgePreviewBody');
+      const confirmBtn = document.getElementById('confirmQuarantinePurgeBtn');
+      if (!overlay || !summary || !body || !confirmBtn) return;
+
+      pendingQuarantinePurgePreview = {
+        submissionIds: rows.map(item => item.id).filter(Boolean),
+        lockedCount: skippedRows.length,
+        triggerButtonId: options.triggerButtonId || '',
+        singleMode: !!options.singleMode
+      };
+
+      if (title) title.textContent = options.singleMode ? '彻底删除预览' : '批量彻底删除预览';
+      if (description) {
+        description.textContent = options.singleMode
+          ? '请先核对这条作品与学生信息，确认后再永久删除。'
+          : '请先核对当前筛选命中的作品名单，再决定是否执行永久删除。';
+      }
+
+      summary.innerHTML = [
+        `待删除 ${rows.length} 项`,
+        `时间筛选 ${quarantineFilter === 'today' ? '今天到期' : (quarantineFilter === 'overdue' ? '已超期' : '全部')}`,
+        `班级 ${quarantineClassFilter || '全部'}`,
+        `小组 ${quarantineGroupFilter || '全部'}`,
+        `搜索 ${quarantineSearchQuery || '（空）'}`
+      ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+
+      if (lockedNote) {
+        if (skippedRows.length) {
+          lockedNote.hidden = false;
+          lockedNote.textContent = `另外 ${skippedRows.length} 条作品仍在保留期内，本次只会删除已到期作品。`;
+        } else {
+          lockedNote.hidden = true;
+          lockedNote.textContent = '';
+        }
+      }
+
+      body.innerHTML = rows.map(item => {
+        const user = item?.users || {};
+        const statusText = item?.purge_allowed ? '已超期，可删除' : (isQuarantineDueToday(item) ? '今天到期' : '保留锁定');
+        const recoverableText = canRestoreQuarantinedItem(item) ? '可恢复' : '仅删除记录';
+        const unlockText = item?.purge_unlock_at ? `解锁 ${formatBangkokTime(item.purge_unlock_at)}` : '';
+        return `
+          <tr>
+            <td>
+              <strong>${escapeHtml(item?.title || '未命名作品')}</strong>
+              <small>${escapeHtml(item?.media_type === 'video' ? '视频' : '图片')} · ${escapeHtml(item?.storage_path || '无主存路径')}</small>
+            </td>
+            <td>
+              <strong>${escapeHtml(user.name || '未实名')}</strong>
+              <small>${escapeHtml(user.student_id || '无学号')}</small>
+            </td>
+            <td>
+              ${escapeHtml(getQuarantineFacetLabel(user.class_name, '未分班'))}
+              <small>${escapeHtml(getQuarantineFacetLabel(user.group_name, '未分组'))}</small>
+            </td>
+            <td>
+              ${escapeHtml(statusText)}
+              <small>${escapeHtml(recoverableText)}</small>
+            </td>
+            <td>
+              ${escapeHtml(formatBangkokTime(item?.quarantined_at))}
+              <small>${escapeHtml(unlockText || '-')}</small>
+            </td>
+          </tr>
+        `;
+      }).join('');
+
+      confirmBtn.disabled = false;
+      confirmBtn.textContent = options.singleMode ? '确认删除这条作品' : `确认彻底删除 ${rows.length} 项`;
+      overlay.hidden = false;
+    }
+
+    async function executeQuarantinePurgeRows(submissionIds, lockedCount = 0, options = {}) {
+      const ids = Array.isArray(submissionIds) ? submissionIds.filter(Boolean) : [];
+      if (!ids.length) return;
+
+      const btn = options.buttonId ? document.getElementById(options.buttonId) : null;
+      const originalText = btn?.textContent || '';
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = options.loadingText || '删除中...';
+      }
+      try {
+        const result = await api('/teacher/quarantined-submissions-purge', {
+          method: 'POST',
+          body: JSON.stringify({
+            activity_id: actId,
+            submission_ids: ids
+          })
+        });
+        closeQuarantinePurgePreview();
+        await reloadDashboard();
+        const removed = Number(result?.removed_count || 0);
+        const skipped = Array.isArray(result?.skipped_ids) ? result.skipped_ids.length : 0;
+        const failed = Array.isArray(result?.failed) ? result.failed.length : 0;
+        const locked = Number(result?.locked_count || 0) + Number(lockedCount || 0);
+        const lockedSuffix = locked ? `，保留锁定 ${locked} 项` : '';
+        const successPrefix = options.singleMode ? '彻底删除完成' : '批量彻底删除完成';
+        toast(`${successPrefix}：成功 ${removed} 项，跳过 ${skipped} 项，失败 ${failed} 项${lockedSuffix}`, failed ? 'error' : 'success');
+      } catch (e) {
+        toast((options.singleMode ? '彻底删除失败：' : '批量彻底删除失败：') + e.message, 'error');
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
+      }
+    }
+
+    async function confirmQuarantinePurgePreview() {
+      const state = pendingQuarantinePurgePreview;
+      if (!state?.submissionIds?.length) {
+        closeQuarantinePurgePreview();
+        return;
+      }
+      await executeQuarantinePurgeRows(state.submissionIds, state.lockedCount, {
+        buttonId: 'confirmQuarantinePurgeBtn',
+        loadingText: state.singleMode ? '删除中...' : '批量删除中...',
+        singleMode: state.singleMode
+      });
+    }
+
+    async function deleteQuarantinedSubmissionPermanently(submissionId) {
+      submissionId = decodeURIComponent(submissionId || '');
+      if (!submissionId) return;
+      const row = getQuarantinedRows().find(item => item.id === submissionId);
+      if (!row) return toast('未找到这条回收区作品记录', 'error');
+      if (!row.purge_allowed) {
+        const remaining = formatRetentionDuration(row.remaining_retention_ms);
+        const unlockAt = row.purge_unlock_at ? `，解锁时间 ${formatDateTime(row.purge_unlock_at)}` : '';
+        return toast(`该作品仍在回收保护期内，还需保留 ${remaining}${unlockAt}`, 'error');
+      }
+      openQuarantinePurgePreview([row], [], {
+        singleMode: true,
+        triggerButtonId: 'confirmQuarantinePurgeBtn'
+      });
+    }
+
+    async function batchPurgeQuarantinedSubmissions() {
+      const rows = getFilteredQuarantinedRows();
+      const purgeableRows = rows.filter(item => item.purge_allowed);
+      const lockedRows = rows.filter(item => !item.purge_allowed);
+      openQuarantinePurgePreview(purgeableRows, lockedRows, {
+        singleMode: false,
+        triggerButtonId: 'confirmQuarantinePurgeBtn'
+      });
+    }
+
     async function downloadActivitySnapshot() {
       const btn = document.getElementById('downloadSnapshotBtn');
       if (!btn) return;
@@ -2718,6 +3154,12 @@
     }
 
     document.getElementById('missingMediaRepairInput')?.addEventListener('change', repairSelectedMediaFile);
+    document.getElementById('quarantinePurgePreviewOverlay')?.addEventListener('click', (event) => {
+      if (event.target?.id === 'quarantinePurgePreviewOverlay') closeQuarantinePurgePreview();
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && pendingQuarantinePurgePreview) closeQuarantinePurgePreview();
+    });
 
     reloadDashboard();
     setInterval(() => reloadDashboard(false), 20000);

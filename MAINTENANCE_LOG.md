@@ -1,5 +1,13 @@
 # ClassShow 维护日志
 
+## 2026-05-09
+### Quarantine Purge Preview and Excel Export
+- Added a recycle-bin purge preview modal. Teachers now see the exact title, student, class, group, status, and quarantine time for the current filtered result set before any permanent delete is submitted.
+- Batch permanent delete no longer jumps straight from filter selection to irreversible deletion. The preview layer reduces accidental cleanup risk when the teacher is filtering by class or group.
+- Added native `.xlsx` export for the current recycle-bin result set, using a browser-side SheetJS bundle served from `public/vendor/xlsx.full.min.js`.
+- The Excel workbook includes two sheets: `导出说明` and `回收区结果`, so teachers can archive both the filtered data and the filter context used at export time.
+- Kept CSV export as a parallel fallback/export option, so the teacher can choose quick plain-text export or formatted Excel archive as needed.
+
 ## 2026-05-08
 ### Quarantine Class/Group Filters and Export
 - Added recycle-bin secondary filters for `class` and `group`, populated from the currently loaded quarantined works. Teachers can now narrow the recycle list by organizational slice before acting.
