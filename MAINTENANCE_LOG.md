@@ -1,6 +1,15 @@
 # ClassShow 维护日志
 
 ## 2026-05-09
+### Restore Point and Learning Engagement Upgrade
+- Created restore branch and tag `restore-2026-05-09-pre-engagement-upgrade` at commit `62fbb072152fa3251789e4253fe4d1b70ac6c128`, so future changes can be rolled back to the pre-engagement stable version.
+- Added `RESTORE_POINTS.md` with rollback commands and operating cautions.
+- Added `ARCHITECTURE_REVIEW_2026-05-09.md` documenting current architecture, risks, completed remediation, and next recommended upgrades.
+- Added a `student_learning_sessions` schema block to `upgrade_v4.sql` for online learning duration tracking.
+- Added student learning heartbeat and summary APIs. The APIs fail gracefully when the SQL migration has not been run, so core upload/rating/comment flows are not blocked.
+- Added a student-side “学习力竞技场” panel with personal online duration, personal rank, engagement score, group rank, individual leaderboard, and group leaderboard.
+- Enabled learning heartbeats on gallery, upload, and work-detail pages to measure active study time across real student behavior.
+
 ### Quarantine Purge Preview and Excel Export
 - Added a recycle-bin purge preview modal. Teachers now see the exact title, student, class, group, status, and quarantine time for the current filtered result set before any permanent delete is submitted.
 - Batch permanent delete no longer jumps straight from filter selection to irreversible deletion. The preview layer reduces accidental cleanup risk when the teacher is filtering by class or group.

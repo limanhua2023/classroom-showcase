@@ -41,6 +41,8 @@ const FEEDBACK_HISTORY_SCAN_LIMIT = 100;
 const FEEDBACK_MIN_MEANINGFUL_CHARS = 3;
 const DEFAULT_FEEDBACK_DAILY_LIMIT = 5;
 const MAX_FEEDBACK_DAILY_LIMIT = 20;
+const LEARNING_HEARTBEAT_MAX_DELTA_SECONDS = Math.max(30, Number(process.env.LEARNING_HEARTBEAT_MAX_DELTA_SECONDS || 120));
+const LEARNING_LEADERBOARD_LIMIT = Math.max(5, Number(process.env.LEARNING_LEADERBOARD_LIMIT || 12));
 const BANGKOK_UTC_OFFSET_MS = 7 * 60 * 60 * 1000;
 const WITHDRAWN_FEEDBACK_PREFIX = '__WITHDRAWN__::';
 const TMP_UPLOAD_MAX_AGE_MS = 6 * 60 * 60 * 1000;
@@ -3323,6 +3325,264 @@ async function studentAuth(req, res, next) {
   req.studentActivityId = activityId;
   next();
 }
+
+function normalizeLearningSessionToken(input) {
+  const value = String(input || '').trim().replace(/[^a-zA-Z0-9_.:-]/g, '');
+  return value.slice(0, 120);
+}
+
+function isLearningSchemaError(message = '') {
+  return /student_learning_sessions|active_seconds|session_token|schema cache|does not exist/i.test(String(message || ''));
+}
+
+function learningMinutes(seconds = 0) {
+  return Math.round((Number(seconds || 0) / 60) * 10) / 10;
+}
+
+function rankLearningRows(rows, primaryKey = 'active_seconds') {
+  const sorted = rows.slice().sort((a, b) => {
+    const primary = Number(b[primaryKey] || 0) - Number(a[primaryKey] || 0);
+    if (primary) return primary;
+    const score = Number(b.engagement_score || 0) - Number(a.engagement_score || 0);
+    if (score) return score;
+    return String(a.student_id || '').localeCompare(String(b.student_id || ''), 'zh-CN');
+  });
+  sorted.forEach((row, index) => { row.rank = index + 1; });
+  return sorted;
+}
+
+async function buildLearningEngagementSummary(activityId, viewerUserId = null) {
+  let [
+    usersResult,
+    sessionsResult,
+    submissionsResult,
+    ratingsResult,
+    commentsResult,
+    viewsResult
+  ] = await Promise.all([
+    supabase.from('users')
+      .select('id,name,student_id,class_name,group_name,created_at')
+      .eq('activity_id', activityId),
+    supabase.from('student_learning_sessions')
+      .select('user_id,active_seconds,last_seen_at')
+      .eq('activity_id', activityId),
+    supabase.from('submissions')
+      .select('id,user_id,average_rating,rating_count,view_count,status')
+      .eq('activity_id', activityId)
+      .eq('status', 'visible'),
+    supabase.from('ratings')
+      .select('id,submission_id,rater_user_id,score')
+      .eq('activity_id', activityId),
+    supabase.from('comments')
+      .select('id,submission_id,user_id,content')
+      .eq('activity_id', activityId),
+    supabase.from('views')
+      .select('id,submission_id,viewer_user_id,is_valid')
+      .eq('activity_id', activityId)
+  ]);
+
+  if (usersResult.error) throw usersResult.error;
+  if (submissionsResult.error) throw submissionsResult.error;
+  const submissionIds = (submissionsResult.data || []).map(item => item.id).filter(Boolean);
+  if (ratingsResult.error && /activity_id/i.test(ratingsResult.error.message || '') && submissionIds.length) {
+    ratingsResult = await supabase.from('ratings')
+      .select('id,submission_id,rater_user_id,score')
+      .in('submission_id', submissionIds);
+  }
+  if (commentsResult.error && /activity_id/i.test(commentsResult.error.message || '') && submissionIds.length) {
+    commentsResult = await supabase.from('comments')
+      .select('id,submission_id,user_id,content')
+      .in('submission_id', submissionIds);
+  }
+  if (viewsResult.error && /activity_id/i.test(viewsResult.error.message || '') && submissionIds.length) {
+    viewsResult = await supabase.from('views')
+      .select('id,submission_id,viewer_user_id,is_valid')
+      .in('submission_id', submissionIds);
+  }
+  if (ratingsResult.error) throw ratingsResult.error;
+  if (viewsResult.error) throw viewsResult.error;
+
+  let schemaReady = true;
+  let sessions = sessionsResult.data || [];
+  if (sessionsResult.error) {
+    if (isLearningSchemaError(sessionsResult.error.message)) {
+      schemaReady = false;
+      sessions = [];
+    } else {
+      throw sessionsResult.error;
+    }
+  }
+
+  const users = usersResult.data || [];
+  const submissions = submissionsResult.data || [];
+  const ratings = ratingsResult.data || [];
+  const comments = commentsResult.error ? [] : (commentsResult.data || []);
+  const views = viewsResult.data || [];
+
+  const secondsByUser = new Map();
+  const lastSeenByUser = new Map();
+  sessions.forEach(row => {
+    const key = String(row.user_id || '');
+    if (!key) return;
+    secondsByUser.set(key, (secondsByUser.get(key) || 0) + Number(row.active_seconds || 0));
+    const seenAt = row.last_seen_at ? new Date(row.last_seen_at).getTime() : 0;
+    if (seenAt > (lastSeenByUser.get(key) || 0)) lastSeenByUser.set(key, seenAt);
+  });
+
+  const workCountByUser = new Map();
+  const receivedRatingCountByUser = new Map();
+  const receivedScoreSumByUser = new Map();
+  const viewCountByUser = new Map();
+  submissions.forEach(row => {
+    const owner = String(row.user_id || '');
+    if (!owner) return;
+    workCountByUser.set(owner, (workCountByUser.get(owner) || 0) + 1);
+    receivedRatingCountByUser.set(owner, (receivedRatingCountByUser.get(owner) || 0) + Number(row.rating_count || 0));
+    receivedScoreSumByUser.set(owner, (receivedScoreSumByUser.get(owner) || 0) + (Number(row.average_rating || 0) * Number(row.rating_count || 0)));
+    viewCountByUser.set(owner, (viewCountByUser.get(owner) || 0) + Number(row.view_count || 0));
+  });
+
+  const givenRatingsByUser = new Map();
+  ratings.forEach(row => {
+    const key = String(row.rater_user_id || '');
+    if (!key) return;
+    givenRatingsByUser.set(key, (givenRatingsByUser.get(key) || 0) + 1);
+  });
+
+  const givenCommentsByUser = new Map();
+  comments
+    .filter(row => row.submission_id && !isWithdrawnFeedbackContent(row.content))
+    .forEach(row => {
+      const key = String(row.user_id || '');
+      if (!key) return;
+      givenCommentsByUser.set(key, (givenCommentsByUser.get(key) || 0) + 1);
+    });
+
+  const validViewsByUser = new Map();
+  views
+    .filter(row => row.is_valid !== false)
+    .forEach(row => {
+      const key = String(row.viewer_user_id || '');
+      if (!key) return;
+      validViewsByUser.set(key, (validViewsByUser.get(key) || 0) + 1);
+    });
+
+  const individualRows = users.map(user => {
+    const key = String(user.id || '');
+    const activeSeconds = Number(secondsByUser.get(key) || 0);
+    const ratingCount = Number(receivedRatingCountByUser.get(key) || 0);
+    const scoreSum = Number(receivedScoreSumByUser.get(key) || 0);
+    const averageReceivedScore = ratingCount > 0 ? Math.round((scoreSum / ratingCount) * 100) / 100 : 0;
+    const workCount = Number(workCountByUser.get(key) || 0);
+    const ratingsGiven = Number(givenRatingsByUser.get(key) || 0);
+    const commentsGiven = Number(givenCommentsByUser.get(key) || 0);
+    const viewsGiven = Number(validViewsByUser.get(key) || 0);
+    const engagementScore = Math.round((
+      learningMinutes(activeSeconds) +
+      workCount * 25 +
+      ratingsGiven * 3 +
+      commentsGiven * 5 +
+      viewsGiven * 1.5 +
+      averageReceivedScore * 8
+    ) * 10) / 10;
+    return {
+      user_id: key,
+      name: user.name || '',
+      student_id: user.student_id || '',
+      class_name: user.class_name || '',
+      group_name: user.group_name || '未分组',
+      active_seconds: activeSeconds,
+      active_minutes: learningMinutes(activeSeconds),
+      last_seen_at: lastSeenByUser.get(key) ? new Date(lastSeenByUser.get(key)).toISOString() : null,
+      work_count: workCount,
+      ratings_given: ratingsGiven,
+      comments_given: commentsGiven,
+      views_given: viewsGiven,
+      received_rating_count: ratingCount,
+      received_average_score: averageReceivedScore,
+      engagement_score: engagementScore
+    };
+  });
+
+  const rankedIndividuals = rankLearningRows(individualRows, 'active_seconds');
+  const groupMap = new Map();
+  rankedIndividuals.forEach(row => {
+    const groupKey = `${row.class_name || '未分班'}::${row.group_name || '未分组'}`;
+    if (!groupMap.has(groupKey)) {
+      groupMap.set(groupKey, {
+        group_key: groupKey,
+        class_name: row.class_name || '未分班',
+        group_name: row.group_name || '未分组',
+        member_count: 0,
+        active_seconds: 0,
+        work_count: 0,
+        ratings_given: 0,
+        comments_given: 0,
+        views_given: 0,
+        received_rating_count: 0,
+        received_score_sum: 0,
+        engagement_score: 0
+      });
+    }
+    const group = groupMap.get(groupKey);
+    group.member_count += 1;
+    group.active_seconds += Number(row.active_seconds || 0);
+    group.work_count += Number(row.work_count || 0);
+    group.ratings_given += Number(row.ratings_given || 0);
+    group.comments_given += Number(row.comments_given || 0);
+    group.views_given += Number(row.views_given || 0);
+    group.received_rating_count += Number(row.received_rating_count || 0);
+    group.received_score_sum += Number(row.received_average_score || 0) * Number(row.received_rating_count || 0);
+    group.engagement_score += Number(row.engagement_score || 0);
+  });
+
+  const groupRows = Array.from(groupMap.values()).map(group => ({
+    ...group,
+    active_minutes: learningMinutes(group.active_seconds),
+    received_average_score: group.received_rating_count > 0
+      ? Math.round((group.received_score_sum / group.received_rating_count) * 100) / 100
+      : 0,
+    engagement_score: Math.round(group.engagement_score * 10) / 10,
+    received_score_sum: undefined
+  }));
+  const rankedGroups = rankLearningRows(groupRows, 'engagement_score');
+  const me = viewerUserId
+    ? rankedIndividuals.find(row => String(row.user_id) === String(viewerUserId)) || null
+    : null;
+
+  return {
+    schema_ready: schemaReady,
+    generated_at: new Date().toISOString(),
+    my: me,
+    leaderboard: rankedIndividuals.slice(0, LEARNING_LEADERBOARD_LIMIT),
+    group_leaderboard: rankedGroups.slice(0, LEARNING_LEADERBOARD_LIMIT),
+    totals: {
+      active_seconds: rankedIndividuals.reduce((sum, row) => sum + Number(row.active_seconds || 0), 0),
+      active_minutes: learningMinutes(rankedIndividuals.reduce((sum, row) => sum + Number(row.active_seconds || 0), 0)),
+      tracked_students: rankedIndividuals.filter(row => Number(row.active_seconds || 0) > 0).length,
+      student_count: rankedIndividuals.length,
+      group_count: rankedGroups.length
+    }
+  };
+}
+
+function emptyLearningEngagementSummary(error = null) {
+  return {
+    schema_ready: false,
+    error: error ? String(error.message || error) : null,
+    generated_at: new Date().toISOString(),
+    my: null,
+    leaderboard: [],
+    group_leaderboard: [],
+    totals: {
+      active_seconds: 0,
+      active_minutes: 0,
+      tracked_students: 0,
+      student_count: 0,
+      group_count: 0
+    }
+  };
+}
 // ─── ACTIVITIES ───
 app.post('/api/activities', async (req, res) => {
   try {
@@ -4508,6 +4768,102 @@ app.get('/api/ratings/my', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// ─── STUDENT LEARNING ENGAGEMENT ───
+app.post('/api/student/learning/heartbeat', studentAuth, async (req, res) => {
+  try {
+    const activityId = String(req.body.activity_id ?? '').trim();
+    const userId = String(req.body.user_id ?? '').trim();
+    const sessionToken = normalizeLearningSessionToken(req.body.session_token);
+    if (!activityId || !userId || !sessionToken) {
+      return res.status(400).json({ error: 'Missing activity_id, user_id, or session_token' });
+    }
+
+    const now = Date.now();
+    const nowIso = new Date(now).toISOString();
+    const active = req.body.active !== false;
+    const pagePath = sanitizeText(req.body.page_path || '', 240);
+    const userAgent = sanitizeText(req.headers['user-agent'] || '', 400);
+
+    const { data: existing, error: findError } = await supabase.from('student_learning_sessions')
+      .select('id,active_seconds,last_seen_at')
+      .eq('activity_id', activityId)
+      .eq('user_id', userId)
+      .eq('session_token', sessionToken)
+      .maybeSingle();
+
+    if (findError) {
+      if (isLearningSchemaError(findError.message)) {
+        return res.json({ ok: false, schema_ready: false, error: 'Learning session schema is not ready. Run upgrade_v4.sql first.' });
+      }
+      throw findError;
+    }
+
+    if (!existing) {
+      const { data, error } = await supabase.from('student_learning_sessions').insert([{
+        activity_id: activityId,
+        user_id: userId,
+        session_token: sessionToken,
+        page_path: pagePath,
+        user_agent: userAgent,
+        active_seconds: 0,
+        started_at: nowIso,
+        last_seen_at: nowIso,
+        updated_at: nowIso
+      }]).select('active_seconds').single();
+      if (error) {
+        if (isLearningSchemaError(error.message)) {
+          return res.json({ ok: false, schema_ready: false, error: 'Learning session schema is not ready. Run upgrade_v4.sql first.' });
+        }
+        throw error;
+      }
+      return res.json({ ok: true, schema_ready: true, added_seconds: 0, total_seconds: Number(data?.active_seconds || 0) });
+    }
+
+    const lastSeen = existing.last_seen_at ? new Date(existing.last_seen_at).getTime() : now;
+    const rawDelta = Math.max(0, Math.floor((now - lastSeen) / 1000));
+    const addedSeconds = active ? Math.min(rawDelta, LEARNING_HEARTBEAT_MAX_DELTA_SECONDS) : 0;
+    const totalSeconds = Math.max(0, Number(existing.active_seconds || 0) + addedSeconds);
+    const { data, error } = await supabase.from('student_learning_sessions')
+      .update({
+        active_seconds: totalSeconds,
+        last_seen_at: nowIso,
+        updated_at: nowIso,
+        page_path: pagePath,
+        user_agent: userAgent
+      })
+      .eq('id', existing.id)
+      .select('active_seconds')
+      .single();
+    if (error) throw error;
+    res.json({ ok: true, schema_ready: true, added_seconds: addedSeconds, total_seconds: Number(data?.active_seconds || totalSeconds) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/student/learning/summary', async (req, res) => {
+  try {
+    const activityId = String(req.query.activity_id ?? '').trim();
+    const userId = String(req.query.user_id ?? '').trim();
+    if (!activityId || !userId) return res.status(400).json({ error: 'Missing activity_id or user_id' });
+
+    const auth = await validateStudentToken({
+      token: req.headers['x-user-token'],
+      userId,
+      activityId
+    });
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const summary = await buildLearningEngagementSummary(activityId, userId);
+    res.json(summary);
+  } catch (e) {
+    if (isLearningSchemaError(e.message)) {
+      return res.json(emptyLearningEngagementSummary('Learning session schema is not ready. Run upgrade_v4.sql first.'));
+    }
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ─── COMMENTS ───
 app.post('/api/comments', studentAuth, async (req, res) => {
   try {
@@ -5210,7 +5566,8 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
       rosterResult,
       storageSummary,
       latestFeedback,
-      hotFeedback
+      hotFeedback,
+      learningEngagement
     ] = await Promise.all([
       fetchActivityById(activity_id),
       supabase.from('users')
@@ -5233,7 +5590,8 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
         .order('student_id', { ascending: true }),
       getCachedStorageSummary(activity_id),
       listActivityFeedback({ activityId: activity_id, sort: 'latest', includeUsers: true, limit: 5 }).catch(() => ({ likes_enabled: false, items: [] })),
-      listActivityFeedback({ activityId: activity_id, sort: 'hot', includeUsers: true, limit: 5 }).catch(() => ({ likes_enabled: false, items: [] }))
+      listActivityFeedback({ activityId: activity_id, sort: 'hot', includeUsers: true, limit: 5 }).catch(() => ({ likes_enabled: false, items: [] })),
+      buildLearningEngagementSummary(activity_id).catch(error => emptyLearningEngagementSummary(error))
     ]);
 
     if (activityResult.error) throw activityResult.error;
@@ -5470,6 +5828,7 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
       },
       latest_feedback: latestFeedback.items || [],
       hot_feedback: hotFeedback.items || [],
+      learning_engagement: learningEngagement,
       feedback_likes_enabled: !!(latestFeedback.likes_enabled || hotFeedback.likes_enabled || feedbackLikesEnabled)
     });
   } catch (e) {

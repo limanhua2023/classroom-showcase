@@ -169,6 +169,83 @@ where not exists (
   select 1 from views v where v.submission_id = s.id and v.is_valid = true
 );
 
+-- Student learning-time sessions for engagement and group leaderboards.
+create table if not exists student_learning_sessions (
+  id uuid primary key default gen_random_uuid(),
+  activity_id uuid references activities(id) on delete cascade not null,
+  user_id uuid references users(id) on delete cascade not null,
+  session_token text not null,
+  page_path text,
+  user_agent text,
+  active_seconds integer default 0,
+  started_at timestamptz default now(),
+  last_seen_at timestamptz default now(),
+  created_at timestamptz default now(),
+  updated_at timestamptz default now(),
+  unique(activity_id, user_id, session_token)
+);
+
+alter table student_learning_sessions add column if not exists page_path text;
+alter table student_learning_sessions add column if not exists user_agent text;
+alter table student_learning_sessions add column if not exists active_seconds integer default 0;
+alter table student_learning_sessions add column if not exists started_at timestamptz default now();
+alter table student_learning_sessions add column if not exists last_seen_at timestamptz default now();
+alter table student_learning_sessions add column if not exists created_at timestamptz default now();
+alter table student_learning_sessions add column if not exists updated_at timestamptz default now();
+
+update student_learning_sessions
+set active_seconds = 0
+where active_seconds is null;
+
+with ranked as (
+  select id,
+         row_number() over (
+           partition by activity_id, user_id, session_token
+           order by updated_at desc nulls last, last_seen_at desc nulls last, id
+         ) as rn
+  from student_learning_sessions
+)
+delete from student_learning_sessions s
+using ranked x
+where s.id = x.id and x.rn > 1;
+
+create unique index if not exists student_learning_sessions_activity_user_token_uidx
+  on student_learning_sessions(activity_id, user_id, session_token);
+
+create index if not exists student_learning_sessions_activity_user_idx
+  on student_learning_sessions(activity_id, user_id);
+
+create index if not exists student_learning_sessions_activity_seconds_idx
+  on student_learning_sessions(activity_id, active_seconds desc);
+
+create index if not exists student_learning_sessions_last_seen_idx
+  on student_learning_sessions(last_seen_at desc);
+
+grant select, insert, update, delete on table public.student_learning_sessions to anon, authenticated, service_role;
+
+alter table public.student_learning_sessions no force row level security;
+alter table public.student_learning_sessions disable row level security;
+
+do $$
+begin
+  if exists (
+    select 1
+    from pg_policies
+    where schemaname = 'public'
+      and tablename = 'student_learning_sessions'
+      and policyname = 'student_learning_sessions_server_access'
+  ) then
+    drop policy student_learning_sessions_server_access on public.student_learning_sessions;
+  end if;
+end $$;
+
+create policy student_learning_sessions_server_access
+  on public.student_learning_sessions
+  for all
+  to anon, authenticated
+  using (true)
+  with check (true);
+
 -- Likes for display-page feedback suggestions.
 create table if not exists activity_feedback_likes (
   id uuid primary key default gen_random_uuid(),
