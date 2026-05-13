@@ -1,5 +1,17 @@
 # ClassShow 维护日志
 
+## 2026-05-14
+### Production Cleanup for DPU139
+- Created a pre-cleanup cloud backup snapshot for activity `DPU139` and archived it to Google Drive before deleting any live data.
+- Snapshot ID: `20260514_002312`
+- Snapshot SHA256: `420084499a8d3e0c96e781441ab13dfa76615dc49f162c56fa9622e427659aff`
+- Cleaned 7 confirmed source-missing submissions from the live activity. These same 7 records were also the entire `archive_failed` set, so both issue counts dropped to zero together.
+- Purged 1 already quarantined, purge-ready missing-media record from the recycle bin, leaving the recycle area clean.
+- Ran the live orphan-file cleanup endpoint and isolated 19 orphaned storage objects safely out of the active dataset.
+- Verified after cleanup that `missing_media.total_count = 0`, `missing_media.archive_failed_count = 0`, `quarantined_missing_media.total_count = 0`, and `storage.orphan_count = 0`.
+- Note: orphan cleanup currently quarantines/removes objects from active use but does not immediately reduce `usage_percent`, because the safety area still retains those bytes until a deeper storage purge policy is applied.
+- Detailed operation report saved to `CLOUD_CLEANUP_2026-05-14.md`.
+
 ## 2026-05-09
 ### Restore Point and Learning Engagement Upgrade
 - Created restore branch and tag `restore-2026-05-09-pre-engagement-upgrade` at commit `62fbb072152fa3251789e4253fe4d1b70ac6c128`, so future changes can be rolled back to the pre-engagement stable version.
