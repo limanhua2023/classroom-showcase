@@ -1034,11 +1034,14 @@ async function ensureSubmissionQuarantineTimestamp(submission = {}) {
   });
 }
 
-async function deleteSubmissionMediaManifest(submissionId) {
+async function deleteSubmissionMediaManifest(submissionId, options = {}) {
   const storagePath = createMediaManifestStoragePath(submissionId);
   if (!storagePath) return false;
   mediaManifestCache.delete(String(submissionId || ''));
-  return deleteStorageObject(storagePath);
+  return deleteStorageObject(storagePath, {
+    permanent: !!options.permanent,
+    reason: options.reason || 'submission-manifest-delete'
+  });
 }
 
 async function enrichSubmissionMediaRows(rows = []) {
@@ -1470,17 +1473,27 @@ async function listArchiveSnapshots(activityId, { limit = 6, force = false, prov
   return payload;
 }
 
-async function deleteSubmissionMedia(submission) {
+async function deleteSubmissionMedia(submission, options = {}) {
   if (!submission) return false;
+  const permanent = !!options.permanent;
   const storagePath = sanitizeStoragePath(submission.storage_path) || storagePathFromPublicUrl(submission.image_url);
   const manifest = submission.id ? await readSubmissionMediaManifest(submission.id).catch(() => null) : null;
   const normalized = normalizeSubmissionMediaManifest(submission, manifest);
   await Promise.all([
-    deleteStorageObject(storagePath),
-    deleteStorageObject(normalized.thumbnail_path),
-    deleteSubmissionMediaManifest(submission.id),
-    deleteArchiveObject(normalized.archive_key, normalized.archive_provider),
-    deleteArchiveObject(normalized.archive_thumbnail_key, normalized.archive_provider)
+    deleteStorageObject(storagePath, {
+      permanent,
+      reason: permanent ? 'submission-hard-delete' : 'submission-delete'
+    }),
+    deleteStorageObject(normalized.thumbnail_path, {
+      permanent,
+      reason: permanent ? 'thumbnail-hard-delete' : 'thumbnail-delete'
+    }),
+    deleteSubmissionMediaManifest(submission.id, {
+      permanent,
+      reason: permanent ? 'manifest-hard-delete' : 'manifest-delete'
+    }),
+    deleteArchiveObject(normalized.archive_key, normalized.archive_provider, { permanent }),
+    deleteArchiveObject(normalized.archive_thumbnail_key, normalized.archive_provider, { permanent })
   ]);
   return true;
 }
@@ -2816,6 +2829,12 @@ async function buildStorageSummary(activityId) {
     orphan_files: orphanFiles,
     orphan_count: orphanFiles.length,
     orphan_bytes: orphanFiles.reduce((sum, file) => sum + file.size, 0),
+    trash_files: trashFiles.map(file => ({
+      path: file.path,
+      name: file.name,
+      size: Number(file.metadata?.size || 0),
+      created_at: file.created_at || file.updated_at || null
+    })),
     trash_count: trashFiles.length,
     trash_bytes: trashFiles.reduce((sum, file) => sum + Number(file.metadata?.size || 0), 0),
     largest_items: largestItems,
@@ -4559,7 +4578,7 @@ app.post('/api/teacher/quarantined-submissions-purge', teacherAuth, async (req, 
       try {
         const { error: deleteError } = await supabase.from('submissions').delete().eq('id', submissionId);
         if (deleteError) throw deleteError;
-        await deleteSubmissionMedia(submission);
+        await deleteSubmissionMedia(submission, { permanent: true });
         removed_count += 1;
       } catch (error) {
         failed.push({ id: submissionId, error: String(error?.message || error || 'Permanent delete failed') });
@@ -5946,6 +5965,55 @@ app.post('/api/teacher/storage-cleanup', teacherAuth, async (req, res) => {
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/teacher/storage-trash-purge', teacherAuth, async (req, res) => {
+  try {
+    const activity_id = String(req.body.activity_id ?? req.query.activity_id ?? '').trim();
+    const confirmHardDelete = req.body?.confirm_hard_delete === true;
+    if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
+    if (!confirmHardDelete) return res.status(400).json({ error: 'Missing confirm_hard_delete=true' });
+
+    const auth = await ensureTeacherCanAccessActivity(req, activity_id);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const storageSummary = await getCachedStorageSummary(activity_id, { refresh: true });
+    const trashFiles = Array.isArray(storageSummary.trash_files) ? storageSummary.trash_files : [];
+    const paths = Array.from(new Set(trashFiles.map(item => String(item.path || '').trim()).filter(Boolean)));
+    if (!paths.length) {
+      return res.json({ ok: true, removed: 0, bytes_freed: 0, summary: storageSummary, failed: [] });
+    }
+
+    let removed = 0;
+    let bytesFreed = 0;
+    const failed = [];
+    const trashMap = new Map(trashFiles.map(item => [String(item.path || ''), Number(item.size || 0)]));
+
+    for (const filePath of paths) {
+      try {
+        if (await deleteStorageObject(filePath, { permanent: true, reason: 'teacher-trash-purge' })) {
+          removed += 1;
+          bytesFreed += trashMap.get(filePath) || 0;
+        } else {
+          failed.push({ path: filePath, error: 'Delete returned false' });
+        }
+      } catch (error) {
+        failed.push({ path: filePath, error: String(error?.message || error || 'Hard delete failed') });
+      }
+    }
+
+    invalidateActivityOpsCache(activity_id);
+    const nextSummary = await getCachedStorageSummary(activity_id, { refresh: true });
+    res.json({
+      ok: true,
+      removed,
+      bytes_freed: bytesFreed,
+      failed,
+      summary: nextSummary
+    });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
   }
 });
 

@@ -719,6 +719,7 @@
             <div style="display:flex;flex-wrap:wrap;gap:10px;margin-top:14px;align-items:center;">
               <button class="btn btn-secondary btn-sm" id="runTranscodeBtn" type="button" onclick="runTranscodeQueue()">立即跑转码队列</button>
               <button class="btn btn-secondary btn-sm" id="runArchiveBtn" type="button" onclick="runArchiveQueue()">立即跑归档队列</button>
+              <button class="btn btn-danger btn-sm" id="purgeTrashBtn" type="button" onclick="purgeTrashStorage()">硬删隔离区</button>
               <span class="dashboard-panel-note" id="pipelineActionText">媒体流水线待命中...</span>
             </div>
             <div class="storage-warning" id="storageWarning" style="display:none;"></div>
@@ -1357,6 +1358,8 @@
         `已引用 ${storage.referenced_files || 0}`,
         `孤儿文件 ${storage.orphan_count || 0}`,
         `可隔离 ${formatBytes(storage.orphan_bytes || 0)}`,
+        `隔离区 ${storage.trash_count || 0}`,
+        `待释放 ${formatBytes(storage.trash_bytes || 0)}`,
         `剩余空间 ${formatBytes(storage.remaining_bytes || 0)}`
       ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
 
@@ -1364,6 +1367,9 @@
       if (warningInfo.message) warningParts.push(`${warningInfo.title || '空间提醒'}：${warningInfo.message}`);
       if (storage.orphan_count > 0) {
         warningParts.push(`发现 ${storage.orphan_count} 个孤儿文件，点击“隔离孤儿文件”可先移入安全区，避免误删。`);
+      }
+      if (storage.trash_count > 0) {
+        warningParts.push(`隔离区仍有 ${storage.trash_count} 个文件，占用 ${formatBytes(storage.trash_bytes || 0)}，点击“硬删隔离区”后才会真正释放空间。`);
       }
       if (warningParts.length) {
         warning.style.display = 'block';
@@ -1389,8 +1395,10 @@
       const actionText = document.getElementById('pipelineActionText');
       const runTranscodeBtn = document.getElementById('runTranscodeBtn');
       const runArchiveBtn = document.getElementById('runArchiveBtn');
+      const purgeTrashBtn = document.getElementById('purgeTrashBtn');
+      const storage = summary.storage || {};
 
-      if (!pipelineMiniStats || !pipelineMetaRow || !actionText || !runTranscodeBtn || !runArchiveBtn) return;
+      if (!pipelineMiniStats || !pipelineMetaRow || !actionText || !runTranscodeBtn || !runArchiveBtn || !purgeTrashBtn) return;
 
       pipelineMiniStats.innerHTML = [
         ['视频总数', pipeline.video_total || 0],
@@ -1423,11 +1431,17 @@
 
       runTranscodeBtn.disabled = !Number(pipeline.video_total || 0);
       runArchiveBtn.disabled = !provider.configured || !!providerWarning;
+      purgeTrashBtn.disabled = !Number(storage.trash_count || 0);
+      purgeTrashBtn.textContent = Number(storage.trash_count || 0)
+        ? `硬删隔离区 ${storage.trash_count || 0}`
+        : '硬删隔离区';
       actionText.textContent = provider.configured
         ? '可手动触发一次即时转码或归档，无需等待后台定时轮询。'
         : '尚未配置 Google Drive 或 S3 归档环境变量，当前仅保留在主存。';
       if (providerWarning) {
         actionText.textContent += ` 当前归档告警：${providerWarning}`;
+      } else if (storage.trash_count > 0) {
+        actionText.textContent += ` 隔离区仍有 ${storage.trash_count} 个文件，硬删后才会立即释放 ${formatBytes(storage.trash_bytes || 0)}。`;
       }
     }
 
@@ -3031,6 +3045,37 @@
       } finally {
         btn.disabled = false;
         btn.textContent = '隔离孤儿文件';
+      }
+    }
+
+    async function purgeTrashStorage() {
+      const storage = dashboardSummary?.storage || {};
+      const trashCount = Number(storage.trash_count || 0);
+      const trashBytes = Number(storage.trash_bytes || 0);
+      if (!trashCount) return toast('隔离区暂时没有可硬删的文件。', 'success');
+      if (!confirm(`确认硬删隔离区的 ${trashCount} 个文件，并尝试释放 ${formatBytes(trashBytes)} 吗？此操作不可撤销。`)) return;
+      const btn = document.getElementById('purgeTrashBtn');
+      if (!btn) return;
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '硬删中...';
+      try {
+        const result = await api('/teacher/storage-trash-purge', {
+          method: 'POST',
+          body: JSON.stringify({ activity_id: actId, confirm_hard_delete: true })
+        });
+        await reloadDashboard();
+        const failedCount = Array.isArray(result.failed) ? result.failed.length : 0;
+        if (failedCount) {
+          toast(`已硬删 ${result.removed || 0} 个文件，释放 ${formatBytes(result.bytes_freed || 0)}，但仍有 ${failedCount} 个失败。`, 'error');
+        } else {
+          toast(`已硬删 ${result.removed || 0} 个文件，已释放 ${formatBytes(result.bytes_freed || 0)}`, 'success');
+        }
+      } catch (e) {
+        toast('硬删隔离区失败：' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
       }
     }
 
