@@ -10,6 +10,14 @@
 - Added a student-side “学习力竞技场” panel with personal online duration, personal rank, engagement score, group rank, individual leaderboard, and group leaderboard.
 - Enabled learning heartbeats on gallery, upload, and work-detail pages to measure active study time across real student behavior.
 
+### 2026-05-13 Cloud Acceptance Retest
+- Re-ran the latest Supabase migration with the PostgREST schema reload notification and confirmed that `student_learning_sessions` is now writable through the live REST/Data API path.
+- Strict live validation passed for `POST /api/student/learning/heartbeat` and `GET /api/student/learning/summary`; the response now reports `schema_ready: true` and returns both personal and group leaderboard data.
+- Verified the production health endpoint on Render. The service reports commit `ea46168`, healthy background queues, and Google Drive archive auth mode `oauth-refresh-token`.
+- Executed a read-only live pressure round with `scripts/ops-pressure-test.mjs`: 120/120 requests succeeded, average latency was about 2054 ms, p95 was about 3788 ms, and no route-level failures occurred during the run.
+- Outstanding historical cleanup risks remain visible but do not block normal use: 7 missing-media submissions, 7 failed archive items, and 19 orphaned storage files.
+- Saved the detailed acceptance report to `CLOUD_ACCEPTANCE_2026-05-13.md` and the machine-readable live pressure artifact to `tmp_e2e_report/ops_pressure_report_20260513170306.json`.
+
 ### Quarantine Purge Preview and Excel Export
 - Added a recycle-bin purge preview modal. Teachers now see the exact title, student, class, group, status, and quarantine time for the current filtered result set before any permanent delete is submitted.
 - Batch permanent delete no longer jumps straight from filter selection to irreversible deletion. The preview layer reduces accidental cleanup risk when the teacher is filtering by class or group.
