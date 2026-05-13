@@ -12,6 +12,16 @@
 - Note: orphan cleanup currently quarantines/removes objects from active use but does not immediately reduce `usage_percent`, because the safety area still retains those bytes until a deeper storage purge policy is applied.
 - Detailed operation report saved to `CLOUD_CLEANUP_2026-05-14.md`.
 
+### DPU139 Hard Purge and Acceptance Closeout
+- Deployed commit `5a98a24ee90cde20936db3d18dea9f3e1ee7298d` with a storage delete fallback that retries hard deletes through the raw Supabase Storage REST path.
+- Archived a fresh protected DPU139 snapshot before the real hard-purge round. Snapshot ID: `20260514_012937`.
+- Re-tested the live teacher hard-purge endpoint `/api/teacher/storage-trash-purge`; production still returned `removed = 0` and `failed = 32`, so this route remains an open follow-up issue.
+- Executed a direct maintenance hard purge for the remaining recycle/trash storage objects and fully cleared the live trash area.
+- Verified after hard purge that `storage.trash_count = 0`, `storage.trash_bytes = 0`, `storage.usage_percent = 8.6`, and `storage.warning.level = healthy`.
+- Saved the endpoint retest artifact to `tmp_e2e_report/DPU139_hard_purge_report_20260513182934.json`.
+- Saved the direct maintenance delete artifact to `tmp_e2e_report/DPU139_direct_trash_delete_20260513183112.json`.
+- Saved the acceptance closeout report to `CLOUD_HARD_PURGE_ACCEPTANCE_2026-05-14.md`.
+
 ## 2026-05-09
 ### Restore Point and Learning Engagement Upgrade
 - Created restore branch and tag `restore-2026-05-09-pre-engagement-upgrade` at commit `62fbb072152fa3251789e4253fe4d1b70ac6c128`, so future changes can be rolled back to the pre-engagement stable version.
