@@ -482,7 +482,7 @@ function sanitizeMediaUrl(input) {
 function sanitizeStoragePath(input) {
   const value = String(input ?? '').trim().replace(/^\/+/, '');
   if (!value) return null;
-  if (!/^(uploads|videos|thumbs|manifests)\/[A-Za-z0-9._-]+$/.test(value)) return null;
+  if (!/^(uploads|videos|thumbs|manifests|trash)\/[A-Za-z0-9._-]+$/.test(value)) return null;
   return value;
 }
 
@@ -664,6 +664,23 @@ function buildStorageObjectApiUrl(bucketId, storagePath) {
   return `${supabaseUrl}/storage/v1/object/${encodeURIComponent(safeBucket)}/${encodedPath}`;
 }
 
+function getSupabaseKeyType() {
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) return 'service_role';
+  if (process.env.SUPABASE_ANON_KEY) return 'anon';
+  return 'missing';
+}
+
+function createEphemeralSupabaseClient() {
+  if (!supabaseUrl || !supabaseKey) return null;
+  return createClient(supabaseUrl, supabaseKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false
+    }
+  });
+}
+
 async function deleteStorageObjectViaRest(bucketId, storagePath, context = {}) {
   const url = buildStorageObjectApiUrl(bucketId, storagePath);
   if (!url) return { ok: false, detail: 'Storage delete fallback is not configured.' };
@@ -731,22 +748,197 @@ async function quarantineStorageObject(storagePath, reason = 'safe-delete') {
   return true;
 }
 
-async function deleteStorageObject(storagePath, options = {}) {
+async function deleteStorageObjectDetailed(storagePath, options = {}) {
   const safePath = sanitizeStoragePath(storagePath);
-  if (!safePath) return false;
+  const keyType = getSupabaseKeyType();
+  if (!safePath) {
+    return {
+      ok: false,
+      code: 'invalid_storage_path',
+      method: 'sanitize',
+      safe_path: null,
+      error: 'Storage path did not pass server validation.',
+      attempts: [],
+      diagnostics: {
+        key_type: keyType,
+        storage_safe_delete: !!STORAGE_SAFE_DELETE
+      }
+    };
+  }
   const permanent = !!options.permanent || !STORAGE_SAFE_DELETE;
   if (!permanent) {
-    return quarantineStorageObject(safePath, options.reason || 'safe-delete');
+    const ok = await quarantineStorageObject(safePath, options.reason || 'safe-delete');
+    return {
+      ok,
+      code: ok ? 'quarantined' : 'quarantine_failed',
+      method: 'quarantine',
+      safe_path: safePath,
+      error: ok ? null : 'Failed to move object into the trash zone.',
+      attempts: [
+        {
+          method: 'quarantine',
+          ok,
+          detail: ok ? 'Moved object into trash zone.' : 'Failed to move object into trash zone.'
+        }
+      ],
+      diagnostics: {
+        key_type: keyType,
+        storage_safe_delete: !!STORAGE_SAFE_DELETE
+      }
+    };
   }
-  const { error } = await supabase.storage.from('submissions').remove([safePath]);
-  if (error) {
-    const fallback = await deleteStorageObjectViaRest('submissions', safePath, { reason: options.reason || 'permanent-delete' });
-    if (!fallback.ok) {
-      console.warn('Failed to delete storage object:', safePath, error.message, fallback.detail);
-      return false;
+
+  const attempts = [];
+  const dedicatedClient = createEphemeralSupabaseClient();
+  if (dedicatedClient) {
+    try {
+      const { error } = await dedicatedClient.storage.from('submissions').remove([safePath]);
+      if (!error) {
+        attempts.push({ method: 'supabase-js', ok: true, detail: 'Deleted via dedicated Supabase storage client.' });
+        return {
+          ok: true,
+          code: 'deleted',
+          method: 'supabase-js',
+          safe_path: safePath,
+          error: null,
+          attempts,
+          diagnostics: {
+            key_type: keyType,
+            storage_safe_delete: !!STORAGE_SAFE_DELETE
+          }
+        };
+      }
+      attempts.push({
+        method: 'supabase-js',
+        ok: false,
+        detail: String(error?.message || error || 'Supabase storage remove failed')
+      });
+    } catch (error) {
+      attempts.push({
+        method: 'supabase-js',
+        ok: false,
+        detail: String(error?.message || error || 'Supabase storage remove threw an exception')
+      });
     }
   }
-  return true;
+
+  const fallback = await deleteStorageObjectViaRest('submissions', safePath, { reason: options.reason || 'permanent-delete' });
+  attempts.push({
+    method: 'rest-delete',
+    ok: !!fallback.ok,
+    detail: String(fallback.detail || (fallback.ok ? 'REST delete succeeded.' : 'REST delete failed.'))
+  });
+  if (fallback.ok) {
+    return {
+      ok: true,
+      code: 'deleted',
+      method: 'rest-delete',
+      safe_path: safePath,
+      error: null,
+      attempts,
+      diagnostics: {
+        key_type: keyType,
+        storage_safe_delete: !!STORAGE_SAFE_DELETE
+      }
+    };
+  }
+
+  const finalError = attempts.filter(item => !item.ok).map(item => `${item.method}: ${item.detail}`).join(' | ') || 'Hard delete failed';
+  console.warn('Failed to delete storage object:', safePath, finalError);
+  return {
+    ok: false,
+    code: 'delete_failed',
+    method: attempts[attempts.length - 1]?.method || 'unknown',
+    safe_path: safePath,
+    error: finalError,
+    attempts,
+    diagnostics: {
+      key_type: keyType,
+      storage_safe_delete: !!STORAGE_SAFE_DELETE
+    }
+  };
+}
+
+async function deleteStorageObject(storagePath, options = {}) {
+  const result = await deleteStorageObjectDetailed(storagePath, options);
+  return !!result.ok;
+}
+
+function summarizeStorageFailures(failed = []) {
+  const map = new Map();
+  for (const item of failed) {
+    const key = String(item.error || 'Unknown failure');
+    const current = map.get(key) || { error: key, count: 0, examples: [] };
+    current.count += 1;
+    if (current.examples.length < 3 && item.path) current.examples.push(item.path);
+    map.set(key, current);
+  }
+  return Array.from(map.values()).sort((a, b) => b.count - a.count || a.error.localeCompare(b.error));
+}
+
+async function buildStorageDiagnostics(activityId, storageSummary = null) {
+  const summary = storageSummary || await getCachedStorageSummary(activityId, { refresh: true });
+  const safeSummary = summary || {};
+  const trashFiles = Array.isArray(safeSummary.trash_files) ? safeSummary.trash_files : [];
+  const sampleTrashPath = String(trashFiles[0]?.path || '').trim() || null;
+  const bucketClient = createEphemeralSupabaseClient();
+  let listTrashProbe = { ok: false, detail: 'Storage client is not configured.' };
+
+  if (bucketClient) {
+    try {
+      const { data, error } = await bucketClient.storage.from('submissions').list(STORAGE_TRASH_FOLDER, { limit: 5, sortBy: { column: 'name', order: 'asc' } });
+      listTrashProbe = error
+        ? { ok: false, detail: String(error?.message || error || 'Trash listing failed') }
+        : { ok: true, detail: `Trash listing succeeded (${Array.isArray(data) ? data.length : 0} items in sample page).` };
+    } catch (error) {
+      listTrashProbe = { ok: false, detail: String(error?.message || error || 'Trash listing threw an exception') };
+    }
+  }
+
+  const restDeleteUrlReady = !!buildStorageObjectApiUrl('submissions', sampleTrashPath || `${STORAGE_TRASH_FOLDER}/diag_probe.txt`);
+  const diagnostics = {
+    checked_at: new Date().toISOString(),
+    activity_id: activityId,
+    supabase: {
+      configured: !!(supabaseUrl && supabaseKey),
+      key_type: getSupabaseKeyType(),
+      has_service_role: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
+      has_anon_key: !!process.env.SUPABASE_ANON_KEY,
+      url_host: supabaseUrl ? new URL(supabaseUrl).host : null,
+      storage_safe_delete: !!STORAGE_SAFE_DELETE
+    },
+    storage: {
+      trash_count: Number(safeSummary.trash_count || 0),
+      trash_bytes: Number(safeSummary.trash_bytes || 0),
+      orphan_count: Number(safeSummary.orphan_count || 0),
+      orphan_bytes: Number(safeSummary.orphan_bytes || 0),
+      missing_media_total: Number(safeSummary.missing_media_total || 0),
+      sample_trash_path: sampleTrashPath,
+      sample_trash_path_valid: !!sanitizeStoragePath(sampleTrashPath)
+    },
+    probes: {
+      list_trash: listTrashProbe,
+      rest_delete_url_ready: restDeleteUrlReady
+    },
+    guidance: []
+  };
+
+  if (!diagnostics.storage.sample_trash_path && diagnostics.storage.trash_count > 0) {
+    diagnostics.guidance.push('Trash summary reports files, but no sample path was exposed. Refresh dashboard summary first.');
+  }
+  if (!diagnostics.storage.sample_trash_path_valid && diagnostics.storage.sample_trash_path) {
+    diagnostics.guidance.push('Sample trash path failed server validation. Check sanitizeStoragePath rules.');
+  }
+  if (!diagnostics.probes.list_trash.ok) {
+    diagnostics.guidance.push('Trash folder listing failed. Verify Supabase Storage bucket access and current API key.');
+  }
+  if (!diagnostics.supabase.has_service_role) {
+    diagnostics.guidance.push('Current deployment is using a publishable anon key. This can work, but service-role mode is still the more robust maintenance setup.');
+  }
+  if (!diagnostics.guidance.length) {
+    diagnostics.guidance.push('Storage self-check passed. Hard delete route is ready for live purge.');
+  }
+  return diagnostics;
 }
 
 const mediaManifestCache = new Map();
@@ -6013,6 +6205,20 @@ app.post('/api/teacher/storage-cleanup', teacherAuth, async (req, res) => {
   }
 });
 
+app.get('/api/teacher/storage-diagnostics', teacherAuth, async (req, res) => {
+  try {
+    const activity_id = String(req.query.activity_id ?? '').trim();
+    if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
+    const auth = await ensureTeacherCanAccessActivity(req, activity_id);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+    const storageSummary = await getCachedStorageSummary(activity_id, { refresh: true });
+    const diagnostics = await buildStorageDiagnostics(activity_id, storageSummary);
+    res.json({ ok: true, diagnostics, summary: storageSummary });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
 app.post('/api/teacher/storage-trash-purge', teacherAuth, async (req, res) => {
   try {
     const activity_id = String(req.body.activity_id ?? req.query.activity_id ?? '').trim();
@@ -6037,24 +6243,39 @@ app.post('/api/teacher/storage-trash-purge', teacherAuth, async (req, res) => {
 
     for (const filePath of paths) {
       try {
-        if (await deleteStorageObject(filePath, { permanent: true, reason: 'teacher-trash-purge' })) {
+        const result = await deleteStorageObjectDetailed(filePath, { permanent: true, reason: 'teacher-trash-purge' });
+        if (result.ok) {
           removed += 1;
           bytesFreed += trashMap.get(filePath) || 0;
         } else {
-          failed.push({ path: filePath, error: 'Delete returned false' });
+          failed.push({
+            path: filePath,
+            error: result.error || 'Hard delete returned false',
+            method: result.method || 'unknown',
+            attempts: Array.isArray(result.attempts) ? result.attempts : [],
+            diagnostics: result.diagnostics || null
+          });
         }
       } catch (error) {
-        failed.push({ path: filePath, error: String(error?.message || error || 'Hard delete failed') });
+        failed.push({
+          path: filePath,
+          error: String(error?.message || error || 'Hard delete failed'),
+          method: 'exception',
+          attempts: []
+        });
       }
     }
 
     invalidateActivityOpsCache(activity_id);
     const nextSummary = await getCachedStorageSummary(activity_id, { refresh: true });
+    const diagnostics = await buildStorageDiagnostics(activity_id, nextSummary);
     res.json({
       ok: true,
       removed,
       bytes_freed: bytesFreed,
       failed,
+      failure_groups: summarizeStorageFailures(failed),
+      diagnostics,
       summary: nextSummary
     });
   } catch (e) {

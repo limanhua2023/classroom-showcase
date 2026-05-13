@@ -723,6 +723,24 @@
               <span class="dashboard-panel-note" id="pipelineActionText">媒体流水线待命中...</span>
             </div>
             <div class="storage-warning" id="storageWarning" style="display:none;"></div>
+            <div class="storage-control-panel" style="margin-top:14px;">
+              <div class="dashboard-panel-head compact">
+                <div>
+                  <div class="dashboard-panel-title">硬删失败原因与自检诊断</div>
+                  <div class="dashboard-panel-note">用于定位“硬删隔离区失败”的真实原因，并保留最近一次失败明细，方便教师和维护者排查。</div>
+                </div>
+              </div>
+              <div class="archive-quick-actions" style="margin-bottom:10px;">
+                <button class="btn btn-secondary btn-sm" id="runStorageDiagnosticsBtn" type="button" onclick="runStorageDiagnostics()">运行自检</button>
+                <button class="btn btn-secondary btn-sm" id="clearStorageDiagnosticsBtn" type="button" onclick="clearStorageDebugPanels()">清空面板</button>
+              </div>
+              <div class="dashboard-list" id="storageDiagnosticsPanel">
+                <div class="dashboard-panel-note">尚未运行自检。</div>
+              </div>
+              <div class="dashboard-list" id="trashPurgeFailurePanel" style="margin-top:12px;">
+                <div class="dashboard-panel-note">最近一次硬删结果会显示在这里。</div>
+              </div>
+            </div>
             <div class="storage-control-panel">
               <div class="dashboard-panel-head compact">
                 <div>
@@ -1022,6 +1040,8 @@
     if (!actId) location.href = 'index.html';
 
     let dashboardSummary = null;
+    let lastStorageDiagnostics = null;
+    let lastTrashPurgeResult = null;
     let pendingRepairSubmissionId = null;
     let pendingRepairSubmissionContext = 'visible';
     let missingMediaFilter = 'all';
@@ -1443,6 +1463,72 @@
       } else if (storage.trash_count > 0) {
         actionText.textContent += ` 隔离区仍有 ${storage.trash_count} 个文件，硬删后才会立即释放 ${formatBytes(storage.trash_bytes || 0)}。`;
       }
+    }
+
+    function renderStorageDiagnosticsPanel(diagnostics = lastStorageDiagnostics) {
+      const panel = document.getElementById('storageDiagnosticsPanel');
+      if (!panel) return;
+      if (!diagnostics) {
+        panel.innerHTML = '<div class="dashboard-panel-note">尚未运行自检。</div>';
+        return;
+      }
+
+      const guidance = Array.isArray(diagnostics.guidance) ? diagnostics.guidance : [];
+      const probes = diagnostics.probes || {};
+      const supabaseInfo = diagnostics.supabase || {};
+      const storageInfo = diagnostics.storage || {};
+      panel.innerHTML = [
+        `<div class="dashboard-list-item"><div class="dashboard-list-main"><div class="dashboard-list-title">最近自检时间</div><div class="dashboard-list-sub">${escapeHtml(formatDateTime(diagnostics.checked_at) || diagnostics.checked_at || '-')}</div></div></div>`,
+        `<div class="dashboard-list-item"><div class="dashboard-list-main"><div class="dashboard-list-title">运行环境</div><div class="dashboard-list-sub">Key: ${escapeHtml(supabaseInfo.key_type || 'unknown')} | Safe delete: ${supabaseInfo.storage_safe_delete ? 'on' : 'off'} | Host: ${escapeHtml(supabaseInfo.url_host || '-')}</div></div></div>`,
+        `<div class="dashboard-list-item"><div class="dashboard-list-main"><div class="dashboard-list-title">Trash 探针</div><div class="dashboard-list-sub">${escapeHtml(probes.list_trash?.detail || '未返回')} | REST URL: ${probes.rest_delete_url_ready ? 'ready' : 'not ready'}</div></div></div>`,
+        `<div class="dashboard-list-item"><div class="dashboard-list-main"><div class="dashboard-list-title">样本隔离路径</div><div class="dashboard-list-sub">${escapeHtml(storageInfo.sample_trash_path || '当前没有隔离文件')} ${storageInfo.sample_trash_path ? (storageInfo.sample_trash_path_valid ? '(valid)' : '(invalid)') : ''}</div></div></div>`,
+        `<div class="dashboard-list-item"><div class="dashboard-list-main"><div class="dashboard-list-title">诊断建议</div><div class="dashboard-list-sub">${escapeHtml(guidance.join(' | ') || '无')}</div></div></div>`
+      ].join('');
+    }
+
+    function renderTrashPurgeFailurePanel(result = lastTrashPurgeResult) {
+      const panel = document.getElementById('trashPurgeFailurePanel');
+      if (!panel) return;
+      if (!result) {
+        panel.innerHTML = '<div class="dashboard-panel-note">最近一次硬删结果会显示在这里。</div>';
+        return;
+      }
+
+      const failed = Array.isArray(result.failed) ? result.failed : [];
+      const groups = Array.isArray(result.failure_groups) ? result.failure_groups : [];
+      const header = `
+        <div class="dashboard-list-item">
+          <div class="dashboard-list-main">
+            <div class="dashboard-list-title">最近一次硬删结果</div>
+            <div class="dashboard-list-sub">删除 ${escapeHtml(result.removed || 0)} 个，释放 ${escapeHtml(formatBytes(result.bytes_freed || 0))}，失败 ${escapeHtml(failed.length)} 个。</div>
+          </div>
+        </div>
+      `;
+      if (!failed.length) {
+        panel.innerHTML = header + '<div class="dashboard-panel-note">本次没有失败项。</div>';
+        return;
+      }
+
+      const groupHtml = groups.length ? groups.map(group => `
+        <div class="dashboard-list-item">
+          <div class="dashboard-list-main">
+            <div class="dashboard-list-title">${escapeHtml(group.error || 'Unknown error')} × ${escapeHtml(group.count || 0)}</div>
+            <div class="dashboard-list-sub">${escapeHtml((group.examples || []).join(' | ') || '无示例路径')}</div>
+          </div>
+        </div>
+      `).join('') : '';
+
+      const detailHtml = failed.slice(0, 12).map(item => `
+        <div class="dashboard-list-item">
+          <div class="dashboard-list-main">
+            <div class="dashboard-list-title">${escapeHtml(item.path || '-')}</div>
+            <div class="dashboard-list-sub">${escapeHtml(item.error || 'Unknown failure')}</div>
+            <div class="dashboard-list-sub">${escapeHtml((item.attempts || []).map(attempt => `${attempt.method}:${attempt.ok ? 'ok' : 'fail'}:${attempt.detail || ''}`).join(' | ') || `method:${item.method || 'unknown'}`)}</div>
+          </div>
+        </div>
+      `).join('');
+
+      panel.innerHTML = header + groupHtml + detailHtml;
     }
 
     function renderArchiveControls(summary) {
@@ -2990,6 +3076,8 @@
         renderControls(summary.activity || {});
         renderStorage(summary);
         renderMediaPipeline(summary);
+        renderStorageDiagnosticsPanel();
+        renderTrashPurgeFailurePanel();
         renderArchiveControls(summary);
         renderOps(summary);
         renderSnapshots(summary);
@@ -3077,6 +3165,68 @@
         btn.disabled = false;
         btn.textContent = originalText;
       }
+    }
+
+    async function purgeTrashStorage() {
+      const storage = dashboardSummary?.storage || {};
+      const trashCount = Number(storage.trash_count || 0);
+      const trashBytes = Number(storage.trash_bytes || 0);
+      if (!trashCount) return toast('隔离区暂时没有可硬删的文件。', 'success');
+      if (!confirm(`确认硬删隔离区的 ${trashCount} 个文件，并尝试释放 ${formatBytes(trashBytes)} 吗？此操作不可撤销。`)) return;
+      const btn = document.getElementById('purgeTrashBtn');
+      if (!btn) return;
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '硬删中...';
+      try {
+        const result = await api('/teacher/storage-trash-purge', {
+          method: 'POST',
+          body: JSON.stringify({ activity_id: actId, confirm_hard_delete: true })
+        });
+        lastTrashPurgeResult = result;
+        if (result?.diagnostics) lastStorageDiagnostics = result.diagnostics;
+        await reloadDashboard();
+        renderTrashPurgeFailurePanel(lastTrashPurgeResult);
+        renderStorageDiagnosticsPanel(lastStorageDiagnostics);
+        const failedCount = Array.isArray(result.failed) ? result.failed.length : 0;
+        if (failedCount) {
+          toast(`已硬删 ${result.removed || 0} 个文件，释放 ${formatBytes(result.bytes_freed || 0)}，但仍有 ${failedCount} 个失败。`, 'error');
+        } else {
+          toast(`已硬删 ${result.removed || 0} 个文件，已释放 ${formatBytes(result.bytes_freed || 0)}`, 'success');
+        }
+      } catch (e) {
+        toast('硬删隔离区失败：' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    }
+
+    async function runStorageDiagnostics() {
+      const btn = document.getElementById('runStorageDiagnosticsBtn');
+      if (!btn) return;
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = '自检中...';
+      try {
+        const result = await api('/teacher/storage-diagnostics?activity_id=' + encodeURIComponent(actId));
+        lastStorageDiagnostics = result.diagnostics || null;
+        renderStorageDiagnosticsPanel(lastStorageDiagnostics);
+        toast('存储自检已完成', 'success');
+      } catch (e) {
+        toast('存储自检失败：' + e.message, 'error');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = originalText;
+      }
+    }
+
+    function clearStorageDebugPanels() {
+      lastStorageDiagnostics = null;
+      lastTrashPurgeResult = null;
+      renderStorageDiagnosticsPanel(null);
+      renderTrashPurgeFailurePanel(null);
+      toast('诊断面板已清空', 'success');
     }
 
     async function runTranscodeQueue() {
