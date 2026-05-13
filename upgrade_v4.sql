@@ -300,3 +300,8 @@ create policy activity_feedback_likes_server_access
 
 alter table public.student_roster no force row level security;
 alter table public.student_roster disable row level security;
+
+-- Ask Supabase/PostgREST to reload table and column metadata after all DDL is complete.
+-- This prevents newly added tables such as student_learning_sessions from staying invisible
+-- to the REST API until the schema cache refreshes by itself.
+notify pgrst, 'reload schema';
