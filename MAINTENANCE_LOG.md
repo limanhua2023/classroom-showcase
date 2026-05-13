@@ -1,6 +1,18 @@
 # ClassShow 维护日志
 
 ## 2026-05-14
+### Supabase Service-Role Maintenance Mode Preparation
+- Split Supabase access into two server-side clients:
+  - app client prefers `SUPABASE_ANON_KEY`
+  - maintenance client prefers `SUPABASE_SERVICE_ROLE_KEY`
+- Moved server-side `submissions` bucket maintenance operations onto the maintenance client, so hard delete, quarantine, archive, restore, and maintenance downloads no longer depend on anon fallback when service-role is available.
+- Expanded `/api/health` to expose:
+  - `supabase_app_key_type`
+  - `supabase_maintenance_key_type`
+  - `storage_maintenance_mode`
+- Expanded teacher storage diagnostics so the panel can show app-key mode vs maintenance-key mode directly.
+- Added the Render rollout checklist to `RENDER_SERVICE_ROLE_MAINTENANCE_MODE.md`.
+
 ### Teacher Trash Hard-Delete Fix and Storage Self-Diagnostics
 - Root cause confirmed for the previous production hard-purge failure: `sanitizeStoragePath()` did not allow `trash/...` paths, so the teacher purge route rejected every recycle-bin object before the delete call even ran.
 - Expanded storage-path validation to include `trash`, which unblocks permanent deletion for isolated recycle-bin files.

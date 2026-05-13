@@ -606,7 +606,9 @@ function classifyMissingMediaFailure({
 function publicUrlForStoragePath(storagePath) {
   const safePath = sanitizeStoragePath(storagePath);
   if (!safePath) return null;
-  const { data } = supabase.storage.from('submissions').getPublicUrl(safePath);
+  const bucket = getSubmissionsStorageBucket();
+  if (!bucket) return null;
+  const { data } = bucket.getPublicUrl(safePath);
   return data?.publicUrl || null;
 }
 
@@ -656,7 +658,7 @@ function createTrashStoragePath(storagePath) {
 function buildStorageObjectApiUrl(bucketId, storagePath) {
   const safeBucket = String(bucketId || '').trim();
   const safePath = sanitizeStoragePath(storagePath);
-  if (!supabaseUrl || !supabaseKey || !safeBucket || !safePath) return null;
+  if (!supabaseUrl || !supabaseMaintenanceKey || !safeBucket || !safePath) return null;
   const encodedPath = safePath
     .split('/')
     .map(segment => encodeURIComponent(segment))
@@ -664,21 +666,40 @@ function buildStorageObjectApiUrl(bucketId, storagePath) {
   return `${supabaseUrl}/storage/v1/object/${encodeURIComponent(safeBucket)}/${encodedPath}`;
 }
 
-function getSupabaseKeyType() {
+function getSupabaseAppKeyType() {
+  if (process.env.SUPABASE_ANON_KEY) return 'anon';
+  if (process.env.SUPABASE_SERVICE_ROLE_KEY) return 'service_role_fallback';
+  return 'missing';
+}
+
+function getSupabaseMaintenanceKeyType() {
   if (process.env.SUPABASE_SERVICE_ROLE_KEY) return 'service_role';
   if (process.env.SUPABASE_ANON_KEY) return 'anon';
   return 'missing';
 }
 
+function getStorageMaintenanceMode() {
+  return process.env.SUPABASE_SERVICE_ROLE_KEY ? 'service_role' : 'anon-fallback';
+}
+
 function createEphemeralSupabaseClient() {
-  if (!supabaseUrl || !supabaseKey) return null;
-  return createClient(supabaseUrl, supabaseKey, {
+  if (!supabaseUrl || !supabaseMaintenanceKey) return null;
+  return createClient(supabaseUrl, supabaseMaintenanceKey, {
     auth: {
       persistSession: false,
       autoRefreshToken: false,
       detectSessionInUrl: false
     }
   });
+}
+
+function getSubmissionsStorageClient() {
+  return supabaseMaintenance || supabase || null;
+}
+
+function getSubmissionsStorageBucket() {
+  const client = getSubmissionsStorageClient();
+  return client ? client.storage.from('submissions') : null;
 }
 
 async function deleteStorageObjectViaRest(bucketId, storagePath, context = {}) {
@@ -688,8 +709,8 @@ async function deleteStorageObjectViaRest(bucketId, storagePath, context = {}) {
     const res = await fetch(url, {
       method: 'DELETE',
       headers: {
-        apikey: supabaseKey,
-        Authorization: `Bearer ${supabaseKey}`
+        apikey: supabaseMaintenanceKey,
+        Authorization: `Bearer ${supabaseMaintenanceKey}`
       }
     });
     const text = await res.text();
@@ -717,7 +738,8 @@ async function quarantineStorageObject(storagePath, reason = 'safe-delete') {
   }
   const trashPath = createTrashStoragePath(safePath);
   if (!trashPath) return false;
-  const bucket = supabase.storage.from('submissions');
+  const bucket = getSubmissionsStorageBucket();
+  if (!bucket) return false;
   let copied = false;
   try {
     const { error: copyError } = await bucket.copy(safePath, trashPath);
@@ -737,7 +759,7 @@ async function quarantineStorageObject(storagePath, reason = 'safe-delete') {
   }
 
   if (!copied) return false;
-  const { error } = await supabase.storage.from('submissions').remove([safePath]);
+  const { error } = await bucket.remove([safePath]);
   if (error) {
     const fallback = await deleteStorageObjectViaRest('submissions', safePath, { reason: `quarantine:${reason}` });
     if (!fallback.ok) {
@@ -750,7 +772,7 @@ async function quarantineStorageObject(storagePath, reason = 'safe-delete') {
 
 async function deleteStorageObjectDetailed(storagePath, options = {}) {
   const safePath = sanitizeStoragePath(storagePath);
-  const keyType = getSupabaseKeyType();
+  const keyType = getSupabaseMaintenanceKeyType();
   if (!safePath) {
     return {
       ok: false,
@@ -900,8 +922,10 @@ async function buildStorageDiagnostics(activityId, storageSummary = null) {
     checked_at: new Date().toISOString(),
     activity_id: activityId,
     supabase: {
-      configured: !!(supabaseUrl && supabaseKey),
-      key_type: getSupabaseKeyType(),
+      configured: !!(supabaseUrl && (supabaseAppKey || supabaseMaintenanceKey)),
+      app_key_type: getSupabaseAppKeyType(),
+      maintenance_key_type: getSupabaseMaintenanceKeyType(),
+      maintenance_mode: getStorageMaintenanceMode(),
       has_service_role: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
       has_anon_key: !!process.env.SUPABASE_ANON_KEY,
       url_host: supabaseUrl ? new URL(supabaseUrl).host : null,
@@ -933,7 +957,7 @@ async function buildStorageDiagnostics(activityId, storageSummary = null) {
     diagnostics.guidance.push('Trash folder listing failed. Verify Supabase Storage bucket access and current API key.');
   }
   if (!diagnostics.supabase.has_service_role) {
-    diagnostics.guidance.push('Current deployment is using a publishable anon key. This can work, but service-role mode is still the more robust maintenance setup.');
+    diagnostics.guidance.push('Current deployment is still using anon-fallback maintenance mode. Add SUPABASE_SERVICE_ROLE_KEY on Render to harden purge, quarantine, archive, and restore operations.');
   }
   if (!diagnostics.guidance.length) {
     diagnostics.guidance.push('Storage self-check passed. Hard delete route is ready for live purge.');
@@ -1027,7 +1051,9 @@ function invalidateActivityOpsCache(activityId) {
 
 async function uploadLocalFileToPrimaryStorage(localPath, storagePath, contentType) {
   const stream = fs.createReadStream(localPath);
-  const { error } = await supabase.storage.from('submissions').upload(storagePath, stream, {
+  const bucket = getSubmissionsStorageBucket();
+  if (!bucket) throw new Error('Supabase storage bucket is not configured');
+  const { error } = await bucket.upload(storagePath, stream, {
     contentType,
     upsert: true,
     duplex: 'half'
@@ -1036,7 +1062,9 @@ async function uploadLocalFileToPrimaryStorage(localPath, storagePath, contentTy
 }
 
 async function uploadBufferToPrimaryStorage(storagePath, buffer, contentType) {
-  const { error } = await supabase.storage.from('submissions').upload(storagePath, buffer, {
+  const bucket = getSubmissionsStorageBucket();
+  if (!bucket) throw new Error('Supabase storage bucket is not configured');
+  const { error } = await bucket.upload(storagePath, buffer, {
     contentType,
     upsert: true
   });
@@ -1044,7 +1072,8 @@ async function uploadBufferToPrimaryStorage(storagePath, buffer, contentType) {
 }
 
 async function replaceBufferInPrimaryStorage(storagePath, buffer, contentType) {
-  const bucket = supabase.storage.from('submissions');
+  const bucket = getSubmissionsStorageBucket();
+  if (!bucket) throw new Error('Supabase storage bucket is not configured');
   let { error } = await bucket.update(storagePath, buffer, { contentType, upsert: true });
   if (!error) return;
   if (submissionManifestNotFound(error)) {
@@ -1164,7 +1193,9 @@ async function primaryStorageObjectExists(storagePath) {
   if (!safePath) return false;
   const folder = path.posix.dirname(safePath);
   const fileName = path.posix.basename(safePath);
-  const { data, error } = await supabase.storage.from('submissions').list(folder === '.' ? '' : folder, {
+  const bucket = getSubmissionsStorageBucket();
+  if (!bucket) throw new Error('Supabase storage bucket is not configured');
+  const { data, error } = await bucket.list(folder === '.' ? '' : folder, {
     limit: 100,
     search: fileName
   });
@@ -1180,7 +1211,9 @@ async function readSubmissionMediaManifest(submissionId, { force = false } = {})
   }
   const storagePath = createMediaManifestStoragePath(submissionId);
   if (!storagePath) return null;
-  const { data, error } = await supabase.storage.from('submissions').download(storagePath);
+  const bucket = getSubmissionsStorageBucket();
+  if (!bucket) throw new Error('Supabase storage bucket is not configured');
+  const { data, error } = await bucket.download(storagePath);
   if (error) {
     if (submissionManifestNotFound(error)) return null;
     throw error;
@@ -2072,14 +2105,29 @@ async function ensureTeacherCanAccessActivity(req, activityId) {
 
 // Supabase
 const supabaseUrl = process.env.SUPABASE_URL;
-const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
+const supabaseAppKey = process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
+const supabaseMaintenanceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_ANON_KEY;
 let supabase = null;
-if (supabaseUrl && supabaseKey) {
-  supabase = createClient(supabaseUrl, supabaseKey);
-  const keyType = process.env.SUPABASE_SERVICE_ROLE_KEY ? 'service_role' : 'anon';
-  console.log(`Supabase connected using ${keyType} key.`);
-} else {
+let supabaseMaintenance = null;
+if (supabaseUrl && supabaseAppKey) {
+  supabase = createClient(supabaseUrl, supabaseAppKey);
+  console.log(`Supabase app client connected using ${getSupabaseAppKeyType()} key.`);
+}
+if (supabaseUrl && supabaseMaintenanceKey) {
+  supabaseMaintenance = createClient(supabaseUrl, supabaseMaintenanceKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false
+    }
+  });
+  console.log(`Supabase maintenance client connected using ${getSupabaseMaintenanceKeyType()} key.`);
+}
+if (!supabase && !supabaseMaintenance) {
   console.error('WARNING: Supabase credentials missing!');
+} else {
+  if (!supabase) console.warn('Supabase app client is unavailable; falling back to maintenance client only.');
+  if (!supabaseMaintenance) console.warn('Supabase maintenance client is unavailable; maintenance operations will use app client fallback.');
 }
 
 // Multer for media upload (images + video, disk storage)
@@ -2344,7 +2392,8 @@ async function downloadSubmissionMediaToTemp(submission) {
   const tempPath = createTempDerivedPath(ext);
   let buffer = null;
   if (storagePath) {
-    const { data, error } = await supabase.storage.from('submissions').download(storagePath);
+    const bucket = getSubmissionsStorageBucket();
+    const { data, error } = bucket ? await bucket.download(storagePath) : { data: null, error: new Error('Supabase storage bucket is not configured') };
     if (!error && data) {
       buffer = Buffer.from(await data.arrayBuffer());
     }
@@ -2361,7 +2410,9 @@ async function downloadStorageObjectToTemp(storagePath, fallbackExt = 'bin') {
   if (!safePath) throw new Error('Storage path is unavailable');
   const ext = guessUploadExtension({ originalname: safePath }, fallbackExt);
   const tempPath = createTempDerivedPath(ext);
-  const { data, error } = await supabase.storage.from('submissions').download(safePath);
+  const bucket = getSubmissionsStorageBucket();
+  if (!bucket) throw new Error('Supabase storage bucket is not configured');
+  const { data, error } = await bucket.download(safePath);
   if (error) throw error;
   const buffer = Buffer.from(await data.arrayBuffer());
   await fs.promises.writeFile(tempPath, buffer);
@@ -2913,8 +2964,10 @@ function startArchiveLoop() {
 async function listStorageFolder(folder) {
   const files = [];
   let offset = 0;
+  const bucket = getSubmissionsStorageBucket();
+  if (!bucket) throw new Error('Supabase storage bucket is not configured');
   while (true) {
-    const { data, error } = await supabase.storage.from('submissions').list(folder, {
+    const { data, error } = await bucket.list(folder, {
       limit: 100,
       offset,
       sortBy: { column: 'name', order: 'asc' }
@@ -3510,6 +3563,7 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 app.get('/api/health', async (_req, res) => {
   const startedAt = Date.now();
+  const healthClient = supabase || supabaseMaintenance;
   const health = {
     ok: true,
     service: 'classshow',
@@ -3517,16 +3571,19 @@ app.get('/api/health', async (_req, res) => {
     environment: process.env.RENDER ? 'render' : (process.env.NODE_ENV || 'development'),
     time: new Date().toISOString(),
     uptime_seconds: Math.round(process.uptime()),
-    supabase_configured: !!supabase,
+    supabase_configured: !!(supabase || supabaseMaintenance),
+    supabase_app_key_type: getSupabaseAppKeyType(),
+    supabase_maintenance_key_type: getSupabaseMaintenanceKeyType(),
+    storage_maintenance_mode: getStorageMaintenanceMode(),
     archive_provider: getArchiveProviderInfo(),
     tasks: buildTaskOpsOverview()
   };
 
-  if (!supabase) {
+  if (!healthClient) {
     health.supabase_ok = false;
   } else {
     try {
-      const { error } = await supabase
+      const { error } = await healthClient
         .from('activities')
         .select('id', { count: 'exact', head: true })
         .limit(1);
@@ -4134,7 +4191,9 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
     const folder = processed.mediaType === 'video' ? 'videos' : 'uploads';
     const filename = `${folder}/${Date.now()}_${Math.random().toString(36).slice(2)}.${processed.storageExt}`;
     await uploadLocalFileToPrimaryStorage(processed.finalPath, filename, processed.contentType);
-    const { data: urlData } = supabase.storage.from('submissions').getPublicUrl(filename);
+    const bucket = getSubmissionsStorageBucket();
+    if (!bucket) throw new Error('Supabase storage bucket is not configured');
+    const { data: urlData } = bucket.getPublicUrl(filename);
 
     let thumbnailPath = null;
     let thumbnailUrl = null;

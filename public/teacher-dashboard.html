@@ -1477,9 +1477,12 @@
       const probes = diagnostics.probes || {};
       const supabaseInfo = diagnostics.supabase || {};
       const storageInfo = diagnostics.storage || {};
+      const appKeyType = supabaseInfo.app_key_type || supabaseInfo.key_type || 'unknown';
+      const maintenanceKeyType = supabaseInfo.maintenance_key_type || supabaseInfo.key_type || 'unknown';
+      const maintenanceMode = supabaseInfo.maintenance_mode || maintenanceKeyType || 'unknown';
       panel.innerHTML = [
         `<div class="dashboard-list-item"><div class="dashboard-list-main"><div class="dashboard-list-title">最近自检时间</div><div class="dashboard-list-sub">${escapeHtml(formatDateTime(diagnostics.checked_at) || diagnostics.checked_at || '-')}</div></div></div>`,
-        `<div class="dashboard-list-item"><div class="dashboard-list-main"><div class="dashboard-list-title">运行环境</div><div class="dashboard-list-sub">Key: ${escapeHtml(supabaseInfo.key_type || 'unknown')} | Safe delete: ${supabaseInfo.storage_safe_delete ? 'on' : 'off'} | Host: ${escapeHtml(supabaseInfo.url_host || '-')}</div></div></div>`,
+        `<div class="dashboard-list-item"><div class="dashboard-list-main"><div class="dashboard-list-title">运行环境</div><div class="dashboard-list-sub">App key: ${escapeHtml(appKeyType)} | Maintenance key: ${escapeHtml(maintenanceKeyType)} | Mode: ${escapeHtml(maintenanceMode)} | Safe delete: ${supabaseInfo.storage_safe_delete ? 'on' : 'off'} | Host: ${escapeHtml(supabaseInfo.url_host || '-')}</div></div></div>`,
         `<div class="dashboard-list-item"><div class="dashboard-list-main"><div class="dashboard-list-title">Trash 探针</div><div class="dashboard-list-sub">${escapeHtml(probes.list_trash?.detail || '未返回')} | REST URL: ${probes.rest_delete_url_ready ? 'ready' : 'not ready'}</div></div></div>`,
         `<div class="dashboard-list-item"><div class="dashboard-list-main"><div class="dashboard-list-title">样本隔离路径</div><div class="dashboard-list-sub">${escapeHtml(storageInfo.sample_trash_path || '当前没有隔离文件')} ${storageInfo.sample_trash_path ? (storageInfo.sample_trash_path_valid ? '(valid)' : '(invalid)') : ''}</div></div></div>`,
         `<div class="dashboard-list-item"><div class="dashboard-list-main"><div class="dashboard-list-title">诊断建议</div><div class="dashboard-list-sub">${escapeHtml(guidance.join(' | ') || '无')}</div></div></div>`
