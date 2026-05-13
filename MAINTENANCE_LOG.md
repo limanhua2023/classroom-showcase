@@ -1,6 +1,22 @@
 # ClassShow 维护日志
 
 ## 2026-05-14
+### Teacher Trash Hard-Delete Fix and Storage Self-Diagnostics
+- Root cause confirmed for the previous production hard-purge failure: `sanitizeStoragePath()` did not allow `trash/...` paths, so the teacher purge route rejected every recycle-bin object before the delete call even ran.
+- Expanded storage-path validation to include `trash`, which unblocks permanent deletion for isolated recycle-bin files.
+- Reworked hard-delete execution to return structured per-file results instead of a bare boolean. The route now reports method, error text, retry attempts, and grouped failure statistics.
+- Added a live storage self-diagnostic endpoint: `GET /api/teacher/storage-diagnostics`.
+- Added a teacher-dashboard diagnostics panel with:
+  - a one-click storage self-check button,
+  - a last hard-delete failure panel,
+  - grouped failure reasons,
+  - sample path validity checks,
+  - storage key mode and REST-delete readiness hints.
+- Deployed commit `8ccc248355f97f963fb8543d021a5d8016b801cb`.
+- Performed a real live regression test by uploading a temporary file into `submissions/trash/...` and deleting it through the DPU139 teacher endpoint.
+- Verified live result: `before_trash_count = 1`, `purge_removed = 1`, `purge_failed = 0`, `after_trash_count = 0`, `still_present = false`.
+- Saved the machine-readable regression artifact to `tmp_e2e_report/DPU139_trash_purge_fix_2026-05-13T23-34-08-060.json`.
+
 ### Production Cleanup for DPU139
 - Created a pre-cleanup cloud backup snapshot for activity `DPU139` and archived it to Google Drive before deleting any live data.
 - Snapshot ID: `20260514_002312`
