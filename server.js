@@ -653,6 +653,45 @@ function createTrashStoragePath(storagePath) {
   return `${STORAGE_TRASH_FOLDER}/${stamp}_${baseName}_${encodedPath}`;
 }
 
+function buildStorageObjectApiUrl(bucketId, storagePath) {
+  const safeBucket = String(bucketId || '').trim();
+  const safePath = sanitizeStoragePath(storagePath);
+  if (!supabaseUrl || !supabaseKey || !safeBucket || !safePath) return null;
+  const encodedPath = safePath
+    .split('/')
+    .map(segment => encodeURIComponent(segment))
+    .join('/');
+  return `${supabaseUrl}/storage/v1/object/${encodeURIComponent(safeBucket)}/${encodedPath}`;
+}
+
+async function deleteStorageObjectViaRest(bucketId, storagePath, context = {}) {
+  const url = buildStorageObjectApiUrl(bucketId, storagePath);
+  if (!url) return { ok: false, detail: 'Storage delete fallback is not configured.' };
+  try {
+    const res = await fetch(url, {
+      method: 'DELETE',
+      headers: {
+        apikey: supabaseKey,
+        Authorization: `Bearer ${supabaseKey}`
+      }
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      return {
+        ok: false,
+        detail: `REST delete failed (${res.status}): ${text || 'No response body'}`
+      };
+    }
+    console.warn('Storage delete fallback succeeded:', context.reason || 'delete', storagePath);
+    return { ok: true, detail: text || 'OK' };
+  } catch (error) {
+    return {
+      ok: false,
+      detail: String(error?.message || error || 'Storage delete fallback failed')
+    };
+  }
+}
+
 async function quarantineStorageObject(storagePath, reason = 'safe-delete') {
   const safePath = sanitizeStoragePath(storagePath);
   if (!safePath) return false;
@@ -683,8 +722,11 @@ async function quarantineStorageObject(storagePath, reason = 'safe-delete') {
   if (!copied) return false;
   const { error } = await supabase.storage.from('submissions').remove([safePath]);
   if (error) {
-    console.warn('Failed to remove quarantined storage object:', safePath, error.message);
-    return false;
+    const fallback = await deleteStorageObjectViaRest('submissions', safePath, { reason: `quarantine:${reason}` });
+    if (!fallback.ok) {
+      console.warn('Failed to remove quarantined storage object:', safePath, error.message, fallback.detail);
+      return false;
+    }
   }
   return true;
 }
@@ -698,8 +740,11 @@ async function deleteStorageObject(storagePath, options = {}) {
   }
   const { error } = await supabase.storage.from('submissions').remove([safePath]);
   if (error) {
-    console.warn('Failed to delete storage object:', safePath, error.message);
-    return false;
+    const fallback = await deleteStorageObjectViaRest('submissions', safePath, { reason: options.reason || 'permanent-delete' });
+    if (!fallback.ok) {
+      console.warn('Failed to delete storage object:', safePath, error.message, fallback.detail);
+      return false;
+    }
   }
   return true;
 }
