@@ -189,3 +189,10 @@
 - Added `POST /api/super-admin/course-registry/save` with duplicate-name and duplicate-slug protection plus validation for course name, slug, route, module key, and capability flags.
 - Course registry persistence now prefers Supabase Storage at `submissions/system/course-registry.json`, with local file fallback kept for development and emergency recovery.
 - Rebuilt the super-admin page into a clean UTF-8 version and added an inline registry editor, quick-register actions for unregistered live courses, and visible registry version/update metadata.
+
+## 2026-05-14 Super Admin Registry Lifecycle
+- Added registry lifecycle endpoints for super-admin maintenance: `POST /api/super-admin/course-registry/toggle`, `.../delete`, `.../reorder`, and `.../scaffold`.
+- Registered courses can now be disabled without being deleted. Disabled courses stay visible to super-admins but disappear from the public course portal and course-activity API responses.
+- Added drag-and-drop sorting for registered courses in `/super-admin.html`. Sort order is persisted in the registry and reused by the public course portal.
+- Added one-click scaffold creation for registered courses. When enabled, a missing static course page now falls back to a dynamic scaffold route that exposes the expected mount path immediately.
+- Local closed-loop verification passed for `create -> scaffold -> open route -> reorder -> disable -> delete`, and the maintenance UI now exposes those operations directly instead of requiring file edits.

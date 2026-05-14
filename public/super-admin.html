@@ -21,7 +21,7 @@
       <div class="course-hero-copy">
         <div class="brand-kicker">SUPER ADMIN CONSOLE</div>
         <h1>统一课程管理页</h1>
-        <p>这里负责课程总门户、课程注册表、课程专页挂载状态和后续课程接入规范。教师后台继续按活动管理，超级管理员只管理全局课程层。</p>
+        <p>这里统一维护课程注册表、总门户展示顺序、课程专页挂载状态和后续课程接入规范。教师后台继续按活动维度管理，超级管理员只管理课程层。</p>
         <div class="course-hero-actions">
           <button class="btn btn-primary" onclick="loadOverview()">刷新总览</button>
           <button class="btn btn-secondary" onclick="location.href='course.html?course=' + encodeURIComponent('AI学习课程')">打开 AI 课程页</button>
@@ -38,7 +38,7 @@
     <section class="course-entry-panel" id="superAdminLoginPanel">
       <div>
         <strong>超级管理员登录</strong>
-        <span id="superAdminStatusHint">正在检查服务器配置...</span>
+        <span id="superAdminStatusHint">正在检查服务端配置...</span>
       </div>
       <div class="course-entry-actions">
         <input id="superAdminPassword" type="password" placeholder="输入超级管理员密码">
@@ -52,7 +52,7 @@
         <span id="healthLine">未登录</span>
       </div>
       <div class="course-search">
-        <input id="superSearch" type="search" placeholder="按课程名 / slug / 状态搜索" oninput="renderCourses()">
+        <input id="superSearch" type="search" placeholder="按课程名 / slug / 状态搜索" oninput="renderOverviewBlocks()">
         <button class="btn btn-secondary btn-sm" onclick="loadOverview()">刷新</button>
       </div>
     </section>
@@ -67,7 +67,7 @@
         <div>
           <div class="brand-kicker course-kicker">REGISTRY EDITOR</div>
           <h2 id="registryEditorTitle">新增课程注册</h2>
-          <p id="registryEditorSubtitle">在这里新增或编辑课程注册表。保存后会优先写入 Supabase 持久注册表，不再依赖手改本地 JSON。</p>
+          <p id="registryEditorSubtitle">保存后优先写入 Supabase 持久注册表，不再依赖手改本地 JSON。</p>
         </div>
         <div class="course-card-actions">
           <button class="btn btn-secondary btn-sm" type="button" onclick="resetRegistryEditor()">清空表单</button>
@@ -96,7 +96,7 @@
           <div class="form-group">
             <label for="registryEntryPath">课程入口路径</label>
             <input id="registryEntryPath" type="text" maxlength="160" placeholder="/courses/ai-learning/">
-            <div class="form-hint">必须以 <code>/</code> 开头，最终映射到 <code>public/</code> 下的页面。</div>
+            <div class="form-hint">必须以 <code>/</code> 开头，建议统一落在 <code>/courses/&lt;slug&gt;/</code>。</div>
           </div>
           <div class="form-group">
             <label for="registryIntegrationStatus">接入状态</label>
@@ -122,45 +122,59 @@
 
         <div class="course-flag-grid">
           <label class="course-flag">
+            <input id="registryIsActive" type="checkbox" checked>
+            <span>
+              <strong>课程当前启用</strong>
+              <small>停用后会从学生总门户和公开课程页下线，但注册表记录仍保留。</small>
+            </span>
+          </label>
+          <label class="course-flag">
             <input id="registryPortalDefault" type="checkbox" checked>
             <span>
-              <strong>门户默认展示</strong>
-              <small>勾选后，课程会在总门户默认课程序列里展示。</small>
+              <strong>门口默认展示</strong>
+              <small>勾选后，课程会出现在总门户默认课程序列里。</small>
             </span>
           </label>
           <label class="course-flag">
             <input id="registryLaunchReady" type="checkbox">
             <span>
               <strong>允许标记就绪</strong>
-              <small>仅当专属课程页路径存在时，后端才会真正视为 ready。</small>
+              <small>只有静态专页或动态骨架已经挂载时，才会真正生效。</small>
+            </span>
+          </label>
+          <label class="course-flag">
+            <input id="registryScaffoldEnabled" type="checkbox">
+            <span>
+              <strong>启用动态骨架页</strong>
+              <small>没有静态页面时，系统会在这条路由上自动生成课程挂载骨架。</small>
             </span>
           </label>
           <label class="course-flag">
             <input id="registrySupportsActivityContext" type="checkbox" checked>
             <span>
               <strong>支持活动上下文</strong>
-              <small>课程页可直接读取当前活动、邀请码和跳转上下文。</small>
+              <small>课程页可直接读取当前活动、邀请码和回跳上下文。</small>
             </span>
           </label>
           <label class="course-flag">
             <input id="registrySupportsSharedIdentity" type="checkbox" checked>
             <span>
               <strong>支持共享身份</strong>
-              <small>跨课程复用同一学生身份，不重复造账号系统。</small>
+              <small>跨课程复用同一个学生身份，不重复造账号系统。</small>
             </span>
           </label>
           <label class="course-flag">
             <input id="registrySupportsInviteCodes" type="checkbox" checked>
             <span>
               <strong>支持邀请码隔离</strong>
-              <small>不同课程仍通过独立邀请码完成学生入口隔离。</small>
+              <small>不同课程继续使用不同邀请码，维持课程边界。</small>
             </span>
           </label>
         </div>
 
         <div class="course-editor-actions">
           <div class="course-card-actions">
-            <button class="btn btn-primary btn-sm" type="submit">保存课程注册表</button>
+            <button class="btn btn-primary btn-sm" type="submit">保存课程注册</button>
             <button class="btn btn-secondary btn-sm" type="button" onclick="regenerateRegistryDerivedFields(true)">按课程名生成 slug / 路由</button>
           </div>
           <span class="course-editor-meta" id="registryEditorHint">未开始编辑。你可以从已注册课程编辑，也可以从未注册课程一键带入。</span>
@@ -177,13 +191,19 @@
         <div>
           <div class="brand-kicker course-kicker">COURSE REGISTRY</div>
           <h2>课程注册表</h2>
-          <p>每个课程的专页路由、模块标识、接入状态和公共能力支持，都在这里统一登记。</p>
+          <p>拖拽卡片即可调整总门户展示顺序。停用用于下线课程，删除仅移出注册表；若已有活动，删除后会作为“未注册课程”继续留在超级管理员视图里。</p>
           <p id="registryMeta">尚未加载注册表元数据。</p>
         </div>
         <div class="course-card-actions">
           <button class="btn btn-primary btn-sm" onclick="openRegistryCreate()">新增课程注册</button>
         </div>
       </div>
+
+      <div class="course-panel-note">
+        <span>拖动顺序只影响总门户与课程目录的展示顺序，不会改动活动数据。</span>
+        <span>“创建骨架页”后，这条课程路由会立即可访问，后续正式页面可直接接管。</span>
+      </div>
+
       <div class="course-grid" id="registryGrid">
         <div class="course-loading">登录后加载课程注册表...</div>
       </div>
@@ -192,28 +212,41 @@
     <section class="course-portal" style="margin-top:18px;">
       <div class="course-portal-head">
         <div>
+          <div class="brand-kicker course-kicker">LIVE COURSES</div>
+          <h2>未注册但已有活动的课程</h2>
+          <p>这些课程已经在生产库里有活动，但还没写入课程注册表，可以一键带入。</p>
+        </div>
+      </div>
+      <div class="course-grid" id="unregisteredGrid">
+        <div class="course-loading">登录后加载未注册课程...</div>
+      </div>
+    </section>
+
+    <section class="course-portal" style="margin-top:18px;">
+      <div class="course-portal-head">
+        <div>
           <div class="brand-kicker course-kicker">INTEGRATION SPEC</div>
           <h2>课程页面接入规范</h2>
-          <p>以后你给我任何课程网页，我都按这套规则直接挂入总门户。</p>
+          <p>后续你给我的课程网页，都按这套规范直接挂入总门户，不再重复造身份和后端。</p>
         </div>
         <button class="btn btn-secondary btn-sm" onclick="location.href='course-integration-spec.html'">打开完整规范</button>
       </div>
       <div class="course-grid">
         <article class="course-card">
           <h3>目录与路由</h3>
-          <p>课程专页默认放在 <code>public/courses/&lt;slug&gt;/index.html</code>，统一由课程注册表做映射。</p>
+          <p>静态专页建议统一放在 <code>public/courses/&lt;slug&gt;/index.html</code>，课程注册表负责映射路由。</p>
         </article>
         <article class="course-card">
           <h3>运行时接口</h3>
-          <p>课程专页统一引入 <code>js/api.js</code> 和 <code>js/course-runtime.js</code>，直接读取课程、活动、身份和回跳能力。</p>
+          <p>课程专页统一引入 <code>/js/api.js</code> 与 <code>/js/course-runtime.js</code>，直接读取课程、活动、身份和回跳能力。</p>
         </article>
         <article class="course-card">
           <h3>公共能力复用</h3>
-          <p>上传、评分、评论、反馈、学习时长和排行榜全部继续走公共 API，不在课程专页里重造后端。</p>
+          <p>上传、评分、评论、反馈、学习时长、排行榜和运维能力全部继续复用公共 API，不在课程页重复造后端。</p>
         </article>
         <article class="course-card">
           <h3>安全边界</h3>
-          <p>同一学号跨课程共享同一身份，但不同课程继续用不同邀请码隔离，课程目录不直接公开邀请码。</p>
+          <p>同一学号跨课程共享同一身份，但不同课程继续由不同邀请码隔离，课程目录不直接公开邀请码。</p>
         </article>
       </div>
     </section>
@@ -223,7 +256,7 @@
         <div>
           <div class="brand-kicker course-kicker">RECENT ACTIVITIES</div>
           <h2>最近活动</h2>
-          <p>用来观察哪些课程正在活跃，方便优先接入对应的专属课程页。</p>
+          <p>用于观察哪些课程当前最活跃，便于优先接入对应的专属课程页。</p>
         </div>
       </div>
       <div class="course-grid" id="recentActivityGrid">
@@ -241,6 +274,9 @@
       originalCourseName: '',
       originalSlug: ''
     };
+    const registryDragState = {
+      fromSlug: ''
+    };
 
     init();
 
@@ -255,8 +291,8 @@
       try {
         superStatus = await api('/super-admin/status');
         document.getElementById('superAdminStatusHint').textContent = superStatus.configured
-          ? `服务器已配置超级管理员密码。已注册课程 ${Number(superStatus.registered_course_count || 0)} 个。`
-          : '服务器尚未配置 SUPER_ADMIN_PASSWORD，当前页面只能做只读准备。';
+          ? `服务端已配置超级管理员密码。已注册课程 ${Number(superStatus.registered_course_count || 0)} 个，停用 ${Number(superStatus.disabled_course_count || 0)} 个，骨架挂载 ${Number(superStatus.scaffold_course_count || 0)} 个。`
+          : '服务端尚未配置 SUPER_ADMIN_PASSWORD，当前页面只能做只读准备。';
       } catch (error) {
         document.getElementById('superAdminStatusHint').textContent = '状态读取失败：' + error.message;
       }
@@ -284,7 +320,7 @@
       try {
         overview = await api('/super-admin/overview');
         document.getElementById('superAdminLoginPanel').style.display = 'none';
-        renderOverview();
+        renderOverviewBlocks();
       } catch (error) {
         if (/Unauthorized|Invalid super admin auth/i.test(error.message)) {
           sessionStorage.removeItem('superAdminToken');
@@ -293,7 +329,14 @@
       }
     }
 
-    function renderOverview() {
+    function renderOverviewBlocks() {
+      renderOverviewSummary();
+      renderCourses();
+      renderRegistry();
+      renderRecentActivities();
+    }
+
+    function renderOverviewSummary() {
       const summary = overview?.summary || {};
       document.getElementById('sumCourses').textContent = Number(summary.course_count || 0);
       document.getElementById('sumRegistered').textContent = Number(summary.registered_course_count || 0);
@@ -307,25 +350,36 @@
         `版本 ${health.version || '-'} | 存储维护 ${health.storage_maintenance_mode || '-'} | 应用密钥 ${health.supabase_app_key_type || '-'} | 维护密钥 ${health.supabase_maintenance_key_type || '-'} | 注册表 ${registryBackend} ${registryPath}`;
 
       document.getElementById('registryMeta').textContent =
-        `版本 ${Number(overview?.registry?.version || 0)} | 最近更新 ${formatDateTime(overview?.registry?.updated_at, { withSeconds: true }) || '-'}`;
+        `版本 ${Number(overview?.registry?.version || 0)} | 最近更新 ${formatDateTime(overview?.registry?.updated_at, { withSeconds: true }) || '-'} | 已停用 ${Number(summary.disabled_course_count || 0)} | 动态骨架 ${Number(summary.scaffold_course_count || 0)}`;
+    }
 
-      renderCourses();
-      renderRegistry();
-      renderRecentActivities();
+    function getKeyword() {
+      return document.getElementById('superSearch').value.trim().toLowerCase();
+    }
+
+    function matchesKeyword(parts) {
+      const keyword = getKeyword();
+      if (!keyword) return true;
+      return parts.join(' ').toLowerCase().includes(keyword);
+    }
+
+    function courseMountLabel(integration = {}) {
+      if (integration.entry_mount_mode === 'static') return '静态专页';
+      if (integration.entry_mount_mode === 'scaffold') return '动态骨架';
+      return '未挂载';
     }
 
     function renderCourses() {
       const grid = document.getElementById('superSummaryGrid');
-      const keyword = document.getElementById('superSearch').value.trim().toLowerCase();
       const courses = (overview?.courses || []).filter(course => {
         const integration = course.integration || {};
-        const text = [
+        return matchesKeyword([
           course.course_name,
           integration.slug,
           integration.integration_status,
-          integration.visual_style
-        ].join(' ').toLowerCase();
-        return !keyword || text.includes(keyword);
+          integration.visual_style,
+          integration.is_active === false ? 'disabled' : 'active'
+        ]);
       });
 
       if (!courses.length) {
@@ -336,14 +390,9 @@
       grid.innerHTML = courses.map(course => {
         const integration = course.integration || {};
         const encodedCourse = encodeURIComponent(course.course_name || '');
-        const entryButton = integration.entry_path
-          ? `<button class="btn btn-secondary btn-sm" onclick="openRegisteredEntry('${escapeHtml(integration.entry_path)}','${encodedCourse}')">打开专页接口</button>`
-          : '';
-        const editButton = integration.slug
-          ? `<button class="btn btn-secondary btn-sm" onclick="openRegistryEdit('${encodedCourse}')">编辑注册表</button>`
-          : `<button class="btn btn-secondary btn-sm" onclick="openRegistryCreateFromLive('${encodedCourse}')">注册此课程</button>`;
+        const mountLabel = courseMountLabel(integration);
         return `
-          <article class="course-card">
+          <article class="course-card ${integration.is_active === false ? 'course-card-muted' : ''}">
             <div class="course-card-top">
               <span class="course-status">${escapeHtml(integration.integration_status || 'unregistered')}</span>
               <span class="course-code">${escapeHtml(integration.slug || course.course_key || '-')}</span>
@@ -358,12 +407,12 @@
             <div class="course-media-row">
               <span>${escapeHtml(integration.audience || '未设置对象')}</span>
               <span>${escapeHtml(integration.visual_style || '未设置风格')}</span>
-              <span>${integration.dedicated_page_available ? '专页接口已就绪' : '专页待挂载'}</span>
+              <span>${integration.is_active === false ? '已停用' : mountLabel}</span>
             </div>
             <div class="course-card-actions">
               <button class="btn btn-primary btn-sm" onclick="openManagedCourse('${encodedCourse}')">打开课程页</button>
-              ${entryButton}
-              ${editButton}
+              ${integration.entry_path ? `<button class="btn btn-secondary btn-sm" onclick="openRegisteredEntry('${escapeHtml(integration.entry_path)}','${encodedCourse}')">打开专页接口</button>` : ''}
+              ${integration.slug ? `<button class="btn btn-secondary btn-sm" onclick="openRegistryEdit('${encodedCourse}')">编辑注册表</button>` : `<button class="btn btn-secondary btn-sm" onclick="openRegistryCreateFromLive('${encodedCourse}')">注册此课程</button>`}
             </div>
           </article>
         `;
@@ -371,42 +420,83 @@
     }
 
     function renderRegistry() {
-      const grid = document.getElementById('registryGrid');
-      const registryCourses = overview?.registry?.courses || [];
-      const unregisteredCourses = overview?.registry?.unregistered_courses || [];
-      const cards = registryCourses.map(entry => {
-        const encodedCourse = encodeURIComponent(entry.course_name || '');
-        const entryButton = entry.entry_path
-          ? `<button class="btn btn-secondary btn-sm" onclick="openRegisteredEntry('${escapeHtml(entry.entry_path)}','${encodedCourse}')">打开专页接口</button>`
-          : '';
-        return `
-          <article class="course-card">
-            <div class="course-card-top">
-              <span class="course-status">${escapeHtml(entry.integration_status)}</span>
-              <span class="course-code">${escapeHtml(entry.module_key)}</span>
-            </div>
-            <h3>${escapeHtml(entry.course_name)}</h3>
-            <p>${escapeHtml(entry.description || '暂无课程描述')}</p>
-            <div class="course-media-row">
-              <span>slug: ${escapeHtml(entry.slug)}</span>
-              <span>route: ${escapeHtml(entry.entry_path || '-')}</span>
-              <span>${entry.portal_default ? '默认展示' : '仅目录收录'}</span>
-            </div>
-            <div class="course-stats">
-              <span><strong>${entry.dedicated_page_available ? 'Yes' : 'No'}</strong> 专页</span>
-              <span><strong>${entry.launch_ready ? 'Ready' : 'Wait'}</strong> 上线</span>
-              <span><strong>${Number(entry.activity_count || 0)}</strong> 活动</span>
-            </div>
-            <div class="course-card-actions">
-              <button class="btn btn-primary btn-sm" onclick="openRegistryEdit('${encodedCourse}')">编辑注册表</button>
-              ${entryButton}
-              <button class="btn btn-secondary btn-sm" onclick="openManagedCourse('${encodedCourse}')">打开课程页</button>
-            </div>
-          </article>
-        `;
-      });
+      const registryGrid = document.getElementById('registryGrid');
+      const unregisteredGrid = document.getElementById('unregisteredGrid');
+      const registryCourses = (overview?.registry?.courses || []).filter(entry => matchesKeyword([
+        entry.course_name,
+        entry.slug,
+        entry.integration_status,
+        entry.visual_style,
+        entry.is_active === false ? 'disabled' : 'active'
+      ]));
+      const unregisteredCourses = (overview?.registry?.unregistered_courses || []).filter(entry => matchesKeyword([
+        entry.course_name,
+        entry.activity_count,
+        entry.student_count
+      ]));
 
-      const unregistered = unregisteredCourses.map(entry => {
+      if (!registryCourses.length) {
+        registryGrid.innerHTML = '<div class="course-loading">没有匹配的注册课程。</div>';
+      } else {
+        registryGrid.innerHTML = registryCourses.map((entry, index) => {
+          const encodedCourse = encodeURIComponent(entry.course_name || '');
+          const mountLabel = courseMountLabel(entry);
+          const mountButton = entry.entry_mount_mode === 'static'
+            ? `<button class="btn btn-secondary btn-sm" onclick="openRegisteredEntry('${escapeHtml(entry.entry_path)}','${encodedCourse}')">打开静态专页</button>`
+            : entry.scaffold_enabled
+              ? `<button class="btn btn-secondary btn-sm" onclick="openRegisteredEntry('${escapeHtml(entry.entry_path)}','${encodedCourse}')">打开骨架页</button>`
+              : `<button class="btn btn-secondary btn-sm" onclick="createRegistryScaffold('${encodedCourse}')">创建骨架页</button>`;
+
+          return `
+            <article
+              class="course-card ${entry.is_active === false ? 'course-card-muted' : ''}"
+              draggable="true"
+              data-registry-card="1"
+              data-index="${index}"
+              data-course-name="${encodedCourse}"
+              data-slug="${escapeHtml(entry.slug)}"
+            >
+              <div class="course-card-top">
+                <span class="course-status">${escapeHtml(entry.integration_status)}</span>
+                <span class="course-code">#${Number(entry.sort_order || index + 1)} · ${escapeHtml(entry.module_key)}</span>
+              </div>
+              <div class="course-card-tags">
+                <span class="course-tag">${entry.is_active === false ? '已停用' : '启用中'}</span>
+                <span class="course-tag">${escapeHtml(mountLabel)}</span>
+                <span class="course-tag">${entry.portal_default ? '默认展示' : '仅注册'}</span>
+              </div>
+              <h3>${escapeHtml(entry.course_name)}</h3>
+              <p>${escapeHtml(entry.description || '暂无课程说明')}</p>
+              <div class="course-media-row">
+                <span>slug：${escapeHtml(entry.slug)}</span>
+                <span>路由：${escapeHtml(entry.entry_path || '-')}</span>
+              </div>
+              <div class="course-stats">
+                <span><strong>${Number(entry.activity_count || 0)}</strong> 活动</span>
+                <span><strong>${entry.launch_ready ? 'Ready' : 'Wait'}</strong> 就绪</span>
+                <span><strong>${entry.dedicated_page_available ? 'Yes' : 'No'}</strong> 挂载</span>
+              </div>
+              <div class="course-card-actions">
+                <button class="btn btn-primary btn-sm" onclick="openRegistryEdit('${encodedCourse}')">编辑注册表</button>
+                ${mountButton}
+                <button class="btn btn-secondary btn-sm" onclick="toggleRegistryActive('${encodedCourse}', ${entry.is_active === false ? 'true' : 'false'})">${entry.is_active === false ? '重新启用' : '停用课程'}</button>
+                <button class="btn btn-secondary btn-sm" onclick="deleteRegistryEntry('${encodedCourse}')">从注册表删除</button>
+              </div>
+              <div class="course-card-footnote">
+                <span class="course-drag-handle">拖动此卡片可调整总门户顺序</span>
+              </div>
+            </article>
+          `;
+        }).join('');
+        bindRegistryDragHandlers();
+      }
+
+      if (!unregisteredCourses.length) {
+        unregisteredGrid.innerHTML = '<div class="course-loading">当前没有未注册课程。</div>';
+        return;
+      }
+
+      unregisteredGrid.innerHTML = unregisteredCourses.map(entry => {
         const encodedCourse = encodeURIComponent(entry.course_name || '');
         return `
           <article class="course-card">
@@ -427,16 +517,18 @@
             </div>
           </article>
         `;
-      });
-
-      grid.innerHTML = [...cards, ...unregistered].join('') || '<div class="course-loading">没有注册课程。</div>';
+      }).join('');
     }
 
     function renderRecentActivities() {
       const grid = document.getElementById('recentActivityGrid');
-      const items = overview?.recent_activities || [];
+      const items = (overview?.recent_activities || []).filter(item => matchesKeyword([
+        item.course_name,
+        item.activity_name,
+        item.class_name
+      ]));
       if (!items.length) {
-        grid.innerHTML = '<div class="course-loading">当前还没有活动记录。</div>';
+        grid.innerHTML = '<div class="course-loading">当前没有匹配的活动记录。</div>';
         return;
       }
       grid.innerHTML = items.map(item => `
@@ -482,18 +574,19 @@
       registryEditorState.mode = 'create';
       registryEditorState.originalCourseName = '';
       registryEditorState.originalSlug = '';
+      document.getElementById('registryIsActive').checked = true;
       document.getElementById('registryPortalDefault').checked = true;
       document.getElementById('registrySupportsActivityContext').checked = true;
       document.getElementById('registrySupportsSharedIdentity').checked = true;
       document.getElementById('registrySupportsInviteCodes').checked = true;
       document.getElementById('registryIntegrationStatus').value = 'planned';
       document.getElementById('registryEditorTitle').textContent = '新增课程注册';
-      document.getElementById('registryEditorSubtitle').textContent = '在这里新增或编辑课程注册表。保存后会优先写入 Supabase 持久注册表，不再依赖手改本地 JSON。';
+      document.getElementById('registryEditorSubtitle').textContent = '保存后优先写入 Supabase 持久注册表，不再依赖手改本地 JSON。';
       document.getElementById('registryEditorHint').textContent = '未开始编辑。你可以从已注册课程编辑，也可以从未注册课程一键带入。';
     }
 
-    function getCourseByName(courseName) {
-      const normalized = decodeURIComponent(String(courseName || '')).trim();
+    function getCourseByName(encodedCourseName) {
+      const normalized = decodeURIComponent(String(encodedCourseName || '')).trim();
       return (overview?.registry?.courses || []).find(entry => entry.course_name === normalized) || null;
     }
 
@@ -532,8 +625,10 @@
       document.getElementById('registryAudience').value = entry.audience || '';
       document.getElementById('registryVisualStyle').value = entry.visual_style || '';
       document.getElementById('registryDescription').value = entry.description || '';
+      document.getElementById('registryIsActive').checked = entry.is_active !== false;
       document.getElementById('registryPortalDefault').checked = entry.portal_default !== false;
       document.getElementById('registryLaunchReady').checked = !!entry.launch_ready;
+      document.getElementById('registryScaffoldEnabled').checked = !!entry.scaffold_enabled;
       document.getElementById('registrySupportsActivityContext').checked = entry.supports_activity_context !== false;
       document.getElementById('registrySupportsSharedIdentity').checked = entry.supports_shared_identity !== false;
       document.getElementById('registrySupportsInviteCodes').checked = entry.supports_invite_codes !== false;
@@ -559,7 +654,7 @@
       registryEditorState.originalSlug = entry.slug || '';
       document.getElementById('registryEditorTitle').textContent = '编辑课程注册';
       document.getElementById('registryEditorSubtitle').textContent = `正在编辑 ${entry.course_name}，保存后会直接更新线上注册表。`;
-      document.getElementById('registryEditorHint').textContent = `当前编辑：${entry.course_name} | slug：${entry.slug}`;
+      document.getElementById('registryEditorHint').textContent = `当前编辑：${entry.course_name} | slug：${entry.slug} | 顺序：#${Number(entry.sort_order || 0)}`;
       applyRegistryEditorPrefill(entry);
       showRegistryEditor();
     }
@@ -577,8 +672,10 @@
         entry_path: `/courses/${slug}/`,
         integration_status: 'planned',
         description: `${courseName} 已接入总门户，等待专属课程页挂载。`,
+        is_active: true,
         portal_default: false,
         launch_ready: false,
+        scaffold_enabled: false,
         supports_activity_context: true,
         supports_shared_identity: true,
         supports_invite_codes: true,
@@ -600,8 +697,10 @@
         audience: document.getElementById('registryAudience').value.trim(),
         visual_style: document.getElementById('registryVisualStyle').value.trim(),
         description: document.getElementById('registryDescription').value.trim(),
+        is_active: document.getElementById('registryIsActive').checked,
         portal_default: document.getElementById('registryPortalDefault').checked,
         launch_ready: document.getElementById('registryLaunchReady').checked,
+        scaffold_enabled: document.getElementById('registryScaffoldEnabled').checked,
         supports_activity_context: document.getElementById('registrySupportsActivityContext').checked,
         supports_shared_identity: document.getElementById('registrySupportsSharedIdentity').checked,
         supports_invite_codes: document.getElementById('registrySupportsInviteCodes').checked
@@ -631,6 +730,147 @@
       } catch (error) {
         toast(error.message, 'error');
       }
+    }
+
+    async function toggleRegistryActive(encodedCourseName, nextActive) {
+      if (!ensureSuperAdminReady()) return;
+      const entry = getCourseByName(encodedCourseName);
+      if (!entry) return toast('课程注册项不存在', 'error');
+      const confirmed = confirm(nextActive
+        ? `确认重新启用课程“${entry.course_name}”？`
+        : `确认停用课程“${entry.course_name}”？停用后它会从公开课程目录下线。`);
+      if (!confirmed) return;
+      try {
+        await api('/super-admin/course-registry/toggle', {
+          method: 'POST',
+          body: JSON.stringify({
+            course_name: entry.course_name,
+            slug: entry.slug,
+            is_active: !!nextActive
+          })
+        });
+        toast(nextActive ? '课程已重新启用' : '课程已停用', 'success');
+        await loadStatus();
+        await loadOverview();
+      } catch (error) {
+        toast(error.message, 'error');
+      }
+    }
+
+    async function deleteRegistryEntry(encodedCourseName) {
+      if (!ensureSuperAdminReady()) return;
+      const entry = getCourseByName(encodedCourseName);
+      if (!entry) return toast('课程注册项不存在', 'error');
+      const confirmed = confirm(`确认从注册表删除“${entry.course_name}”？\n\n注意：删除只会移出课程注册表，不会删除活动数据；如果这个课程已有活动，删除后会变成“未注册课程”。`);
+      if (!confirmed) return;
+      try {
+        await api('/super-admin/course-registry/delete', {
+          method: 'POST',
+          body: JSON.stringify({
+            course_name: entry.course_name,
+            slug: entry.slug
+          })
+        });
+        hideRegistryEditor();
+        toast('课程已从注册表删除', 'success');
+        await loadStatus();
+        await loadOverview();
+      } catch (error) {
+        toast(error.message, 'error');
+      }
+    }
+
+    async function createRegistryScaffold(encodedCourseName) {
+      if (!ensureSuperAdminReady()) return;
+      const entry = getCourseByName(encodedCourseName);
+      if (!entry) return toast('课程注册项不存在', 'error');
+      try {
+        const result = await api('/super-admin/course-registry/scaffold', {
+          method: 'POST',
+          body: JSON.stringify({
+            course_name: entry.course_name,
+            slug: entry.slug
+          })
+        });
+        toast('课程骨架页已挂载', 'success');
+        await loadStatus();
+        await loadOverview();
+        if (result.page_url) {
+          window.open(result.page_url + `?course=${encodeURIComponent(entry.course_name)}`, '_blank');
+        }
+      } catch (error) {
+        toast(error.message, 'error');
+      }
+    }
+
+    function bindRegistryDragHandlers() {
+      const cards = Array.from(document.querySelectorAll('[data-registry-card="1"]'));
+      for (const card of cards) {
+        card.addEventListener('dragstart', onRegistryDragStart);
+        card.addEventListener('dragover', onRegistryDragOver);
+        card.addEventListener('drop', onRegistryDrop);
+        card.addEventListener('dragend', onRegistryDragEnd);
+        card.addEventListener('dragleave', onRegistryDragLeave);
+      }
+    }
+
+    function onRegistryDragStart(event) {
+      registryDragState.fromSlug = String(this.dataset.slug || '');
+      this.classList.add('course-card-dragging');
+      event.dataTransfer.effectAllowed = 'move';
+      event.dataTransfer.setData('text/plain', this.dataset.slug || '');
+    }
+
+    function onRegistryDragOver(event) {
+      event.preventDefault();
+      if (String(this.dataset.slug || '') === registryDragState.fromSlug) return;
+      this.classList.add('course-card-drag-target');
+      event.dataTransfer.dropEffect = 'move';
+    }
+
+    function onRegistryDragLeave() {
+      this.classList.remove('course-card-drag-target');
+    }
+
+    async function onRegistryDrop(event) {
+      event.preventDefault();
+      const targetSlug = String(this.dataset.slug || '');
+      this.classList.remove('course-card-drag-target');
+      if (!registryDragState.fromSlug || !targetSlug) return;
+      if (registryDragState.fromSlug === targetSlug) return;
+
+      const nextCourses = [...(overview?.registry?.courses || [])];
+      const fromIndex = nextCourses.findIndex(entry => entry.slug === registryDragState.fromSlug);
+      const toIndex = nextCourses.findIndex(entry => entry.slug === targetSlug);
+      if (fromIndex < 0 || toIndex < 0) return;
+      const [moved] = nextCourses.splice(fromIndex, 1);
+      nextCourses.splice(toIndex, 0, moved);
+      overview.registry.courses = nextCourses;
+      renderRegistry();
+
+      try {
+        const result = await api('/super-admin/course-registry/reorder', {
+          method: 'POST',
+          body: JSON.stringify({
+            ordered_slugs: nextCourses.map(entry => entry.slug)
+          })
+        });
+        document.getElementById('registryEditorHint').textContent = `顺序已保存。最新版本：${Number(result.registry_version || 0)}`;
+        toast('课程展示顺序已更新', 'success');
+        await loadStatus();
+        await loadOverview();
+      } catch (error) {
+        toast('保存排序失败：' + error.message, 'error');
+        await loadOverview();
+      }
+    }
+
+    function onRegistryDragEnd() {
+      registryDragState.fromSlug = '';
+      document.querySelectorAll('.course-card-dragging, .course-card-drag-target').forEach(node => {
+        node.classList.remove('course-card-dragging');
+        node.classList.remove('course-card-drag-target');
+      });
     }
 
     function logoutSuperAdmin() {

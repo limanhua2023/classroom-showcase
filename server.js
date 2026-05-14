@@ -3652,7 +3652,9 @@ app.get('/api/super-admin/status', async (_req, res) => {
       configured: isSuperAdminConfigured(),
       registry_version: registry.version,
       registered_course_count: registry.courses.length,
+      disabled_course_count: registry.courses.filter(entry => entry.is_active === false).length,
       ready_course_count: registry.courses.filter(entry => entry.launch_ready).length,
+      scaffold_course_count: registry.courses.filter(entry => entry.scaffold_enabled).length,
       registry_backend: process.env.SUPABASE_SERVICE_ROLE_KEY ? 'supabase-storage' : 'local-file',
       registry_storage_path: COURSE_REGISTRY_STORAGE_PATH,
       default_courses: registry.courses.filter(entry => entry.portal_default).map(entry => ({
@@ -3660,7 +3662,9 @@ app.get('/api/super-admin/status', async (_req, res) => {
         slug: entry.slug,
         entry_path: entry.entry_path,
         integration_status: entry.integration_status,
-        dedicated_page_available: entry.dedicated_page_available
+        dedicated_page_available: entry.dedicated_page_available,
+        is_active: entry.is_active,
+        scaffold_enabled: entry.scaffold_enabled
       }))
     });
   } catch (error) {
@@ -3709,17 +3713,15 @@ app.post('/api/super-admin/course-registry/save', superAdminAuth, async (req, re
     const nextEntry = sanitizeCourseRegistryPayload(req.body || {});
     const originalCourseName = sanitizeText(req.body?.original_course_name, 120);
     const originalSlug = sanitizeText(req.body?.original_slug, 80);
-    const originalCourseKey = normalizePortalCourseName(originalCourseName);
-    const originalSlugKey = normalizeCourseSlug(originalSlug);
     const nextCourseKey = normalizePortalCourseName(nextEntry.course_name);
 
     const courses = [...registry.courses];
-    let targetIndex = courses.findIndex(entry =>
-      (originalCourseKey && normalizePortalCourseName(entry.course_name) === originalCourseKey)
-      || (originalSlugKey && entry.slug === originalSlugKey)
-    );
+    let targetIndex = findCourseRegistryIndex(courses, {
+      courseName: originalCourseName,
+      slug: originalSlug
+    });
     if (targetIndex === -1) {
-      targetIndex = courses.findIndex(entry => normalizePortalCourseName(entry.course_name) === nextCourseKey);
+      targetIndex = findCourseRegistryIndex(courses, { courseName: nextEntry.course_name });
     }
 
     const duplicate = courses.find((entry, index) =>
@@ -3755,6 +3757,133 @@ app.post('/api/super-admin/course-registry/save', superAdminAuth, async (req, re
     const message = String(error.message || '保存课程注册表失败');
     const statusCode = /不能为空|必须|路径|invalid|required/i.test(message) ? 400 : 500;
     res.status(statusCode).json({ error: message });
+  }
+});
+
+app.post('/api/super-admin/course-registry/toggle', superAdminAuth, async (req, res) => {
+  try {
+    const registry = await getCourseRegistry({ forceRefresh: true });
+    const courses = [...registry.courses];
+    const targetIndex = findCourseRegistryIndex(courses, {
+      courseName: req.body?.course_name,
+      slug: req.body?.slug
+    });
+    if (targetIndex === -1) {
+      return res.status(404).json({ error: 'Course registry entry not found.' });
+    }
+
+    const nextActive = normalizeBooleanFlag(req.body?.is_active, true);
+    courses[targetIndex] = normalizeCourseRegistryEntry({
+      ...courses[targetIndex],
+      is_active: nextActive
+    });
+
+    const persisted = await persistCourseRegistry({
+      version: Number(registry.version || 0) + 1,
+      updated_at: new Date().toISOString(),
+      courses
+    });
+
+    res.json({
+      ok: true,
+      course: persisted.registry.courses[targetIndex] || null,
+      registry_version: persisted.registry.version,
+      updated_at: persisted.registry.updated_at
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Toggle failed' });
+  }
+});
+
+app.post('/api/super-admin/course-registry/delete', superAdminAuth, async (req, res) => {
+  try {
+    const registry = await getCourseRegistry({ forceRefresh: true });
+    const courses = [...registry.courses];
+    const targetIndex = findCourseRegistryIndex(courses, {
+      courseName: req.body?.course_name,
+      slug: req.body?.slug
+    });
+    if (targetIndex === -1) {
+      return res.status(404).json({ error: 'Course registry entry not found.' });
+    }
+
+    const removed = courses[targetIndex];
+    courses.splice(targetIndex, 1);
+
+    const persisted = await persistCourseRegistry({
+      version: Number(registry.version || 0) + 1,
+      updated_at: new Date().toISOString(),
+      courses
+    });
+
+    res.json({
+      ok: true,
+      removed_course: removed,
+      registry_version: persisted.registry.version,
+      updated_at: persisted.registry.updated_at
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Delete failed' });
+  }
+});
+
+app.post('/api/super-admin/course-registry/reorder', superAdminAuth, async (req, res) => {
+  try {
+    const registry = await getCourseRegistry({ forceRefresh: true });
+    const orderedSlugs = Array.isArray(req.body?.ordered_slugs) ? req.body.ordered_slugs : [];
+    const reorderedCourses = reorderCourseRegistryEntries(registry.courses, orderedSlugs);
+    const persisted = await persistCourseRegistry({
+      version: Number(registry.version || 0) + 1,
+      updated_at: new Date().toISOString(),
+      courses: reorderedCourses
+    });
+
+    res.json({
+      ok: true,
+      registry_version: persisted.registry.version,
+      updated_at: persisted.registry.updated_at,
+      ordered_slugs: persisted.registry.courses.map(entry => entry.slug)
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Reorder failed' });
+  }
+});
+
+app.post('/api/super-admin/course-registry/scaffold', superAdminAuth, async (req, res) => {
+  try {
+    const registry = await getCourseRegistry({ forceRefresh: true });
+    const courses = [...registry.courses];
+    const targetIndex = findCourseRegistryIndex(courses, {
+      courseName: req.body?.course_name,
+      slug: req.body?.slug
+    });
+    if (targetIndex === -1) {
+      return res.status(404).json({ error: 'Course registry entry not found.' });
+    }
+
+    const current = courses[targetIndex];
+    courses[targetIndex] = normalizeCourseRegistryEntry({
+      ...current,
+      scaffold_enabled: true,
+      integration_status: current.integration_status === 'ready' ? 'ready' : 'integrating'
+    });
+
+    const persisted = await persistCourseRegistry({
+      version: Number(registry.version || 0) + 1,
+      updated_at: new Date().toISOString(),
+      courses
+    });
+    const saved = persisted.registry.courses[targetIndex] || null;
+
+    res.json({
+      ok: true,
+      course: saved,
+      page_url: saved?.entry_path || null,
+      registry_version: persisted.registry.version,
+      updated_at: persisted.registry.updated_at
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message || 'Scaffold creation failed' });
   }
 });
 
@@ -4108,6 +4237,13 @@ function sanitizeCourseEntryPath(value) {
   return text;
 }
 
+function normalizeCourseEntryMatchPath(value) {
+  const normalized = sanitizeCourseEntryPath(value);
+  if (!normalized) return '';
+  if (normalized === '/') return '/';
+  return normalized.endsWith('/') ? normalized.slice(0, -1) : normalized;
+}
+
 function courseEntryPublicFilePath(entryPath) {
   const normalized = sanitizeCourseEntryPath(entryPath);
   if (!normalized) return null;
@@ -4132,8 +4268,12 @@ function normalizeCourseRegistryEntry(entry = {}) {
   const courseName = normalizePortalCourseName(entry.course_name || entry.name);
   const slug = normalizeCourseSlug(entry.slug || courseName);
   const entryPath = sanitizeCourseEntryPath(entry.entry_path || `/courses/${slug}/`);
-  const dedicatedPageAvailable = courseEntryPathExists(entryPath);
+  const staticPageAvailable = courseEntryPathExists(entryPath);
+  const scaffoldEnabled = normalizeBooleanFlag(entry.scaffold_enabled, false);
+  const dedicatedPageAvailable = staticPageAvailable || scaffoldEnabled;
   const integrationStatus = normalizeIntegrationStatus(entry.integration_status);
+  const sortOrderRaw = Number(entry.sort_order);
+  const sortOrder = Number.isFinite(sortOrderRaw) ? Math.max(1, Math.round(sortOrderRaw)) : null;
   return {
     slug,
     course_name: courseName,
@@ -4144,9 +4284,13 @@ function normalizeCourseRegistryEntry(entry = {}) {
     integration_status: dedicatedPageAvailable && integrationStatus === 'planned' ? 'integrating' : integrationStatus,
     entry_path: entryPath,
     dedicated_page_available: dedicatedPageAvailable,
+    entry_mount_mode: staticPageAvailable ? 'static' : (scaffoldEnabled ? 'scaffold' : 'none'),
     module_key: sanitizeText(entry.module_key, 80) || slug,
+    sort_order: sortOrder,
+    is_active: entry.is_active !== false,
     portal_default: entry.portal_default !== false,
     launch_ready: !!entry.launch_ready && dedicatedPageAvailable,
+    scaffold_enabled: scaffoldEnabled,
     supports_activity_context: entry.supports_activity_context !== false,
     supports_shared_identity: entry.supports_shared_identity !== false,
     supports_invite_codes: entry.supports_invite_codes !== false
@@ -4208,10 +4352,24 @@ function normalizeCourseRegistryDocument(document = null) {
   for (const entry of parsedCourses) {
     merged.set(normalizePortalCourseName(entry.course_name), entry);
   }
+  const normalizedCourses = Array.from(merged.values())
+    .map((entry, index) => ({
+      ...entry,
+      sort_order: Number.isFinite(Number(entry.sort_order)) ? Math.max(1, Math.round(Number(entry.sort_order))) : (index + 1)
+    }))
+    .sort((left, right) => {
+      const orderDelta = Number(left.sort_order || 0) - Number(right.sort_order || 0);
+      if (orderDelta !== 0) return orderDelta;
+      return String(left.course_name || '').localeCompare(String(right.course_name || ''), 'zh-CN');
+    })
+    .map((entry, index) => ({
+      ...entry,
+      sort_order: index + 1
+    }));
   return {
     version: Number(document?.version) || fallback.version,
     updated_at: String(document?.updated_at || fallback.updated_at || new Date().toISOString()),
-    courses: Array.from(merged.values())
+    courses: normalizedCourses
   };
 }
 
@@ -4233,8 +4391,11 @@ function sanitizeCourseRegistryPayload(input = {}) {
     integration_status: normalizeIntegrationStatus(input.integration_status),
     entry_path: entryPath,
     module_key: sanitizeText(input.module_key, 80) || `${slug}-v1`,
+    sort_order: Number.isFinite(Number(input.sort_order)) ? Number(input.sort_order) : null,
+    is_active: normalizeBooleanFlag(input.is_active, true),
     portal_default: normalizeBooleanFlag(input.portal_default, true),
     launch_ready: normalizeBooleanFlag(input.launch_ready, false),
+    scaffold_enabled: normalizeBooleanFlag(input.scaffold_enabled, false),
     supports_activity_context: normalizeBooleanFlag(input.supports_activity_context, true),
     supports_shared_identity: normalizeBooleanFlag(input.supports_shared_identity, true),
     supports_invite_codes: normalizeBooleanFlag(input.supports_invite_codes, true)
@@ -4246,7 +4407,7 @@ function serializeCourseRegistryForStorage(registry = null) {
   return {
     version: normalized.version,
     updated_at: normalized.updated_at,
-    courses: normalized.courses.map(({ dedicated_page_available, ...rest }) => rest)
+    courses: normalized.courses.map(({ dedicated_page_available, entry_mount_mode, ...rest }) => rest)
   };
 }
 
@@ -4331,13 +4492,173 @@ function buildPublicCourseIntegration(entry = null) {
     integration_status: entry.integration_status,
     entry_path: entry.entry_path,
     dedicated_page_available: entry.dedicated_page_available,
+    entry_mount_mode: entry.entry_mount_mode,
     module_key: entry.module_key,
+    sort_order: entry.sort_order,
+    is_active: entry.is_active,
     portal_default: entry.portal_default,
     launch_ready: entry.launch_ready,
+    scaffold_enabled: entry.scaffold_enabled,
     supports_activity_context: entry.supports_activity_context,
     supports_shared_identity: entry.supports_shared_identity,
     supports_invite_codes: entry.supports_invite_codes
   };
+}
+
+function normalizeOptionalCourseKey(value) {
+  const text = sanitizeText(value, 120);
+  return text ? normalizePortalCourseName(text) : '';
+}
+
+function normalizeOptionalSlugKey(value) {
+  const text = sanitizeText(value, 80);
+  return text ? normalizeCourseSlug(text) : '';
+}
+
+function findCourseRegistryIndex(courses = [], { courseName = '', slug = '' } = {}) {
+  const courseKey = normalizeOptionalCourseKey(courseName);
+  const slugKey = normalizeOptionalSlugKey(slug);
+  return courses.findIndex(entry => (
+    (courseKey && normalizePortalCourseName(entry.course_name) === courseKey)
+    || (slugKey && entry.slug === slugKey)
+  ));
+}
+
+function reorderCourseRegistryEntries(courses = [], orderedSlugs = []) {
+  const normalizedOrder = Array.isArray(orderedSlugs)
+    ? orderedSlugs.map(normalizeOptionalSlugKey).filter(Boolean)
+    : [];
+  if (!normalizedOrder.length) {
+    return courses.map((entry, index) => ({ ...entry, sort_order: index + 1 }));
+  }
+
+  const bySlug = new Map(courses.map(entry => [entry.slug, entry]));
+  const used = new Set();
+  const ordered = [];
+
+  for (const slug of normalizedOrder) {
+    const entry = bySlug.get(slug);
+    if (!entry || used.has(slug)) continue;
+    ordered.push(entry);
+    used.add(slug);
+  }
+
+  for (const entry of courses) {
+    if (used.has(entry.slug)) continue;
+    ordered.push(entry);
+  }
+
+  return ordered.map((entry, index) => ({
+    ...entry,
+    sort_order: index + 1
+  }));
+}
+
+function findCourseRegistryEntryByPath(courses = [], requestPath = '') {
+  const normalizedPath = normalizeCourseEntryMatchPath(requestPath);
+  if (!normalizedPath) return null;
+  return courses.find(entry => normalizeCourseEntryMatchPath(entry.entry_path) === normalizedPath) || null;
+}
+
+function renderCourseScaffoldPage(entry = {}) {
+  const courseName = escapeHtml(entry.course_name || '课程');
+  const description = escapeHtml(entry.description || '课程专页挂载骨架已就绪，后续正式课程页面可以直接接到这条路由。');
+  const audience = escapeHtml(entry.audience || '未设置');
+  const visualStyle = escapeHtml(entry.visual_style || '未设置');
+  const moduleKey = escapeHtml(entry.module_key || entry.slug || '-');
+  const entryPath = escapeHtml(entry.entry_path || '/');
+  const portalLink = `/course.html?course=${encodeURIComponent(entry.course_name || '')}`;
+  const title = `${courseName} - ClassShow`;
+
+  return `<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>${title}</title>
+  <link rel="stylesheet" href="/css/main.css">
+</head>
+<body class="course-page">
+  <header class="topbar">
+    <a class="topbar-logo" href="/index.html">Class<span>Show</span></a>
+    <div class="topbar-right">
+      <button class="btn btn-secondary btn-sm" onclick="location.href='${portalLink}'">课程页</button>
+      <button class="btn btn-secondary btn-sm" onclick="location.href='/teacher-login.html'">教师入口</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="course-hero">
+      <div class="course-hero-copy">
+        <div class="brand-kicker">COURSE SCAFFOLD</div>
+        <h1>${courseName}</h1>
+        <p>${description}</p>
+        <div class="course-hero-actions">
+          <button class="btn btn-primary" onclick="location.href='${portalLink}'">返回课程总页</button>
+          <button class="btn btn-secondary" onclick="location.href='/index.html'">返回总门户</button>
+        </div>
+      </div>
+      <div class="course-scoreboard" aria-label="课程骨架信息">
+        <div><strong id="scaffoldActivityCount">0</strong><span>活动</span></div>
+        <div><strong id="scaffoldStudentCount">0</strong><span>学生</span></div>
+        <div><strong id="scaffoldSubmissionCount">0</strong><span>作品</span></div>
+        <div><strong>挂载中</strong><span>状态</span></div>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">MOUNT READY</div>
+          <h2>课程挂载骨架已就绪</h2>
+          <p>这条课程路由已经可以在线访问。后续只需要把正式课程页面接到 <code>public${entryPath}index.html</code>，或者继续沿用当前骨架页迭代内容。</p>
+        </div>
+      </div>
+      <div class="course-grid">
+        <article class="course-card">
+          <div class="course-card-top">
+            <span class="course-status">scaffold</span>
+            <span class="course-code">${moduleKey}</span>
+          </div>
+          <h3>课程定位</h3>
+          <p>${description}</p>
+          <div class="course-media-row">
+            <span>对象：${audience}</span>
+            <span>风格：${visualStyle}</span>
+          </div>
+        </article>
+        <article class="course-card">
+          <div class="course-card-top">
+            <span class="course-status">runtime</span>
+            <span class="course-code">ClassShowCourseRuntime</span>
+          </div>
+          <h3>可直接复用的底座</h3>
+          <p>身份、邀请码、作品上传、评分、反馈、学习时长、排行榜和运维入口继续复用主系统，不需要在课程页重复造后端。</p>
+          <div class="course-media-row">
+            <span>路由：${entryPath}</span>
+            <span>专页：动态骨架</span>
+          </div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/course-runtime.js"></script>
+  <script>
+    async function initCourseScaffold() {
+      try {
+        const result = await window.ClassShowCourseRuntime.fetchCourse(${JSON.stringify(entry.course_name || '')});
+        const course = result && result.course ? result.course : null;
+        document.getElementById('scaffoldActivityCount').textContent = Number(course?.activity_count || 0);
+        document.getElementById('scaffoldStudentCount').textContent = Number(course?.student_count || 0);
+        document.getElementById('scaffoldSubmissionCount').textContent = Number(course?.submission_count || 0);
+      } catch {}
+    }
+    initCourseScaffold();
+  </script>
+</body>
+</html>`;
 }
 
 function portalCoursePriority(courseName, registryCourses = []) {
@@ -4415,7 +4736,8 @@ function summarizePortalActivity(activity, metrics = emptyPortalMetrics()) {
   };
 }
 
-async function buildPortalCourseDirectory(courseNameFilter = null) {
+async function buildPortalCourseDirectory(courseNameFilter = null, options = {}) {
+  const includeInactive = !!options.includeInactive;
   const registry = await getCourseRegistry();
   const registryMap = new Map(registry.courses.map(entry => [normalizePortalCourseName(entry.course_name), entry]));
 
@@ -4480,6 +4802,7 @@ async function buildPortalCourseDirectory(courseNameFilter = null) {
   for (const activity of activities) {
     const courseName = normalizePortalCourseName(activity.course_name);
     const registryEntry = registryMap.get(courseName) || null;
+    if (!includeInactive && registryEntry && registryEntry.is_active === false) continue;
     if (!courses.has(courseName)) {
       courses.set(courseName, emptyPortalCourse(courseName, registryEntry));
     }
@@ -4502,12 +4825,15 @@ async function buildPortalCourseDirectory(courseNameFilter = null) {
   }
 
   if (!normalizedFilter) {
-    for (const registryEntry of registry.courses.filter(entry => entry.portal_default)) {
+    for (const registryEntry of registry.courses.filter(entry => entry.portal_default && (includeInactive || entry.is_active !== false))) {
       const normalized = normalizePortalCourseName(registryEntry.course_name);
       if (!courses.has(normalized)) courses.set(normalized, emptyPortalCourse(normalized, registryEntry));
     }
   } else if (registryMap.has(normalizedFilter) && !courses.has(normalizedFilter)) {
-    courses.set(normalizedFilter, emptyPortalCourse(normalizedFilter, registryMap.get(normalizedFilter)));
+    const registryEntry = registryMap.get(normalizedFilter);
+    if (includeInactive || registryEntry?.is_active !== false) {
+      courses.set(normalizedFilter, emptyPortalCourse(normalizedFilter, registryEntry));
+    }
   }
 
   return Array.from(courses.values())
@@ -4528,6 +4854,8 @@ async function buildPortalCourseDirectory(courseNameFilter = null) {
       };
     })
     .sort((a, b) => {
+      const orderDelta = Number(a.integration?.sort_order || Number.MAX_SAFE_INTEGER) - Number(b.integration?.sort_order || Number.MAX_SAFE_INTEGER);
+      if (orderDelta !== 0) return orderDelta;
       const priorityDelta = portalCoursePriority(a.course_name, registry.courses) - portalCoursePriority(b.course_name, registry.courses);
       if (priorityDelta !== 0) return priorityDelta;
       const left = new Date(a.latest_upload_at || a.latest_activity_at || 0).getTime();
@@ -4538,7 +4866,7 @@ async function buildPortalCourseDirectory(courseNameFilter = null) {
 
 async function buildSuperAdminOverview() {
   const registry = await getCourseRegistry();
-  const courses = await buildPortalCourseDirectory();
+  const courses = await buildPortalCourseDirectory(null, { includeInactive: true });
   const liveCourseMap = new Map(courses.map(course => [normalizePortalCourseName(course.course_name), course]));
   const registryCourses = registry.courses.map(entry => {
     const live = liveCourseMap.get(normalizePortalCourseName(entry.course_name));
@@ -4594,7 +4922,9 @@ async function buildSuperAdminOverview() {
     summary: {
       course_count: courses.length,
       registered_course_count: registryCourses.length,
+      disabled_course_count: registryCourses.filter(entry => entry.is_active === false).length,
       ready_course_count: registryCourses.filter(entry => entry.launch_ready).length,
+      scaffold_course_count: registryCourses.filter(entry => entry.scaffold_enabled).length,
       planned_course_count: registryCourses.filter(entry => entry.integration_status === 'planned').length,
       dedicated_page_count: registryCourses.filter(entry => entry.dedicated_page_available).length,
       live_activity_count: courses.reduce((sum, course) => sum + Number(course.activity_count || 0), 0),
@@ -4633,7 +4963,9 @@ app.get('/api/portal/course-activities', async (req, res) => {
     const courseName = normalizePortalCourseName(req.query.course_name);
     const courses = await buildPortalCourseDirectory(courseName);
     const registry = await getCourseRegistry();
-    const registryEntry = registry.courses.find(entry => normalizePortalCourseName(entry.course_name) === courseName) || null;
+    const registryEntry = registry.courses.find(entry =>
+      entry.is_active !== false && normalizePortalCourseName(entry.course_name) === courseName
+    ) || null;
     const course = courses[0] || {
       ...emptyPortalCourse(courseName, registryEntry),
       student_count: 0
@@ -4648,14 +4980,36 @@ app.get('/api/portal/course-activities', async (req, res) => {
 app.get('/api/portal/course-registry', async (req, res) => {
   try {
     const registry = await getCourseRegistry();
+    const publicCourses = registry.courses.filter(entry => entry.is_active !== false);
     const courseName = sanitizeText(req.query.course_name, 120);
     if (courseName) {
-      const entry = registry.courses.find(item => normalizePortalCourseName(item.course_name) === normalizePortalCourseName(courseName)) || null;
+      const entry = publicCourses.find(item => normalizePortalCourseName(item.course_name) === normalizePortalCourseName(courseName)) || null;
       return res.json({ course: entry });
     }
-    res.json({ version: registry.version, updated_at: registry.updated_at, courses: registry.courses });
+    res.json({ version: registry.version, updated_at: registry.updated_at, courses: publicCourses });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('*', async (req, res, next) => {
+  try {
+    if (req.path.startsWith('/api/')) return next();
+    const matchPath = normalizeCourseEntryMatchPath(req.path);
+    if (!matchPath || matchPath === '/') return next();
+
+    const registry = await getCourseRegistry();
+    const entry = findCourseRegistryEntryByPath(
+      registry.courses.filter(item => item.is_active !== false && item.scaffold_enabled),
+      matchPath
+    );
+    if (!entry) return next();
+    if (courseEntryPathExists(entry.entry_path)) return next();
+
+    res.type('html').send(renderCourseScaffoldPage(entry));
+  } catch (error) {
+    console.warn('Course scaffold route failed:', error.message);
+    next();
   }
 });
 // ─── ACTIVITIES ───
