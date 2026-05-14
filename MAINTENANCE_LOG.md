@@ -196,3 +196,10 @@
 - Added drag-and-drop sorting for registered courses in `/super-admin.html`. Sort order is persisted in the registry and reused by the public course portal.
 - Added one-click scaffold creation for registered courses. When enabled, a missing static course page now falls back to a dynamic scaffold route that exposes the expected mount path immediately.
 - Local closed-loop verification passed for `create -> scaffold -> open route -> reorder -> disable -> delete`, and the maintenance UI now exposes those operations directly instead of requiring file edits.
+
+## 2026-05-14 Local Backup Agent and USB Secondary Backup
+- Added `scripts/local-backup-agent.mjs` and npm entrypoints `backup:local` / `backup:local:watch` for incremental local backup to a Windows hard drive.
+- The local backup agent now pulls the full `submissions` storage bucket (`uploads`, `videos`, `thumbs`, `manifests`, `trash`, `system`) plus metadata tables and per-activity JSON snapshots.
+- Backup runs persist a state file, write machine-readable reports under the local backup root, and keep stale-file warnings instead of auto-deleting local copies.
+- Added `scripts/usb-secondary-backup.ps1` to create timestamped USB snapshots from the local backup root, plus optional `latest` mirroring without destructive purge mode.
+- Added `scripts/install-local-backup-task.ps1`, `.env.local-backup.example`, and `LOCAL_BACKUP_AGENT.md` so the backup agent can be installed as a Windows logon task and operated without editing code.

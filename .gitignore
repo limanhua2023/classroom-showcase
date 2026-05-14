@@ -3,6 +3,10 @@ node_modules
 data/assignments.json
 dist
 .env
+.env.local-backup
+.env.local-backup.local
+local_backup/
+ClassShowBackup/
 
 # Generated local/ops reports and temporary diagnostics
 tmp_*.csv
@@ -15,3 +19,5 @@ tmp_e2e_media/
 tmp_e2e_report/
 tmp_e2e_report_local/
 tmp_uploads/
+tmp_local_backup_source/
+tmp_usb_backup_dest/
