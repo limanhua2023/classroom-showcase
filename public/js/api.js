@@ -5,6 +5,8 @@ async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json', ...opts.headers };
   const teacherToken = sessionStorage.getItem('teacherToken');
   if (teacherToken) headers['x-teacher-auth'] = teacherToken;
+  const superAdminToken = sessionStorage.getItem('superAdminToken');
+  if (superAdminToken) headers['x-super-admin-auth'] = superAdminToken;
 
   const sessionRaw = sessionStorage.getItem('classshow_user');
   if (sessionRaw) {

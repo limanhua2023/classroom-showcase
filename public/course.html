@@ -23,6 +23,7 @@
         <p id="courseSubtitle">面向大一新生的科技感、竞赛感作品展示场。每位学生跨课程保持同一身份，不同课程使用不同邀请码。</p>
         <div class="course-hero-actions">
           <button class="btn btn-primary" onclick="focusInviteBox()">输入邀请码进入</button>
+          <button class="btn btn-secondary" id="courseDedicatedBtn" style="display:none;" onclick="openDedicatedCoursePage()">打开课程专页</button>
           <button class="btn btn-secondary" onclick="location.href='teacher-login.html?create=1'">创建课程活动</button>
         </div>
       </div>
@@ -61,6 +62,7 @@
     <section class="course-identity-note">
       <strong>身份规则：</strong>
       同一学生、同一学号在所有课程中使用同一个学习身份；课程之间通过不同邀请码隔离，便于后续接入 AI、经济学、数学等课程页面。
+      <span id="courseIntegrationLine" style="display:block;margin-top:8px;"></span>
     </section>
 
     <section class="course-activity-grid" id="activityGrid">
@@ -94,14 +96,22 @@
 
     function renderCourseSummary() {
       const course = currentCourse || {};
+      const integration = course.integration || {};
       document.getElementById('courseActivityCount').textContent = Number(course.activity_count || 0);
       document.getElementById('courseStudentCount').textContent = Number(course.student_count || 0);
       document.getElementById('courseSubmissionCount').textContent = Number(course.submission_count || 0);
       document.getElementById('courseVideoCount').textContent = Number(course.video_count || 0);
+      document.getElementById('courseSubtitle').textContent = integration.description
+        || '面向大一新生的科技感、竞赛感作品展示场。每位学生跨课程保持同一身份，不同课程使用不同邀请码。';
       const latest = course.latest_upload_at || course.latest_activity_at;
       document.getElementById('courseUpdatedAt').textContent = latest
         ? `最近更新：${formatBangkokTime(latest, { withSeconds: false })}`
         : '还没有课程活动';
+      const dedicatedBtn = document.getElementById('courseDedicatedBtn');
+      dedicatedBtn.style.display = integration.entry_path ? 'inline-flex' : 'none';
+      document.getElementById('courseIntegrationLine').textContent = integration.entry_path
+        ? `课程专页接口：${integration.entry_path} | 接入状态：${integration.integration_status || 'planned'}`
+        : '课程专页接口尚未登记。';
     }
 
     function renderActivities() {
@@ -205,6 +215,13 @@
         toast('这个课程还没有活动，教师创建后即可使用邀请码进入。', 'error');
         return;
       }
+    }
+
+    function openDedicatedCoursePage() {
+      const integration = currentCourse?.integration || {};
+      if (!integration.entry_path) return toast('这个课程还没有专属页面接口', 'error');
+      const joiner = integration.entry_path.includes('?') ? '&' : '?';
+      location.href = integration.entry_path + joiner + 'course=' + encodeURIComponent(courseName);
     }
   </script>
 </body>

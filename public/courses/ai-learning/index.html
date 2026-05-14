@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI学习课程接口位 - ClassShow</title>
+  <link rel="stylesheet" href="/css/main.css">
+  <style>
+    .course-module-shell { max-width: 1240px; margin: 0 auto; padding: 28px 22px 46px; }
+    .course-module-hero {
+      position: relative; overflow: hidden; margin-top: 22px; padding: 34px;
+      border-radius: 28px; color: #f8fafc;
+      background:
+        radial-gradient(circle at 10% 0%, rgba(163,230,53,0.28), transparent 28%),
+        radial-gradient(circle at 88% 10%, rgba(255,107,53,0.16), transparent 28%),
+        linear-gradient(135deg, #071827, #0b3342 52%, #151e32);
+      box-shadow: var(--shadow-lg);
+    }
+    .course-module-grid { display:grid; grid-template-columns: 1.2fr 0.8fr; gap:18px; margin-top:18px; }
+    .course-module-card {
+      padding: 22px; border-radius: 22px; background: rgba(255,255,255,0.86);
+      border: 1px solid rgba(15,23,42,0.08); box-shadow: var(--shadow);
+    }
+    .course-module-card h3 { font-size: 1.24rem; letter-spacing: -0.04em; }
+    .course-module-card p, .course-module-card li { color: var(--text-muted); }
+    .course-module-badge {
+      display:inline-flex; padding:5px 10px; border-radius:999px; font-size:0.76rem; font-weight:900;
+      background: rgba(37,99,235,0.12); color: var(--primary); margin-bottom: 12px;
+    }
+    .course-module-list { margin-top: 12px; padding-left: 18px; }
+    .course-module-actions { display:flex; flex-wrap:wrap; gap:10px; margin-top:18px; }
+    .course-module-kv { display:grid; grid-template-columns: 130px 1fr; gap:10px; margin-top:14px; }
+    .course-module-kv strong { color: var(--text); }
+    @media (max-width: 900px) {
+      .course-module-grid { grid-template-columns: 1fr; }
+      .course-module-hero { padding: 24px; border-radius: 22px; }
+      .course-module-shell { padding: 20px 16px 34px; }
+      .course-module-kv { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body class="course-page">
+  <header class="topbar">
+    <a class="topbar-logo" href="/index.html">Class<span>Show</span></a>
+    <div class="topbar-right">
+      <button class="btn btn-secondary btn-sm" onclick="ClassShowCourseRuntime.openPortal('AI学习课程')">返回课程总页</button>
+      <button class="btn btn-secondary btn-sm" onclick="ClassShowCourseRuntime.openIndex()">返回总门户</button>
+    </div>
+  </header>
+
+  <main class="course-module-shell">
+    <section class="course-module-hero">
+      <div class="brand-kicker">AI LEARNING COURSE</div>
+      <h1 style="margin-top:14px;font-size:clamp(2.5rem,7vw,5.1rem);line-height:0.92;letter-spacing:-0.08em;">AI学习课程<br>专属页面接口位</h1>
+      <p style="max-width:760px;margin-top:16px;color:rgba(226,232,240,0.84);">
+        这个路由已经接入总门户与课程注册表。你把第一个 AI 学习课程网页给我后，我会直接替换这里的内容，并保留统一学生身份、邀请码隔离和课堂活动上下文。
+      </p>
+      <div class="course-module-actions">
+        <button class="btn btn-primary" onclick="ClassShowCourseRuntime.openPortal('AI学习课程')">回到 AI 课程总页</button>
+        <button class="btn btn-secondary" onclick="window.location.href='/teacher-login.html?create=1'">先创建 AI 活动</button>
+      </div>
+    </section>
+
+    <section class="course-module-grid">
+      <article class="course-module-card">
+        <div class="course-module-badge">挂载协议</div>
+        <h3>这个接口位已经就绪</h3>
+        <div class="course-module-kv">
+          <strong>挂载路由</strong><span id="routePath">/courses/ai-learning/</span>
+          <strong>课程名称</strong><span id="courseName">AI学习课程</span>
+          <strong>模块标识</strong><span id="moduleKey">ai-learning-v1</span>
+          <strong>活动数量</strong><span id="activityCount">0</span>
+          <strong>当前身份</strong><span id="userIdentity">未进入课堂</span>
+          <strong>当前活动</strong><span id="activityName">尚未绑定活动</span>
+        </div>
+      </article>
+
+      <article class="course-module-card">
+        <div class="course-module-badge">接入要求</div>
+        <h3>你给我课程网页后，我会按这套规范直接接入</h3>
+        <ol class="course-module-list">
+          <li>保留统一身份：同一学号跨课程保持同一学生身份。</li>
+          <li>保留邀请码隔离：不同课程、不同活动继续使用独立邀请码。</li>
+          <li>复用公共能力：上传、展示、评分、反馈、学习时长、排行继续走公共接口。</li>
+          <li>课程专页只负责课程叙事、模块布局和交互增强，不重写基础鉴权链路。</li>
+        </ol>
+      </article>
+    </section>
+  </main>
+
+  <script src="/js/api.js"></script>
+  <script src="/js/course-runtime.js"></script>
+  <script>
+    (async function boot() {
+      const context = ClassShowCourseRuntime.getContext();
+      document.getElementById('routePath').textContent = location.pathname;
+      document.getElementById('courseName').textContent = context.course_name || 'AI学习课程';
+      document.getElementById('userIdentity').textContent = context.user?.name
+        ? `${context.user.name}${context.is_guest ? '（访客）' : ''}`
+        : '未进入课堂';
+      document.getElementById('activityName').textContent = context.activity?.activity_name || '尚未绑定活动';
+
+      try {
+        const registry = await ClassShowCourseRuntime.fetchRegistry('AI学习课程');
+        if (registry?.course?.module_key) {
+          document.getElementById('moduleKey').textContent = registry.course.module_key;
+        }
+      } catch {}
+
+      try {
+        const course = await ClassShowCourseRuntime.fetchCourse('AI学习课程');
+        document.getElementById('activityCount').textContent = Number(course?.course?.activity_count || 0);
+      } catch {}
+    })();
+  </script>
+</body>
+</html>

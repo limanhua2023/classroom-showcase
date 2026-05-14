@@ -26,6 +26,7 @@ const APP_TIME_ZONE = 'Asia/Bangkok';
 // APP_SECRET must be stable in production; otherwise all signed student/teacher tokens
 // become invalid after each deploy/restart.
 const APP_SECRET = process.env.APP_SECRET;
+const SUPER_ADMIN_PASSWORD = String(process.env.SUPER_ADMIN_PASSWORD || '').trim();
 if (!APP_SECRET) {
   const msg = 'APP_SECRET is not set. Set it in Render Environment before relying on tokens in production.';
   if (process.env.RENDER || process.env.NODE_ENV === 'production') {
@@ -36,6 +37,7 @@ if (!APP_SECRET) {
 }
 const EFFECTIVE_APP_SECRET = APP_SECRET || 'classshow-local-dev-secret-change-me';
 const TEACHER_TOKEN_TTL_MS = 12 * 60 * 60 * 1000; // 12 hours
+const SUPER_ADMIN_TOKEN_TTL_MS = 12 * 60 * 60 * 1000;
 const FEEDBACK_COOLDOWN_MS = 60 * 1000;
 const FEEDBACK_HISTORY_SCAN_LIMIT = 100;
 const FEEDBACK_MIN_MEANINGFUL_CHARS = 3;
@@ -55,6 +57,7 @@ const VIDEO_PRESET = 'veryfast';
 const VIDEO_AUDIO_BITRATE = '96k';
 const VIDEO_TRANSCODE_THREADS = Math.max(1, Number(process.env.VIDEO_TRANSCODE_THREADS || 1));
 const VIDEO_MAXRATE = '1600k';
+const COURSE_REGISTRY_FILE = path.join(__dirname, 'data', 'course-registry.json');
 const MEDIA_MANIFEST_FOLDER = 'manifests';
 const MEDIA_THUMBNAIL_FOLDER = 'thumbs';
 const STORAGE_TRASH_FOLDER = 'trash';
@@ -1853,6 +1856,17 @@ function safeEqualHex(a, b) {
   }
 }
 
+function safeEqualText(a, b) {
+  const left = Buffer.from(String(a ?? ''), 'utf8');
+  const right = Buffer.from(String(b ?? ''), 'utf8');
+  if (left.length !== right.length) return false;
+  try {
+    return crypto.timingSafeEqual(left, right);
+  } catch {
+    return false;
+  }
+}
+
 function makeTeacherToken(activityId) {
   const expiresAt = Date.now() + TEACHER_TOKEN_TTL_MS;
   const nonce = crypto.randomBytes(8).toString('hex');
@@ -1872,6 +1886,34 @@ function parseTeacherToken(token) {
     const expiresAt = Number(expiresAtRaw);
     if (!Number.isFinite(expiresAt) || Date.now() > expiresAt) return null;
     return { activityId };
+  } catch {
+    return null;
+  }
+}
+
+function isSuperAdminConfigured() {
+  return !!SUPER_ADMIN_PASSWORD;
+}
+
+function makeSuperAdminToken() {
+  const expiresAt = Date.now() + SUPER_ADMIN_TOKEN_TTL_MS;
+  const nonce = crypto.randomBytes(8).toString('hex');
+  const payload = `super-admin.${expiresAt}.${nonce}`;
+  const sig = crypto.createHmac('sha256', EFFECTIVE_APP_SECRET).update(payload).digest('hex');
+  return Buffer.from(`${payload}.${sig}`).toString('base64url');
+}
+
+function parseSuperAdminToken(token) {
+  try {
+    const decoded = Buffer.from(String(token), 'base64url').toString();
+    const [role, expiresAtRaw, nonce, sig] = decoded.split('.');
+    if (role !== 'super-admin' || !expiresAtRaw || !nonce || !sig) return null;
+    const payload = `${role}.${expiresAtRaw}.${nonce}`;
+    const expectedSig = crypto.createHmac('sha256', EFFECTIVE_APP_SECRET).update(payload).digest('hex');
+    if (!safeEqualHex(sig, expectedSig)) return null;
+    const expiresAt = Number(expiresAtRaw);
+    if (!Number.isFinite(expiresAt) || Date.now() > expiresAt) return null;
+    return { role };
   } catch {
     return null;
   }
@@ -3575,6 +3617,7 @@ app.get('/api/health', async (_req, res) => {
     supabase_app_key_type: getSupabaseAppKeyType(),
     supabase_maintenance_key_type: getSupabaseMaintenanceKeyType(),
     storage_maintenance_mode: getStorageMaintenanceMode(),
+    super_admin_configured: isSuperAdminConfigured(),
     archive_provider: getArchiveProviderInfo(),
     tasks: buildTaskOpsOverview()
   };
@@ -3598,6 +3641,58 @@ app.get('/api/health', async (_req, res) => {
   health.ok = !!health.supabase_ok;
   health.latency_ms = Date.now() - startedAt;
   res.status(health.ok ? 200 : 503).json(health);
+});
+
+app.get('/api/super-admin/status', (_req, res) => {
+  const registry = loadCourseRegistry();
+  res.json({
+    configured: isSuperAdminConfigured(),
+    registry_version: registry.version,
+    registered_course_count: registry.courses.length,
+    ready_course_count: registry.courses.filter(entry => entry.launch_ready).length,
+    default_courses: registry.courses.filter(entry => entry.portal_default).map(entry => ({
+      course_name: entry.course_name,
+      slug: entry.slug,
+      entry_path: entry.entry_path,
+      integration_status: entry.integration_status,
+      dedicated_page_available: entry.dedicated_page_available
+    }))
+  });
+});
+
+app.post('/api/super-admin/login', (req, res) => {
+  if (!isSuperAdminConfigured()) {
+    return res.status(503).json({ error: 'SUPER_ADMIN_PASSWORD is not configured on the server.' });
+  }
+  const password = String(req.body?.password || '');
+  if (!safeEqualText(password, SUPER_ADMIN_PASSWORD)) {
+    return res.status(401).json({ error: '超级管理员密码错误' });
+  }
+  res.json({
+    token: makeSuperAdminToken(),
+    profile: {
+      role: 'super_admin',
+      display_name: 'Super Admin'
+    }
+  });
+});
+
+function superAdminAuth(req, res, next) {
+  const auth = req.headers['x-super-admin-auth'];
+  if (!auth) return res.status(401).json({ error: 'Unauthorized' });
+  const parsed = parseSuperAdminToken(auth);
+  if (!parsed) return res.status(401).json({ error: 'Invalid super admin auth' });
+  req.superAdminRole = parsed.role;
+  next();
+}
+
+app.get('/api/super-admin/overview', superAdminAuth, async (_req, res) => {
+  try {
+    const overview = await buildSuperAdminOverview();
+    res.json(overview);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ─── Teacher Auth Middleware ───
@@ -3902,6 +3997,28 @@ const PORTAL_SUBMISSION_FIELDS = 'activity_id,media_type,upload_time,status';
 const PORTAL_SUBMISSION_LEGACY_FIELDS = 'activity_id,upload_time';
 const PORTAL_USER_FIELDS = 'activity_id,student_id';
 const PORTAL_DEFAULT_COURSES = ['AI学习课程'];
+const DEFAULT_COURSE_REGISTRY = {
+  version: 1,
+  updated_at: '2026-05-14T00:00:00.000Z',
+  courses: [
+    {
+      slug: 'ai-learning',
+      course_name: 'AI学习课程',
+      short_name: 'AI学习',
+      audience: '大一新生',
+      visual_style: '科技感，竞赛感',
+      description: 'AI学习课程总入口。未来的 AI 专属课程网页将直接挂载到该路由下。',
+      integration_status: 'planned',
+      entry_path: '/courses/ai-learning/',
+      module_key: 'ai-learning-v1',
+      portal_default: true,
+      launch_ready: false,
+      supports_activity_context: true,
+      supports_shared_identity: true,
+      supports_invite_codes: true
+    }
+  ]
+};
 
 function normalizePortalCourseName(value) {
   return sanitizeText(value, 120) || '未命名课程';
@@ -3911,9 +4028,122 @@ function buildPortalCourseKey(courseName) {
   return crypto.createHash('sha1').update(normalizePortalCourseName(courseName)).digest('hex').slice(0, 12);
 }
 
-function portalCoursePriority(courseName) {
-  const index = PORTAL_DEFAULT_COURSES.map(normalizePortalCourseName).indexOf(normalizePortalCourseName(courseName));
-  return index === -1 ? 1000 : index;
+function normalizeCourseSlug(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+    .slice(0, 60) || 'course';
+}
+
+function sanitizeCourseEntryPath(value) {
+  const text = String(value || '').trim();
+  if (!text || !text.startsWith('/')) return '';
+  if (text.includes('..') || text.includes('\\')) return '';
+  if (!/^\/[a-zA-Z0-9/_\-.]*$/.test(text)) return '';
+  return text;
+}
+
+function courseEntryPublicFilePath(entryPath) {
+  const normalized = sanitizeCourseEntryPath(entryPath);
+  if (!normalized) return null;
+  let relative = normalized.replace(/^\/+/, '');
+  if (!relative) return null;
+  if (relative.endsWith('/')) relative += 'index.html';
+  return path.join(__dirname, 'public', ...relative.split('/'));
+}
+
+function courseEntryPathExists(entryPath) {
+  const filePath = courseEntryPublicFilePath(entryPath);
+  return !!filePath && fs.existsSync(filePath);
+}
+
+function normalizeIntegrationStatus(value) {
+  const normalized = String(value || '').trim().toLowerCase();
+  if (['ready', 'integrating', 'planned'].includes(normalized)) return normalized;
+  return 'planned';
+}
+
+function normalizeCourseRegistryEntry(entry = {}) {
+  const courseName = normalizePortalCourseName(entry.course_name || entry.name);
+  const slug = normalizeCourseSlug(entry.slug || courseName);
+  const entryPath = sanitizeCourseEntryPath(entry.entry_path || `/courses/${slug}/`);
+  const dedicatedPageAvailable = courseEntryPathExists(entryPath);
+  const integrationStatus = normalizeIntegrationStatus(entry.integration_status);
+  return {
+    slug,
+    course_name: courseName,
+    short_name: sanitizeText(entry.short_name, 80) || courseName,
+    audience: sanitizeText(entry.audience, 120) || '',
+    visual_style: sanitizeText(entry.visual_style, 120) || '',
+    description: sanitizeText(entry.description, 240) || '',
+    integration_status: dedicatedPageAvailable && integrationStatus === 'planned' ? 'integrating' : integrationStatus,
+    entry_path: entryPath,
+    dedicated_page_available: dedicatedPageAvailable,
+    module_key: sanitizeText(entry.module_key, 80) || slug,
+    portal_default: entry.portal_default !== false,
+    launch_ready: !!entry.launch_ready && dedicatedPageAvailable,
+    supports_activity_context: entry.supports_activity_context !== false,
+    supports_shared_identity: entry.supports_shared_identity !== false,
+    supports_invite_codes: entry.supports_invite_codes !== false
+  };
+}
+
+function loadCourseRegistry() {
+  const fallback = {
+    version: DEFAULT_COURSE_REGISTRY.version,
+    updated_at: DEFAULT_COURSE_REGISTRY.updated_at,
+    courses: DEFAULT_COURSE_REGISTRY.courses.map(normalizeCourseRegistryEntry)
+  };
+
+  try {
+    if (!fs.existsSync(COURSE_REGISTRY_FILE)) return fallback;
+    const raw = fs.readFileSync(COURSE_REGISTRY_FILE, 'utf8');
+    const parsed = JSON.parse(raw);
+    const courses = Array.isArray(parsed?.courses) ? parsed.courses.map(normalizeCourseRegistryEntry) : [];
+    const merged = new Map(fallback.courses.map(entry => [normalizePortalCourseName(entry.course_name), entry]));
+    for (const entry of courses) merged.set(normalizePortalCourseName(entry.course_name), entry);
+    return {
+      version: Number(parsed?.version) || fallback.version,
+      updated_at: String(parsed?.updated_at || fallback.updated_at),
+      courses: Array.from(merged.values())
+    };
+  } catch (error) {
+    console.warn('Course registry fallback applied:', error.message);
+    return fallback;
+  }
+}
+
+function buildPublicCourseIntegration(entry = null) {
+  if (!entry) return null;
+  return {
+    slug: entry.slug,
+    short_name: entry.short_name,
+    audience: entry.audience,
+    visual_style: entry.visual_style,
+    description: entry.description,
+    integration_status: entry.integration_status,
+    entry_path: entry.entry_path,
+    dedicated_page_available: entry.dedicated_page_available,
+    module_key: entry.module_key,
+    portal_default: entry.portal_default,
+    launch_ready: entry.launch_ready,
+    supports_activity_context: entry.supports_activity_context,
+    supports_shared_identity: entry.supports_shared_identity,
+    supports_invite_codes: entry.supports_invite_codes
+  };
+}
+
+function portalCoursePriority(courseName, registryCourses = []) {
+  const normalized = normalizePortalCourseName(courseName);
+  const registryIndex = registryCourses
+    .filter(entry => entry.portal_default)
+    .map(entry => normalizePortalCourseName(entry.course_name))
+    .indexOf(normalized);
+  if (registryIndex !== -1) return registryIndex;
+  const fallbackIndex = PORTAL_DEFAULT_COURSES.map(normalizePortalCourseName).indexOf(normalized);
+  return fallbackIndex === -1 ? 1000 : fallbackIndex;
 }
 
 function resolvePortalMediaType(row = {}) {
@@ -3948,7 +4178,7 @@ function emptyPortalMetrics() {
   };
 }
 
-function emptyPortalCourse(courseName) {
+function emptyPortalCourse(courseName, registryEntry = null) {
   const normalized = normalizePortalCourseName(courseName);
   return {
     course_key: buildPortalCourseKey(normalized),
@@ -3961,7 +4191,8 @@ function emptyPortalCourse(courseName) {
     latest_activity_at: null,
     latest_upload_at: null,
     activities: [],
-    studentIds: new Set()
+    studentIds: new Set(),
+    integration: buildPublicCourseIntegration(registryEntry)
   };
 }
 
@@ -3980,6 +4211,9 @@ function summarizePortalActivity(activity, metrics = emptyPortalMetrics()) {
 }
 
 async function buildPortalCourseDirectory(courseNameFilter = null) {
+  const registry = loadCourseRegistry();
+  const registryMap = new Map(registry.courses.map(entry => [normalizePortalCourseName(entry.course_name), entry]));
+
   let activityQuery = supabase
     .from('activities')
     .select(PORTAL_ACTIVITY_FIELDS)
@@ -4040,8 +4274,9 @@ async function buildPortalCourseDirectory(courseNameFilter = null) {
   const courses = new Map();
   for (const activity of activities) {
     const courseName = normalizePortalCourseName(activity.course_name);
+    const registryEntry = registryMap.get(courseName) || null;
     if (!courses.has(courseName)) {
-      courses.set(courseName, emptyPortalCourse(courseName));
+      courses.set(courseName, emptyPortalCourse(courseName, registryEntry));
     }
 
     const course = courses.get(courseName);
@@ -4062,16 +4297,18 @@ async function buildPortalCourseDirectory(courseNameFilter = null) {
   }
 
   if (!normalizedFilter) {
-    for (const defaultCourseName of PORTAL_DEFAULT_COURSES) {
-      const normalized = normalizePortalCourseName(defaultCourseName);
-      if (!courses.has(normalized)) courses.set(normalized, emptyPortalCourse(normalized));
+    for (const registryEntry of registry.courses.filter(entry => entry.portal_default)) {
+      const normalized = normalizePortalCourseName(registryEntry.course_name);
+      if (!courses.has(normalized)) courses.set(normalized, emptyPortalCourse(normalized, registryEntry));
     }
+  } else if (registryMap.has(normalizedFilter) && !courses.has(normalizedFilter)) {
+    courses.set(normalizedFilter, emptyPortalCourse(normalizedFilter, registryMap.get(normalizedFilter)));
   }
 
   return Array.from(courses.values())
     .map(course => {
       course.activities.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
-      const result = {
+      return {
         course_key: course.course_key,
         course_name: course.course_name,
         activity_count: course.activity_count,
@@ -4081,17 +4318,94 @@ async function buildPortalCourseDirectory(courseNameFilter = null) {
         video_count: course.video_count,
         latest_activity_at: course.latest_activity_at,
         latest_upload_at: course.latest_upload_at,
-        activities: course.activities
+        activities: course.activities,
+        integration: course.integration
       };
-      return result;
     })
     .sort((a, b) => {
-      const priorityDelta = portalCoursePriority(a.course_name) - portalCoursePriority(b.course_name);
+      const priorityDelta = portalCoursePriority(a.course_name, registry.courses) - portalCoursePriority(b.course_name, registry.courses);
       if (priorityDelta !== 0) return priorityDelta;
       const left = new Date(a.latest_upload_at || a.latest_activity_at || 0).getTime();
       const right = new Date(b.latest_upload_at || b.latest_activity_at || 0).getTime();
       return right - left;
     });
+}
+
+async function buildSuperAdminOverview() {
+  const registry = loadCourseRegistry();
+  const courses = await buildPortalCourseDirectory();
+  const liveCourseMap = new Map(courses.map(course => [normalizePortalCourseName(course.course_name), course]));
+  const registryCourses = registry.courses.map(entry => {
+    const live = liveCourseMap.get(normalizePortalCourseName(entry.course_name));
+    return {
+      ...entry,
+      activity_count: Number(live?.activity_count || 0),
+      student_count: Number(live?.student_count || 0),
+      submission_count: Number(live?.submission_count || 0),
+      image_count: Number(live?.image_count || 0),
+      video_count: Number(live?.video_count || 0),
+      latest_activity_at: live?.latest_activity_at || null,
+      latest_upload_at: live?.latest_upload_at || null
+    };
+  });
+
+  const unregisteredCourses = courses
+    .filter(course => !registryCourses.some(entry => normalizePortalCourseName(entry.course_name) === normalizePortalCourseName(course.course_name)))
+    .map(course => ({
+      course_name: course.course_name,
+      activity_count: course.activity_count,
+      student_count: course.student_count,
+      submission_count: course.submission_count,
+      latest_activity_at: course.latest_activity_at,
+      latest_upload_at: course.latest_upload_at
+    }));
+
+  const recentActivities = courses
+    .flatMap(course => course.activities.map(activity => ({
+      course_name: course.course_name,
+      activity_name: activity.activity_name,
+      class_name: activity.class_name,
+      activity_id: activity.id,
+      created_at: activity.created_at,
+      latest_upload_at: activity.latest_upload_at,
+      submission_count: activity.submission_count,
+      student_count: activity.student_count
+    })))
+    .sort((a, b) => new Date(b.latest_upload_at || b.created_at || 0) - new Date(a.latest_upload_at || a.created_at || 0))
+    .slice(0, 12);
+
+  return {
+    generated_at: new Date().toISOString(),
+    super_admin_configured: isSuperAdminConfigured(),
+    health: {
+      version: process.env.RENDER_GIT_COMMIT || process.env.npm_package_version || 'local',
+      environment: process.env.RENDER ? 'render' : (process.env.NODE_ENV || 'development'),
+      storage_maintenance_mode: getStorageMaintenanceMode(),
+      supabase_app_key_type: getSupabaseAppKeyType(),
+      supabase_maintenance_key_type: getSupabaseMaintenanceKeyType(),
+      archive_provider: getArchiveProviderInfo(),
+      tasks: buildTaskOpsOverview()
+    },
+    summary: {
+      course_count: courses.length,
+      registered_course_count: registryCourses.length,
+      ready_course_count: registryCourses.filter(entry => entry.launch_ready).length,
+      planned_course_count: registryCourses.filter(entry => entry.integration_status === 'planned').length,
+      dedicated_page_count: registryCourses.filter(entry => entry.dedicated_page_available).length,
+      live_activity_count: courses.reduce((sum, course) => sum + Number(course.activity_count || 0), 0),
+      live_student_count: courses.reduce((sum, course) => sum + Number(course.student_count || 0), 0),
+      live_submission_count: courses.reduce((sum, course) => sum + Number(course.submission_count || 0), 0),
+      unregistered_course_count: unregisteredCourses.length
+    },
+    registry: {
+      version: registry.version,
+      updated_at: registry.updated_at,
+      courses: registryCourses,
+      unregistered_courses: unregisteredCourses
+    },
+    courses,
+    recent_activities: recentActivities
+  };
 }
 
 // ─── PORTAL ───
@@ -4113,9 +4427,28 @@ app.get('/api/portal/course-activities', async (req, res) => {
   try {
     const courseName = normalizePortalCourseName(req.query.course_name);
     const courses = await buildPortalCourseDirectory(courseName);
-    const course = courses[0] || emptyPortalCourse(courseName);
+    const registry = loadCourseRegistry();
+    const registryEntry = registry.courses.find(entry => normalizePortalCourseName(entry.course_name) === courseName) || null;
+    const course = courses[0] || {
+      ...emptyPortalCourse(courseName, registryEntry),
+      student_count: 0
+    };
     delete course.studentIds;
     res.json({ course });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/portal/course-registry', async (req, res) => {
+  try {
+    const registry = loadCourseRegistry();
+    const courseName = sanitizeText(req.query.course_name, 120);
+    if (courseName) {
+      const entry = registry.courses.find(item => normalizePortalCourseName(item.course_name) === normalizePortalCourseName(courseName)) || null;
+      return res.json({ course: entry });
+    }
+    res.json({ version: registry.version, updated_at: registry.updated_at, courses: registry.courses });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

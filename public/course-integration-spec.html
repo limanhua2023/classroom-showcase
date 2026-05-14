@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>课程页面接入规范 - ClassShow</title>
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body class="course-page">
+  <header class="topbar">
+    <a class="topbar-logo" href="index.html">Class<span>Show</span></a>
+    <div class="topbar-right">
+      <button class="btn btn-secondary btn-sm" onclick="location.href='super-admin.html'">超级管理页</button>
+      <button class="btn btn-secondary btn-sm" onclick="location.href='course.html?course=' + encodeURIComponent('AI学习课程')">AI课程页</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="course-hero">
+      <div class="course-hero-copy">
+        <div class="brand-kicker">COURSE PAGE SPEC</div>
+        <h1>课程页面接入规范</h1>
+        <p>以后你把具体课程网页交给我，我会按这套规范直接挂到 ClassShow 总门户，不再重写身份、邀请码、上传、评分、反馈、学习时长和运维链路。</p>
+      </div>
+    </section>
+
+    <section class="course-grid">
+      <article class="course-card">
+        <h3>1. 目录与路由</h3>
+        <p>课程专页默认放在 <code>public/courses/&lt;slug&gt;/index.html</code>。</p>
+        <p>课程名称与专页路由映射统一登记在 <code>data/course-registry.json</code>。</p>
+      </article>
+
+      <article class="course-card">
+        <h3>2. 必须复用的公共底座</h3>
+        <p>学生身份、邀请码隔离、作品上传、作品读取、评分、评论、反馈、学习时长、排行榜、归档和维护诊断继续走现有公共 API。</p>
+      </article>
+
+      <article class="course-card">
+        <h3>3. 课程页运行时接口</h3>
+        <p>课程页统一引入 <code>/js/api.js</code> 和 <code>/js/course-runtime.js</code>。</p>
+        <p>运行时对象：<code>window.ClassShowCourseRuntime</code></p>
+        <p>当前方法：<code>getContext()</code>、<code>fetchRegistry(courseName)</code>、<code>fetchCourse(courseName)</code>、<code>openPortal(courseName)</code>、<code>openIndex()</code></p>
+      </article>
+
+      <article class="course-card">
+        <h3>4. 课程页允许自定义的范围</h3>
+        <p>允许完全重做视觉、文案、动效、模块布局、竞赛玩法和内容叙事。课程页负责课程体验层，总门户和公共后端负责基础能力层。</p>
+      </article>
+
+      <article class="course-card">
+        <h3>5. 活动上下文</h3>
+        <p>课程页可以直接读取当前课程、当前活动、当前学生身份和访客状态，因此后续 AI 课程网页可以直接知道自己当前挂在哪个课程和活动下。</p>
+      </article>
+
+      <article class="course-card">
+        <h3>6. 安全边界</h3>
+        <p>课程目录接口不会公开活动邀请码。学生仍需教师发放的邀请码进入具体活动，避免跨课程误入和邀请码泄露。</p>
+      </article>
+    </section>
+  </main>
+</body>
+</html>

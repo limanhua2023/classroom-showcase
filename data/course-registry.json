@@ -1,0 +1,22 @@
+{
+  "version": 1,
+  "updated_at": "2026-05-14T00:00:00.000Z",
+  "courses": [
+    {
+      "slug": "ai-learning",
+      "course_name": "AI学习课程",
+      "short_name": "AI学习",
+      "audience": "大一新生",
+      "visual_style": "科技感，竞赛感",
+      "description": "AI学习课程总入口。后续专属课程网页直接挂载到该路由。",
+      "integration_status": "planned",
+      "entry_path": "/courses/ai-learning/",
+      "module_key": "ai-learning-v1",
+      "portal_default": true,
+      "launch_ready": false,
+      "supports_activity_context": true,
+      "supports_shared_identity": true,
+      "supports_invite_codes": true
+    }
+  ]
+}

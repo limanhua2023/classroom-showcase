@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>超级管理员 - ClassShow</title>
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body class="course-page">
+  <header class="topbar">
+    <a class="topbar-logo" href="index.html">Class<span>Show</span></a>
+    <div class="topbar-right">
+      <button class="btn btn-secondary btn-sm" onclick="location.href='index.html'">总门户</button>
+      <button class="btn btn-secondary btn-sm" onclick="location.href='teacher-login.html'">教师入口</button>
+      <button class="btn btn-secondary btn-sm" onclick="logoutSuperAdmin()">退出超级管理</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="course-hero">
+      <div class="course-hero-copy">
+        <div class="brand-kicker">SUPER ADMIN CONSOLE</div>
+        <h1>统一课程管理页</h1>
+        <p>这里负责课程总门户、课程注册表、课程专页挂载状态和后续课程接入规范。教师后台继续按活动管理；超级管理员只管理全局课程层。</p>
+        <div class="course-hero-actions">
+          <button class="btn btn-primary" onclick="loadOverview()">刷新总览</button>
+          <button class="btn btn-secondary" onclick="location.href='course.html?course=' + encodeURIComponent('AI学习课程')">打开 AI 课程页</button>
+        </div>
+      </div>
+      <div class="course-scoreboard" aria-label="超级管理员统计">
+        <div><strong id="sumCourses">0</strong><span>课程</span></div>
+        <div><strong id="sumRegistered">0</strong><span>已注册</span></div>
+        <div><strong id="sumReady">0</strong><span>已就绪</span></div>
+        <div><strong id="sumActivities">0</strong><span>活动</span></div>
+      </div>
+    </section>
+
+    <section class="course-entry-panel" id="superAdminLoginPanel">
+      <div>
+        <strong>超级管理员登录</strong>
+        <span id="superAdminStatusHint">正在检查服务器配置...</span>
+      </div>
+      <div class="course-entry-actions">
+        <input id="superAdminPassword" type="password" placeholder="输入超级管理员密码">
+        <button class="btn btn-primary btn-sm" onclick="loginSuperAdmin()">登录</button>
+      </div>
+    </section>
+
+    <section class="course-control-strip">
+      <div>
+        <strong>系统状态</strong>
+        <span id="healthLine">未登录</span>
+      </div>
+      <div class="course-search">
+        <input id="superSearch" type="search" placeholder="按课程名 / slug / 状态搜索" oninput="renderCourses()">
+        <button class="btn btn-secondary btn-sm" onclick="loadOverview()">刷新</button>
+      </div>
+    </section>
+
+    <section class="course-identity-note">
+      <strong>接入原则：</strong>
+      总门户统一课程入口，课程专页负责课程叙事与玩法；实名身份、邀请码隔离、作品上传、学习时长、评分反馈和运维能力继续复用 ClassShow 公共底座。
+    </section>
+
+    <section class="course-grid" id="superSummaryGrid">
+      <div class="course-loading">登录后加载全局课程总览...</div>
+    </section>
+
+    <section class="course-portal" style="margin-top:18px;">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">COURSE REGISTRY</div>
+          <h2>课程注册表</h2>
+          <p>每个课程的专页路由、模块标识、接入状态和公共能力支持，都在这里统一登记。</p>
+        </div>
+      </div>
+      <div class="course-grid" id="registryGrid">
+        <div class="course-loading">登录后加载课程注册表...</div>
+      </div>
+    </section>
+
+    <section class="course-portal" style="margin-top:18px;">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">INTEGRATION SPEC</div>
+          <h2>课程页面接入规范</h2>
+          <p>以后你给我任何课程网页，我按这套规则直接挂入总门户。</p>
+        </div>
+        <button class="btn btn-secondary btn-sm" onclick="location.href='course-integration-spec.html'">打开完整规范</button>
+      </div>
+      <div class="course-grid">
+        <article class="course-card">
+          <h3>目录与路由</h3>
+          <p>课程专页默认放在 <code>public/courses/&lt;slug&gt;/index.html</code>，统一由 <code>data/course-registry.json</code> 做映射。</p>
+        </article>
+        <article class="course-card">
+          <h3>运行时接口</h3>
+          <p>专页统一引入 <code>js/api.js</code> 和 <code>js/course-runtime.js</code>，直接读取课程、活动、身份和回跳能力。</p>
+        </article>
+        <article class="course-card">
+          <h3>公共能力复用</h3>
+          <p>上传、评分、评论、反馈、学习时长和排行榜全部继续走公共 API，不在课程专页里重造后端。</p>
+        </article>
+        <article class="course-card">
+          <h3>安全边界</h3>
+          <p>同一学号跨课程共用同一身份，但不同课程继续用不同邀请码隔离，课程目录不直接公开邀请码。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="course-portal" style="margin-top:18px;">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">RECENT ACTIVITIES</div>
+          <h2>最近活动</h2>
+          <p>用来观察哪些课程正在活跃，方便优先接入对应的专属课程页。</p>
+        </div>
+      </div>
+      <div class="course-grid" id="recentActivityGrid">
+        <div class="course-loading">登录后加载最近活动...</div>
+      </div>
+    </section>
+  </main>
+
+  <script src="js/api.js"></script>
+  <script>
+    let overview = null;
+
+    init();
+
+    async function init() {
+      await loadStatus();
+      if (sessionStorage.getItem('superAdminToken')) {
+        await loadOverview();
+      }
+    }
+
+    async function loadStatus() {
+      try {
+        const status = await api('/super-admin/status');
+        document.getElementById('superAdminStatusHint').textContent = status.configured
+          ? `服务器已配置超级管理员密码。已注册课程 ${Number(status.registered_course_count || 0)} 个。`
+          : '服务器尚未配置 SUPER_ADMIN_PASSWORD，当前页面只能做只读准备。';
+      } catch (e) {
+        document.getElementById('superAdminStatusHint').textContent = '状态读取失败：' + e.message;
+      }
+    }
+
+    async function loginSuperAdmin() {
+      const password = document.getElementById('superAdminPassword').value;
+      if (!password) return toast('请输入超级管理员密码', 'error');
+      try {
+        const res = await api('/super-admin/login', {
+          method: 'POST',
+          body: JSON.stringify({ password })
+        });
+        sessionStorage.setItem('superAdminToken', res.token);
+        toast('超级管理员登录成功', 'success');
+        await loadOverview();
+      } catch (e) {
+        toast(e.message, 'error');
+      }
+    }
+
+    async function loadOverview() {
+      const token = sessionStorage.getItem('superAdminToken');
+      if (!token) return;
+      try {
+        overview = await api('/super-admin/overview');
+        document.getElementById('superAdminLoginPanel').style.display = 'none';
+        renderOverview();
+      } catch (e) {
+        if (/Unauthorized|Invalid super admin auth/i.test(e.message)) {
+          sessionStorage.removeItem('superAdminToken');
+        }
+        toast('加载统一课程管理页失败：' + e.message, 'error');
+      }
+    }
+
+    function renderOverview() {
+      const summary = overview?.summary || {};
+      document.getElementById('sumCourses').textContent = Number(summary.course_count || 0);
+      document.getElementById('sumRegistered').textContent = Number(summary.registered_course_count || 0);
+      document.getElementById('sumReady').textContent = Number(summary.ready_course_count || 0);
+      document.getElementById('sumActivities').textContent = Number(summary.live_activity_count || 0);
+
+      const health = overview?.health || {};
+      document.getElementById('healthLine').textContent =
+        `版本 ${health.version || '-'} | 存储维护 ${health.storage_maintenance_mode || '-'} | 应用密钥 ${health.supabase_app_key_type || '-'} | 维护密钥 ${health.supabase_maintenance_key_type || '-'}`;
+
+      renderCourses();
+      renderRegistry();
+      renderRecentActivities();
+    }
+
+    function renderCourses() {
+      const grid = document.getElementById('superSummaryGrid');
+      const keyword = document.getElementById('superSearch').value.trim().toLowerCase();
+      const courses = (overview?.courses || []).filter(course => {
+        const integration = course.integration || {};
+        const text = [
+          course.course_name,
+          integration.slug,
+          integration.integration_status,
+          integration.visual_style
+        ].join(' ').toLowerCase();
+        return !keyword || text.includes(keyword);
+      });
+
+      if (!courses.length) {
+        grid.innerHTML = '<div class="course-loading">没有匹配的课程。</div>';
+        return;
+      }
+
+      grid.innerHTML = courses.map(course => {
+        const integration = course.integration || {};
+        return `
+          <article class="course-card">
+            <div class="course-card-top">
+              <span class="course-status">${escapeHtml(integration.integration_status || 'unregistered')}</span>
+              <span class="course-code">${escapeHtml(integration.slug || course.course_key || '-')}</span>
+            </div>
+            <h3>${escapeHtml(course.course_name)}</h3>
+            <p>${escapeHtml(integration.description || '课程已接入总门户，等待专属课程页挂载。')}</p>
+            <div class="course-stats">
+              <span><strong>${Number(course.activity_count || 0)}</strong> 活动</span>
+              <span><strong>${Number(course.student_count || 0)}</strong> 学生</span>
+              <span><strong>${Number(course.submission_count || 0)}</strong> 作品</span>
+            </div>
+            <div class="course-media-row">
+              <span>${escapeHtml(integration.audience || '未设置对象')}</span>
+              <span>${escapeHtml(integration.visual_style || '未设置风格')}</span>
+              <span>${integration.dedicated_page_available ? '专页接口已就绪' : '专页待挂载'}</span>
+            </div>
+            <div class="course-card-actions">
+              <button class="btn btn-primary btn-sm" onclick="openManagedCourse('${encodeURIComponent(course.course_name || '')}')">打开课程页</button>
+              ${integration.entry_path ? `<button class="btn btn-secondary btn-sm" onclick="openRegisteredEntry('${escapeHtml(integration.entry_path)}','${encodeURIComponent(course.course_name || '')}')">打开专页接口</button>` : ''}
+            </div>
+          </article>
+        `;
+      }).join('');
+    }
+
+    function renderRegistry() {
+      const grid = document.getElementById('registryGrid');
+      const registryCourses = overview?.registry?.courses || [];
+      const extraCourses = overview?.registry?.unregistered_courses || [];
+      const cards = registryCourses.map(entry => `
+        <article class="course-card">
+          <div class="course-card-top">
+            <span class="course-status">${escapeHtml(entry.integration_status)}</span>
+            <span class="course-code">${escapeHtml(entry.module_key)}</span>
+          </div>
+          <h3>${escapeHtml(entry.course_name)}</h3>
+          <p>${escapeHtml(entry.description || '暂无课程描述')}</p>
+          <div class="course-media-row">
+            <span>slug: ${escapeHtml(entry.slug)}</span>
+            <span>route: ${escapeHtml(entry.entry_path || '-')}</span>
+          </div>
+          <div class="course-stats">
+            <span><strong>${entry.dedicated_page_available ? 'Yes' : 'No'}</strong> 专页</span>
+            <span><strong>${entry.launch_ready ? 'Ready' : 'Wait'}</strong> 上线</span>
+            <span><strong>${Number(entry.activity_count || 0)}</strong> 活动</span>
+          </div>
+        </article>
+      `);
+      const unregistered = extraCourses.map(entry => `
+        <article class="course-card">
+          <div class="course-card-top">
+            <span class="course-status alt">unregistered</span>
+            <span class="course-code">live-course</span>
+          </div>
+          <h3>${escapeHtml(entry.course_name)}</h3>
+          <p>这个课程已经在生产库里有活动，但还没有写入课程注册表。</p>
+          <div class="course-stats">
+            <span><strong>${Number(entry.activity_count || 0)}</strong> 活动</span>
+            <span><strong>${Number(entry.student_count || 0)}</strong> 学生</span>
+            <span><strong>${Number(entry.submission_count || 0)}</strong> 作品</span>
+          </div>
+        </article>
+      `);
+      grid.innerHTML = [...cards, ...unregistered].join('') || '<div class="course-loading">没有注册课程。</div>';
+    }
+
+    function renderRecentActivities() {
+      const grid = document.getElementById('recentActivityGrid');
+      const items = overview?.recent_activities || [];
+      if (!items.length) {
+        grid.innerHTML = '<div class="course-loading">当前还没有活动记录。</div>';
+        return;
+      }
+      grid.innerHTML = items.map(item => `
+        <article class="course-card">
+          <div class="course-card-top">
+            <span class="course-status">${escapeHtml(item.course_name || '未命名课程')}</span>
+            <span class="course-code">${escapeHtml(item.class_name || '-')}</span>
+          </div>
+          <h3>${escapeHtml(item.activity_name || '未命名活动')}</h3>
+          <p>${escapeHtml(item.latest_upload_at ? '最近上传 ' + formatBangkokTime(item.latest_upload_at, { withSeconds: false }) : '尚无上传记录')}</p>
+          <div class="course-stats">
+            <span><strong>${Number(item.student_count || 0)}</strong> 学生</span>
+            <span><strong>${Number(item.submission_count || 0)}</strong> 作品</span>
+          </div>
+          <div class="course-card-actions">
+            <button class="btn btn-primary btn-sm" onclick="openManagedCourse('${encodeURIComponent(item.course_name || '')}')">打开课程页</button>
+          </div>
+        </article>
+      `).join('');
+    }
+
+    function logoutSuperAdmin() {
+      sessionStorage.removeItem('superAdminToken');
+      toast('已退出超级管理员', 'success');
+      location.reload();
+    }
+
+    function openManagedCourse(encodedCourseName) {
+      location.href = 'course.html?course=' + encodedCourseName;
+    }
+
+    function openRegisteredEntry(entryPath, encodedCourseName) {
+      const joiner = String(entryPath || '').includes('?') ? '&' : '?';
+      location.href = String(entryPath || '') + joiner + 'course=' + encodedCourseName;
+    }
+  </script>
+</body>
+</html>

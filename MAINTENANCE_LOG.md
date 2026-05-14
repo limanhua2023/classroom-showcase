@@ -1,6 +1,18 @@
 # ClassShow 维护日志
 
 ## 2026-05-14
+### Super Admin Course Console and Integration Spec
+- Added a unified super-admin course console at `public/super-admin.html`.
+- Added protected APIs:
+  - `GET /api/super-admin/status`
+  - `POST /api/super-admin/login`
+  - `GET /api/super-admin/overview`
+- Added a shared course registry at `data/course-registry.json` so future dedicated course pages can be mapped to stable public routes without changing the activity data model.
+- Added a dedicated AI course slot at `public/courses/ai-learning/index.html`. This is the first live integration placeholder and can be replaced directly by the real AI course page later.
+- Added a lightweight course runtime adapter at `public/js/course-runtime.js` so future course pages can read shared identity, current activity context, registry metadata, and live course summaries.
+- Added a browser-viewable integration guide at `public/course-integration-spec.html` and a repo-level maintenance guide at `COURSE_PAGE_INTEGRATION_SPEC.md`.
+- Exposed super-admin entry buttons from the homepage and teacher login page to reduce operational friction.
+
 ### Course Portal Foundation
 - Added public course-directory APIs for the main showcase portal:
   - `GET /api/portal/courses`

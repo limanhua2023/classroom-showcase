@@ -12,17 +12,17 @@
       <div class="launch-shell">
         <section class="launch-intro" aria-label="ClassShow 课堂作品秀">
           <div class="brand-kicker">AI CLASSROOM SHOWCASE</div>
-          <h1>让课堂作品<span>真正被看见</span></h1>
-          <p>ClassShow 把学生作品上传、实名入场、匿名互评、信息反馈和大屏展示连成一个课堂现场。适合社团招新、AI作品展、课程汇报和项目制学习展示。</p>
+          <h1>让课堂作品<br><span>真正被看见</span></h1>
+          <p>ClassShow 把学生作品上传、实名入场、匿名互评、信息反馈和大屏展示连成一个统一门户。以后 AI 学习课程、经济学学习课程、数学学习课程等，都从这里接入。</p>
           <div class="launch-signals">
-            <div class="launch-signal"><strong>实名入场</strong><span>Excel 名单校验，减少冒名和刷分</span></div>
-            <div class="launch-signal"><strong>互动互评</strong><span>浏览、评分、评论、反馈统一记录</span></div>
-            <div class="launch-signal"><strong>大屏展示</strong><span>新作品、Top 3、全作品自动轮播</span></div>
+            <div class="launch-signal"><strong>实名入场</strong><span>同一学号跨课程保持同一身份</span></div>
+            <div class="launch-signal"><strong>竞赛互动</strong><span>评分、评论、反馈、排行统一记录</span></div>
+            <div class="launch-signal"><strong>课程门户</strong><span>不同课程用不同邀请码隔离进入</span></div>
           </div>
           <div class="launch-wall" aria-hidden="true">
-            <div class="launch-tile">AI 海报<br>评分热度 4.8</div>
-            <div class="launch-tile">短视频<br>课堂首映</div>
-            <div class="launch-tile">项目提案<br>实时反馈</div>
+            <div class="launch-tile">AI 海报<br>课堂竞技</div>
+            <div class="launch-tile">视频作业<br>作品展示</div>
+            <div class="launch-tile">项目报告<br>即时反馈</div>
           </div>
         </section>
 
@@ -43,7 +43,7 @@
           </div>
 
           <div id="panelGuest" style="display:none;">
-            <div class="guest-badge">访客模式：可浏览全部作品，不能评分或评论</div>
+            <div class="guest-badge">访客模式：可浏览作品，但不能评分或评论</div>
             <div class="form-group">
               <input type="password" id="guestCode" placeholder="输入课堂邀请码" style="text-align:center;font-size:1.2rem;letter-spacing:2px;">
             </div>
@@ -54,6 +54,7 @@
           <button class="btn btn-secondary btn-block" onclick="location.href='teacher-login.html'">教师登录</button>
           <div style="margin-top:16px;">
             <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-login.html?create=1'">+ 创建新活动</button>
+            <button class="btn btn-sm btn-secondary" style="margin-left:8px;" onclick="location.href='super-admin.html'">超级管理</button>
           </div>
         </div>
       </div>
@@ -63,7 +64,7 @@
           <div>
             <div class="brand-kicker course-kicker">COURSE ARENA</div>
             <h2>课程作品总门户</h2>
-            <p>以后 AI学习课程、经济学学习课程、数学学习课程等，都从这里进入。学生身份跨课程保持一致，不同课程使用不同邀请码。</p>
+            <p>以后 AI 学习课程、经济学学习课程、数学学习课程等，都从这里进入。课程页负责课程体验，公共底座继续负责身份、邀请码、上传、反馈、学习时长与运维。</p>
           </div>
           <button class="btn btn-secondary btn-sm" onclick="loadPortalCourses()">刷新课程</button>
         </div>
@@ -78,12 +79,14 @@
   <script>
     document.getElementById('inviteCode').addEventListener('keydown', e => { if (e.key === 'Enter') joinActivity(); });
     document.getElementById('guestCode').addEventListener('keydown', e => { if (e.key === 'Enter') joinAsGuest(); });
+
     const codeFromUrl = new URLSearchParams(location.search).get('code');
     if (codeFromUrl) {
       const normalized = codeFromUrl.trim().toUpperCase();
       document.getElementById('inviteCode').value = normalized;
       document.getElementById('guestCode').value = normalized;
     }
+
     loadPortalCourses();
 
     function switchLoginTab(tab) {
@@ -114,8 +117,8 @@
       try {
         const activity = await api('/activities/code/' + code);
         setGuestSession(activity);
-        toast('以访客身份进入...', 'success');
-        setTimeout(() => location.href = 'student-gallery.html', 600);
+        toast('已切换为访客模式', 'success');
+        setTimeout(() => { location.href = 'student-gallery.html'; }, 500);
       } catch (e) {
         toast('邀请码无效，请检查后重试', 'error');
       }
@@ -131,7 +134,12 @@
         video_count: 0,
         latest_activity_at: null,
         latest_upload_at: null,
-        activities: []
+        activities: [],
+        integration: {
+          description: 'AI 学习课程总入口已经保留，等待专属页面挂载。',
+          integration_status: 'planned',
+          entry_path: '/courses/ai-learning/'
+        }
       }];
     }
 
@@ -151,17 +159,18 @@
       const grid = document.getElementById('coursePortalGrid');
       grid.innerHTML = courses.map(course => {
         const latest = course.latest_upload_at || course.latest_activity_at;
+        const integration = course.integration || {};
         const preview = (course.activities || []).slice(0, 3).map(activity => (
           `<span>${escapeHtml(activity.activity_name || '未命名活动')} · ${Number(activity.submission_count || 0)}件</span>`
         )).join('');
         return `
           <article class="course-card">
             <div class="course-card-top">
-              <span class="course-status">科技竞赛场</span>
-              <span class="course-code">${escapeHtml(course.course_key || 'course')}</span>
+              <span class="course-status">${escapeHtml(integration.integration_status || 'planned')}</span>
+              <span class="course-code">${escapeHtml(integration.slug || course.course_key || 'course')}</span>
             </div>
             <h3>${escapeHtml(course.course_name)}</h3>
-            <p>${escapeHtml(course.course_name === 'AI学习课程' ? '面向大一新生的 AI 作品挑战、项目展示与课堂竞赛入口。' : '课程活动、作品展示和大屏展示统一入口。')}</p>
+            <p>${escapeHtml(integration.description || '课程活动、作品展示和后续专属课程页的统一入口。')}</p>
             <div class="course-stats">
               <span><strong>${Number(course.activity_count || 0)}</strong> 活动</span>
               <span><strong>${Number(course.student_count || 0)}</strong> 学生</span>
@@ -172,7 +181,7 @@
               <span>视频 ${Number(course.video_count || 0)}</span>
               <span>${latest ? '最近 ' + escapeHtml(timeAgo(latest)) : '等待开课'}</span>
             </div>
-            <div class="course-preview">${preview || '<span>暂无活动，创建后会自动出现在这里</span>'}</div>
+            <div class="course-preview">${preview || '<span>还没有活动，创建后会自动出现在这里</span>'}</div>
             <div class="course-card-actions">
               <button class="btn btn-primary btn-sm" onclick="openCourse('${encodeURIComponent(course.course_name)}')">进入课程</button>
               <button class="btn btn-secondary btn-sm" onclick="location.href='teacher-login.html'">教师管理</button>

@@ -1,57 +1,95 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
 <head>
-  <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>教师登录 - ClassShow</title>
   <link rel="stylesheet" href="css/main.css">
 </head>
 <body>
   <div class="page-center">
     <div class="auth-box">
-      <a href="index.html" class="back-link">← 返回首页</a>
+      <a href="index.html" class="back-link">返回首页</a>
       <h1>教师<span>后台</span></h1>
 
-      <!-- Login Form -->
       <div id="loginForm">
-        <p class="subtitle">输入邀请码和密码进入管理</p>
-        <div class="form-group"><label>课堂邀请码</label><input type="text" id="loginCode" placeholder="输入邀请码" style="text-transform:uppercase;"></div>
-        <div class="form-group"><label>教师密码</label><input type="password" id="loginPwd" placeholder="输入密码"></div>
+        <p class="subtitle">输入邀请码和教师密码，进入当前活动后台。</p>
+        <div class="form-group">
+          <label>课堂邀请码</label>
+          <input type="text" id="loginCode" placeholder="输入邀请码" style="text-transform:uppercase;">
+        </div>
+        <div class="form-group">
+          <label>教师密码</label>
+          <input type="password" id="loginPwd" placeholder="输入教师密码">
+        </div>
         <button class="btn btn-primary btn-block btn-lg" onclick="doLogin()">登录后台</button>
-        <div class="auth-divider">— 或 —</div>
+        <div class="auth-divider">或</div>
         <button class="btn btn-secondary btn-block" onclick="showCreate()">+ 创建新活动</button>
+        <button class="btn btn-secondary btn-block" style="margin-top:8px;" onclick="location.href='super-admin.html'">超级管理员统一课程管理</button>
       </div>
 
-      <!-- Create Form -->
       <div id="createForm" style="display:none;">
-        <p class="subtitle">创建一个新的课堂活动</p>
-        <div class="form-group"><label>课程名称 *</label><input type="text" id="courseName" placeholder="例如：身边小商业数据的AI辅助分析"></div>
-        <div class="form-group"><label>班级名称 *</label><input type="text" id="clsName" placeholder="例如：2026级电商1班"></div>
-        <div class="form-group"><label>活动名称 *</label><input type="text" id="actName" placeholder="例如：校园小商业数据分析作品展示"></div>
-        <div class="form-group"><label>活动说明</label><textarea id="actDesc" placeholder="简要说明活动要求"></textarea></div>
-        <div class="form-group"><label>邀请码 *</label><input type="text" id="invCode" placeholder="例如：DPU520" style="text-transform:uppercase;"></div>
-        <div class="form-group"><label>教师密码 *</label><input type="password" id="teacherPwd" placeholder="设置后台管理密码"></div>
+        <p class="subtitle">创建一个新的课程活动。</p>
+        <div class="form-group">
+          <label>课程名称 *</label>
+          <input type="text" id="courseName" placeholder="例如：AI学习课程">
+        </div>
+        <div class="form-group">
+          <label>班级名称 *</label>
+          <input type="text" id="clsName" placeholder="例如：2026级新生1班">
+        </div>
+        <div class="form-group">
+          <label>活动名称 *</label>
+          <input type="text" id="actName" placeholder="例如：AI海报创作挑战">
+        </div>
+        <div class="form-group">
+          <label>活动说明</label>
+          <textarea id="actDesc" placeholder="简要说明本次活动要求"></textarea>
+        </div>
+        <div class="form-group">
+          <label>邀请码 *</label>
+          <input type="text" id="invCode" placeholder="例如：AI101" style="text-transform:uppercase;">
+        </div>
+        <div class="form-group">
+          <label>教师密码 *</label>
+          <input type="password" id="teacherPwd" placeholder="设置后台管理密码">
+        </div>
         <button class="btn btn-primary btn-block btn-lg" onclick="createActivity()">创建活动</button>
         <button class="btn btn-secondary btn-block" style="margin-top:8px;" onclick="showLogin()">返回登录</button>
       </div>
     </div>
   </div>
+
   <script src="js/api.js"></script>
   <script>
     if (new URLSearchParams(location.search).get('create') === '1') showCreate();
-    function showCreate() { document.getElementById('loginForm').style.display = 'none'; document.getElementById('createForm').style.display = 'block'; }
-    function showLogin() { document.getElementById('loginForm').style.display = 'block'; document.getElementById('createForm').style.display = 'none'; }
+
+    function showCreate() {
+      document.getElementById('loginForm').style.display = 'none';
+      document.getElementById('createForm').style.display = 'block';
+    }
+
+    function showLogin() {
+      document.getElementById('loginForm').style.display = 'block';
+      document.getElementById('createForm').style.display = 'none';
+    }
 
     async function doLogin() {
       const code = document.getElementById('loginCode').value.trim().toUpperCase();
       const pwd = document.getElementById('loginPwd').value;
       if (!code || !pwd) return toast('请填写完整', 'error');
       try {
-        const res = await api('/teacher/login', { method: 'POST', body: JSON.stringify({ invite_code: code, password: pwd }) });
+        const res = await api('/teacher/login', {
+          method: 'POST',
+          body: JSON.stringify({ invite_code: code, password: pwd })
+        });
         sessionStorage.setItem('teacherToken', res.token);
         sessionStorage.setItem('classshow_activity', JSON.stringify(res.activity));
         sessionStorage.setItem('classshow_activity_id', res.activity.id);
         location.href = 'teacher-dashboard.html';
-      } catch (e) { toast('登录失败: ' + e.message, 'error'); }
+      } catch (e) {
+        toast('登录失败: ' + e.message, 'error');
+      }
     }
 
     async function createActivity() {
@@ -63,10 +101,12 @@
         invite_code: document.getElementById('invCode').value.trim().toUpperCase(),
         teacher_password: document.getElementById('teacherPwd').value
       };
-      if (!data.course_name || !data.class_name || !data.activity_name || !data.invite_code || !data.teacher_password) return toast('请填写所有必填项', 'error');
+      if (!data.course_name || !data.class_name || !data.activity_name || !data.invite_code || !data.teacher_password) {
+        return toast('请填写所有必填项', 'error');
+      }
       try {
         const act = await api('/activities', { method: 'POST', body: JSON.stringify(data) });
-        toast('活动创建成功！邀请码：' + act.invite_code, 'success');
+        toast('活动创建成功，邀请码：' + act.invite_code, 'success');
         const loginRes = await api('/teacher/login', {
           method: 'POST',
           body: JSON.stringify({ invite_code: data.invite_code, password: data.teacher_password })
@@ -74,8 +114,10 @@
         sessionStorage.setItem('teacherToken', loginRes.token);
         sessionStorage.setItem('classshow_activity', JSON.stringify(loginRes.activity));
         sessionStorage.setItem('classshow_activity_id', loginRes.activity.id);
-        setTimeout(() => location.href = 'teacher-dashboard.html', 1000);
-      } catch (e) { toast('创建失败: ' + e.message, 'error'); }
+        setTimeout(() => { location.href = 'teacher-dashboard.html'; }, 800);
+      } catch (e) {
+        toast('创建失败: ' + e.message, 'error');
+      }
     }
   </script>
 </body>
