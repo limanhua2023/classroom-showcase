@@ -58,6 +58,8 @@ const VIDEO_AUDIO_BITRATE = '96k';
 const VIDEO_TRANSCODE_THREADS = Math.max(1, Number(process.env.VIDEO_TRANSCODE_THREADS || 1));
 const VIDEO_MAXRATE = '1600k';
 const COURSE_REGISTRY_FILE = path.join(__dirname, 'data', 'course-registry.json');
+const COURSE_REGISTRY_STORAGE_PATH = 'system/course-registry.json';
+const COURSE_REGISTRY_CACHE_TTL_MS = 30 * 1000;
 const MEDIA_MANIFEST_FOLDER = 'manifests';
 const MEDIA_THUMBNAIL_FOLDER = 'thumbs';
 const STORAGE_TRASH_FOLDER = 'trash';
@@ -3643,21 +3645,27 @@ app.get('/api/health', async (_req, res) => {
   res.status(health.ok ? 200 : 503).json(health);
 });
 
-app.get('/api/super-admin/status', (_req, res) => {
-  const registry = loadCourseRegistry();
-  res.json({
-    configured: isSuperAdminConfigured(),
-    registry_version: registry.version,
-    registered_course_count: registry.courses.length,
-    ready_course_count: registry.courses.filter(entry => entry.launch_ready).length,
-    default_courses: registry.courses.filter(entry => entry.portal_default).map(entry => ({
-      course_name: entry.course_name,
-      slug: entry.slug,
-      entry_path: entry.entry_path,
-      integration_status: entry.integration_status,
-      dedicated_page_available: entry.dedicated_page_available
-    }))
-  });
+app.get('/api/super-admin/status', async (_req, res) => {
+  try {
+    const registry = await getCourseRegistry();
+    res.json({
+      configured: isSuperAdminConfigured(),
+      registry_version: registry.version,
+      registered_course_count: registry.courses.length,
+      ready_course_count: registry.courses.filter(entry => entry.launch_ready).length,
+      registry_backend: process.env.SUPABASE_SERVICE_ROLE_KEY ? 'supabase-storage' : 'local-file',
+      registry_storage_path: COURSE_REGISTRY_STORAGE_PATH,
+      default_courses: registry.courses.filter(entry => entry.portal_default).map(entry => ({
+        course_name: entry.course_name,
+        slug: entry.slug,
+        entry_path: entry.entry_path,
+        integration_status: entry.integration_status,
+        dedicated_page_available: entry.dedicated_page_available
+      }))
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 app.post('/api/super-admin/login', (req, res) => {
@@ -3692,6 +3700,61 @@ app.get('/api/super-admin/overview', superAdminAuth, async (_req, res) => {
     res.json(overview);
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/super-admin/course-registry/save', superAdminAuth, async (req, res) => {
+  try {
+    const registry = await getCourseRegistry({ forceRefresh: true });
+    const nextEntry = sanitizeCourseRegistryPayload(req.body || {});
+    const originalCourseName = sanitizeText(req.body?.original_course_name, 120);
+    const originalSlug = sanitizeText(req.body?.original_slug, 80);
+    const originalCourseKey = normalizePortalCourseName(originalCourseName);
+    const originalSlugKey = normalizeCourseSlug(originalSlug);
+    const nextCourseKey = normalizePortalCourseName(nextEntry.course_name);
+
+    const courses = [...registry.courses];
+    let targetIndex = courses.findIndex(entry =>
+      (originalCourseKey && normalizePortalCourseName(entry.course_name) === originalCourseKey)
+      || (originalSlugKey && entry.slug === originalSlugKey)
+    );
+    if (targetIndex === -1) {
+      targetIndex = courses.findIndex(entry => normalizePortalCourseName(entry.course_name) === nextCourseKey);
+    }
+
+    const duplicate = courses.find((entry, index) =>
+      index !== targetIndex
+      && (
+        normalizePortalCourseName(entry.course_name) === nextCourseKey
+        || entry.slug === nextEntry.slug
+      )
+    );
+    if (duplicate) {
+      return res.status(409).json({ error: '课程名称或 slug 已存在，请修改后再保存。' });
+    }
+
+    if (targetIndex === -1) courses.push(nextEntry);
+    else courses[targetIndex] = nextEntry;
+
+    const persisted = await persistCourseRegistry({
+      version: Number(registry.version || 0) + 1,
+      updated_at: new Date().toISOString(),
+      courses
+    });
+
+    res.json({
+      ok: true,
+      mode: targetIndex === -1 ? 'created' : 'updated',
+      course: persisted.registry.courses.find(entry => normalizePortalCourseName(entry.course_name) === nextCourseKey) || nextEntry,
+      registry_version: persisted.registry.version,
+      updated_at: persisted.registry.updated_at,
+      persisted_to_storage: persisted.persisted_to_storage,
+      storage_path: persisted.storage_path
+    });
+  } catch (error) {
+    const message = String(error.message || '保存课程注册表失败');
+    const statusCode = /不能为空|必须|路径|invalid|required/i.test(message) ? 400 : 500;
+    res.status(statusCode).json({ error: message });
   }
 });
 
@@ -4115,6 +4178,148 @@ function loadCourseRegistry() {
   }
 }
 
+function normalizeBooleanFlag(value, defaultValue = false) {
+  if (value === undefined || value === null || value === '') return defaultValue;
+  if (typeof value === 'boolean') return value;
+  const normalized = String(value).trim().toLowerCase();
+  if (['true', '1', 'yes', 'on'].includes(normalized)) return true;
+  if (['false', '0', 'no', 'off'].includes(normalized)) return false;
+  return defaultValue;
+}
+
+function buildDefaultCourseRegistry() {
+  return {
+    version: DEFAULT_COURSE_REGISTRY.version,
+    updated_at: DEFAULT_COURSE_REGISTRY.updated_at,
+    courses: DEFAULT_COURSE_REGISTRY.courses.map(normalizeCourseRegistryEntry)
+  };
+}
+
+function cloneCourseRegistryDocument(registry = null) {
+  return JSON.parse(JSON.stringify(registry || buildDefaultCourseRegistry()));
+}
+
+function normalizeCourseRegistryDocument(document = null) {
+  const fallback = buildDefaultCourseRegistry();
+  const parsedCourses = Array.isArray(document?.courses)
+    ? document.courses.map(normalizeCourseRegistryEntry)
+    : [];
+  const merged = new Map(fallback.courses.map(entry => [normalizePortalCourseName(entry.course_name), entry]));
+  for (const entry of parsedCourses) {
+    merged.set(normalizePortalCourseName(entry.course_name), entry);
+  }
+  return {
+    version: Number(document?.version) || fallback.version,
+    updated_at: String(document?.updated_at || fallback.updated_at || new Date().toISOString()),
+    courses: Array.from(merged.values())
+  };
+}
+
+function sanitizeCourseRegistryPayload(input = {}) {
+  const courseName = sanitizeText(input.course_name || input.name, 120);
+  if (!courseName) throw new Error('课程名称不能为空');
+
+  const slug = normalizeCourseSlug(input.slug || courseName);
+  const entryPath = sanitizeCourseEntryPath(input.entry_path || `/courses/${slug}/`);
+  if (!entryPath) throw new Error('课程入口路径必须以 / 开头，并且只能落在 public 可访问路径下');
+
+  return normalizeCourseRegistryEntry({
+    course_name: courseName,
+    short_name: sanitizeText(input.short_name, 80) || courseName,
+    slug,
+    audience: sanitizeText(input.audience, 120) || '',
+    visual_style: sanitizeText(input.visual_style, 120) || '',
+    description: sanitizeText(input.description, 240) || '',
+    integration_status: normalizeIntegrationStatus(input.integration_status),
+    entry_path: entryPath,
+    module_key: sanitizeText(input.module_key, 80) || `${slug}-v1`,
+    portal_default: normalizeBooleanFlag(input.portal_default, true),
+    launch_ready: normalizeBooleanFlag(input.launch_ready, false),
+    supports_activity_context: normalizeBooleanFlag(input.supports_activity_context, true),
+    supports_shared_identity: normalizeBooleanFlag(input.supports_shared_identity, true),
+    supports_invite_codes: normalizeBooleanFlag(input.supports_invite_codes, true)
+  });
+}
+
+function serializeCourseRegistryForStorage(registry = null) {
+  const normalized = normalizeCourseRegistryDocument(registry);
+  return {
+    version: normalized.version,
+    updated_at: normalized.updated_at,
+    courses: normalized.courses.map(({ dedicated_page_available, ...rest }) => rest)
+  };
+}
+
+async function readCourseRegistryFromStorage() {
+  const bucket = getSubmissionsStorageBucket();
+  if (!bucket) return null;
+  try {
+    const { data, error } = await bucket.download(COURSE_REGISTRY_STORAGE_PATH);
+    if (error) {
+      if (submissionManifestNotFound(error) || /not[\s-]?found/i.test(String(error.message || ''))) return null;
+      throw error;
+    }
+    const raw = await data.text();
+    if (!raw.trim()) return null;
+    return normalizeCourseRegistryDocument(JSON.parse(raw));
+  } catch (error) {
+    console.warn('Course registry storage fallback failed:', error.message);
+    return null;
+  }
+}
+
+let courseRegistryCache = null;
+let courseRegistryCacheLoadedAt = 0;
+
+async function getCourseRegistry({ forceRefresh = false } = {}) {
+  if (!forceRefresh && courseRegistryCache && (Date.now() - courseRegistryCacheLoadedAt) < COURSE_REGISTRY_CACHE_TTL_MS) {
+    return cloneCourseRegistryDocument(courseRegistryCache);
+  }
+
+  const registry =
+    await readCourseRegistryFromStorage()
+    || loadCourseRegistry();
+
+  courseRegistryCache = normalizeCourseRegistryDocument(registry);
+  courseRegistryCacheLoadedAt = Date.now();
+  return cloneCourseRegistryDocument(courseRegistryCache);
+}
+
+async function persistCourseRegistry(registry = null, { writeDiskFallback = true } = {}) {
+  const normalized = normalizeCourseRegistryDocument(registry);
+  const storagePayload = serializeCourseRegistryForStorage(normalized);
+  const encoded = Buffer.from(JSON.stringify(storagePayload, null, 2), 'utf8');
+
+  let persistedToStorage = false;
+  try {
+    const bucket = getSubmissionsStorageBucket();
+    if (bucket) {
+      await replaceBufferInPrimaryStorage(
+        COURSE_REGISTRY_STORAGE_PATH,
+        encoded,
+        contentTypeForExtension('json')
+      );
+      persistedToStorage = true;
+    }
+  } catch (error) {
+    console.warn('Course registry storage save failed:', error.message);
+  }
+
+  if (writeDiskFallback || !persistedToStorage) {
+    fs.mkdirSync(path.dirname(COURSE_REGISTRY_FILE), { recursive: true });
+    fs.writeFileSync(COURSE_REGISTRY_FILE, encoded);
+  }
+
+  courseRegistryCache = normalizeCourseRegistryDocument(storagePayload);
+  courseRegistryCacheLoadedAt = Date.now();
+  return {
+    registry: cloneCourseRegistryDocument(courseRegistryCache),
+    persisted_to_storage: persistedToStorage,
+    storage_path: persistedToStorage ? COURSE_REGISTRY_STORAGE_PATH : null,
+    file_path: COURSE_REGISTRY_FILE
+  };
+}
+
 function buildPublicCourseIntegration(entry = null) {
   if (!entry) return null;
   return {
@@ -4211,7 +4416,7 @@ function summarizePortalActivity(activity, metrics = emptyPortalMetrics()) {
 }
 
 async function buildPortalCourseDirectory(courseNameFilter = null) {
-  const registry = loadCourseRegistry();
+  const registry = await getCourseRegistry();
   const registryMap = new Map(registry.courses.map(entry => [normalizePortalCourseName(entry.course_name), entry]));
 
   let activityQuery = supabase
@@ -4332,7 +4537,7 @@ async function buildPortalCourseDirectory(courseNameFilter = null) {
 }
 
 async function buildSuperAdminOverview() {
-  const registry = loadCourseRegistry();
+  const registry = await getCourseRegistry();
   const courses = await buildPortalCourseDirectory();
   const liveCourseMap = new Map(courses.map(course => [normalizePortalCourseName(course.course_name), course]));
   const registryCourses = registry.courses.map(entry => {
@@ -4427,7 +4632,7 @@ app.get('/api/portal/course-activities', async (req, res) => {
   try {
     const courseName = normalizePortalCourseName(req.query.course_name);
     const courses = await buildPortalCourseDirectory(courseName);
-    const registry = loadCourseRegistry();
+    const registry = await getCourseRegistry();
     const registryEntry = registry.courses.find(entry => normalizePortalCourseName(entry.course_name) === courseName) || null;
     const course = courses[0] || {
       ...emptyPortalCourse(courseName, registryEntry),
@@ -4442,7 +4647,7 @@ app.get('/api/portal/course-activities', async (req, res) => {
 
 app.get('/api/portal/course-registry', async (req, res) => {
   try {
-    const registry = loadCourseRegistry();
+    const registry = await getCourseRegistry();
     const courseName = sanitizeText(req.query.course_name, 120);
     if (courseName) {
       const entry = registry.courses.find(item => normalizePortalCourseName(item.course_name) === normalizePortalCourseName(courseName)) || null;

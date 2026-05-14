@@ -184,3 +184,8 @@
 - 新增重型运维查询短时缓存与同请求合并：`buildStorageSummary`、缺失媒体导出共用 30 秒缓存；作品新增、修改、删除、修复、转码、归档、清理后自动失效缓存。
 - 修正压测报告里的快照大小统计，避免 JSON 响应被解析后显示为 0 字节。
 - 本次整改目标：降低教师后台高并发运维接口对免费 Render 单实例的阻塞，减少课堂展示和学生访问被运维扫描拖慢的风险。
+## 2026-05-14 Super Admin Registry Editor
+- Added a writable super-admin course registry flow. Course metadata can now be created and edited from `/super-admin.html` instead of manually editing `data/course-registry.json`.
+- Added `POST /api/super-admin/course-registry/save` with duplicate-name and duplicate-slug protection plus validation for course name, slug, route, module key, and capability flags.
+- Course registry persistence now prefers Supabase Storage at `submissions/system/course-registry.json`, with local file fallback kept for development and emergency recovery.
+- Rebuilt the super-admin page into a clean UTF-8 version and added an inline registry editor, quick-register actions for unregistered live courses, and visible registry version/update metadata.
