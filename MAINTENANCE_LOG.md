@@ -1,6 +1,17 @@
 # ClassShow 维护日志
 
 ## 2026-05-14
+### Course Portal Foundation
+- Added public course-directory APIs for the main showcase portal:
+  - `GET /api/portal/courses`
+  - `GET /api/portal/course-activities?course_name=...`
+- The portal groups existing `activities.course_name` values, so AI, economics, math, and later courses can share one student-work showcase homepage without changing the current DPU139 workflow.
+- Added homepage course cards with course-level activity, student, image, video, and work counts.
+- Added `course.html` as the course landing page. It lists all activities for a course and provides student entry, guest browsing, and big-screen display shortcuts.
+- Course directory APIs intentionally do not expose activity invite codes. Students still need the teacher-provided course invite code to enter, preserving course isolation.
+- Kept the current invite-code login as the fallback path, so teachers and students can still enter a class even if the course directory is temporarily unavailable.
+- Local validation passed: `/api/health` OK, `/api/portal/courses` returned 27 course groups, `invite_code_exposed = false`, and `course.html` loaded successfully.
+
 ### Supabase Service-Role Maintenance Mode Preparation
 - Split Supabase access into two server-side clients:
   - app client prefers `SUPABASE_ANON_KEY`

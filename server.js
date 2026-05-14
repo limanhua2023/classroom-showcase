@@ -3896,6 +3896,221 @@ function emptyLearningEngagementSummary(error = null) {
     }
   };
 }
+
+const PORTAL_ACTIVITY_FIELDS = 'id,course_name,class_name,activity_name,description,upload_open,voting_open,comments_open,show_live_ranking,created_at';
+const PORTAL_SUBMISSION_FIELDS = 'activity_id,media_type,upload_time,status';
+const PORTAL_SUBMISSION_LEGACY_FIELDS = 'activity_id,upload_time';
+const PORTAL_USER_FIELDS = 'activity_id,student_id';
+
+function normalizePortalCourseName(value) {
+  return sanitizeText(value, 120) || '未命名课程';
+}
+
+function buildPortalCourseKey(courseName) {
+  return crypto.createHash('sha1').update(normalizePortalCourseName(courseName)).digest('hex').slice(0, 12);
+}
+
+function resolvePortalMediaType(row = {}) {
+  const value = String(row.media_type || '').toLowerCase();
+  return value === 'video' ? 'video' : 'image';
+}
+
+async function fetchRowsByActivityIds(table, fields, activityIds, queryBuilder = null) {
+  const ids = Array.from(new Set((activityIds || []).filter(Boolean).map(String)));
+  if (!ids.length) return [];
+
+  const rows = [];
+  const batchSize = 80;
+  for (let i = 0; i < ids.length; i += batchSize) {
+    const batch = ids.slice(i, i + batchSize);
+    let query = supabase.from(table).select(fields).in('activity_id', batch);
+    if (typeof queryBuilder === 'function') query = queryBuilder(query);
+    const { data, error } = await query;
+    if (error) throw error;
+    rows.push(...(data || []));
+  }
+  return rows;
+}
+
+function emptyPortalMetrics() {
+  return {
+    studentIds: new Set(),
+    submission_count: 0,
+    image_count: 0,
+    video_count: 0,
+    latest_upload_at: null
+  };
+}
+
+function summarizePortalActivity(activity, metrics = emptyPortalMetrics()) {
+  const publicActivity = sanitizeActivity(activity);
+  delete publicActivity.invite_code;
+  return {
+    ...publicActivity,
+    course_name: normalizePortalCourseName(activity.course_name),
+    student_count: metrics.studentIds.size,
+    submission_count: metrics.submission_count,
+    image_count: metrics.image_count,
+    video_count: metrics.video_count,
+    latest_upload_at: metrics.latest_upload_at
+  };
+}
+
+async function buildPortalCourseDirectory(courseNameFilter = null) {
+  let activityQuery = supabase
+    .from('activities')
+    .select(PORTAL_ACTIVITY_FIELDS)
+    .order('created_at', { ascending: false });
+
+  const normalizedFilter = courseNameFilter ? normalizePortalCourseName(courseNameFilter) : null;
+  if (normalizedFilter) activityQuery = activityQuery.eq('course_name', normalizedFilter);
+
+  const { data: activitiesData, error: activitiesError } = await activityQuery;
+  if (activitiesError) throw activitiesError;
+
+  const activities = (activitiesData || []).map(activity => ({
+    ...activity,
+    course_name: normalizePortalCourseName(activity.course_name)
+  }));
+  const activityIds = activities.map(activity => activity.id).filter(Boolean);
+  const activityMetrics = new Map(activityIds.map(id => [String(id), emptyPortalMetrics()]));
+
+  let submissions = [];
+  try {
+    submissions = await fetchRowsByActivityIds(
+      'submissions',
+      PORTAL_SUBMISSION_FIELDS,
+      activityIds,
+      query => query.eq('status', 'visible')
+    );
+  } catch (error) {
+    if (!/media_type|status/i.test(String(error.message || ''))) throw error;
+    submissions = await fetchRowsByActivityIds('submissions', PORTAL_SUBMISSION_LEGACY_FIELDS, activityIds);
+  }
+
+  for (const submission of submissions) {
+    const metrics = activityMetrics.get(String(submission.activity_id));
+    if (!metrics) continue;
+    metrics.submission_count += 1;
+    if (resolvePortalMediaType(submission) === 'video') metrics.video_count += 1;
+    else metrics.image_count += 1;
+    const uploadTime = submission.upload_time || null;
+    if (uploadTime && (!metrics.latest_upload_at || new Date(uploadTime) > new Date(metrics.latest_upload_at))) {
+      metrics.latest_upload_at = uploadTime;
+    }
+  }
+
+  let users = [];
+  try {
+    users = await fetchRowsByActivityIds('users', PORTAL_USER_FIELDS, activityIds);
+  } catch (error) {
+    console.warn('Portal user aggregation skipped:', error.message);
+  }
+
+  for (const user of users) {
+    const metrics = activityMetrics.get(String(user.activity_id));
+    if (!metrics) continue;
+    const studentKey = sanitizeText(user.student_id, 80) || String(user.id || '');
+    if (studentKey) metrics.studentIds.add(studentKey);
+  }
+
+  const courses = new Map();
+  for (const activity of activities) {
+    const courseName = normalizePortalCourseName(activity.course_name);
+    const courseKey = buildPortalCourseKey(courseName);
+    if (!courses.has(courseName)) {
+      courses.set(courseName, {
+        course_key: courseKey,
+        course_name: courseName,
+        activity_count: 0,
+        student_count: 0,
+        submission_count: 0,
+        image_count: 0,
+        video_count: 0,
+        latest_activity_at: null,
+        latest_upload_at: null,
+        activities: [],
+        studentIds: new Set()
+      });
+    }
+
+    const course = courses.get(courseName);
+    const metrics = activityMetrics.get(String(activity.id)) || emptyPortalMetrics();
+    const activitySummary = summarizePortalActivity(activity, metrics);
+    course.activities.push(activitySummary);
+    course.activity_count += 1;
+    course.submission_count += metrics.submission_count;
+    course.image_count += metrics.image_count;
+    course.video_count += metrics.video_count;
+    for (const studentId of metrics.studentIds) course.studentIds.add(studentId);
+    if (activity.created_at && (!course.latest_activity_at || new Date(activity.created_at) > new Date(course.latest_activity_at))) {
+      course.latest_activity_at = activity.created_at;
+    }
+    if (metrics.latest_upload_at && (!course.latest_upload_at || new Date(metrics.latest_upload_at) > new Date(course.latest_upload_at))) {
+      course.latest_upload_at = metrics.latest_upload_at;
+    }
+  }
+
+  return Array.from(courses.values())
+    .map(course => {
+      course.activities.sort((a, b) => new Date(b.created_at || 0) - new Date(a.created_at || 0));
+      const result = {
+        course_key: course.course_key,
+        course_name: course.course_name,
+        activity_count: course.activity_count,
+        student_count: course.studentIds.size,
+        submission_count: course.submission_count,
+        image_count: course.image_count,
+        video_count: course.video_count,
+        latest_activity_at: course.latest_activity_at,
+        latest_upload_at: course.latest_upload_at,
+        activities: course.activities
+      };
+      return result;
+    })
+    .sort((a, b) => {
+      const left = new Date(a.latest_upload_at || a.latest_activity_at || 0).getTime();
+      const right = new Date(b.latest_upload_at || b.latest_activity_at || 0).getTime();
+      return right - left;
+    });
+}
+
+// ─── PORTAL ───
+app.get('/api/portal/courses', async (req, res) => {
+  try {
+    const courses = await buildPortalCourseDirectory();
+    res.json({
+      courses: courses.map(course => ({
+        ...course,
+        activities: course.activities.slice(0, 4)
+      }))
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/portal/course-activities', async (req, res) => {
+  try {
+    const courseName = normalizePortalCourseName(req.query.course_name);
+    const courses = await buildPortalCourseDirectory(courseName);
+    const course = courses[0] || {
+      course_key: buildPortalCourseKey(courseName),
+      course_name: courseName,
+      activity_count: 0,
+      student_count: 0,
+      submission_count: 0,
+      image_count: 0,
+      video_count: 0,
+      latest_activity_at: null,
+      latest_upload_at: null,
+      activities: []
+    };
+    res.json({ course });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 // ─── ACTIVITIES ───
 app.post('/api/activities', async (req, res) => {
   try {
