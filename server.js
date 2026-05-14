@@ -3901,6 +3901,7 @@ const PORTAL_ACTIVITY_FIELDS = 'id,course_name,class_name,activity_name,descript
 const PORTAL_SUBMISSION_FIELDS = 'activity_id,media_type,upload_time,status';
 const PORTAL_SUBMISSION_LEGACY_FIELDS = 'activity_id,upload_time';
 const PORTAL_USER_FIELDS = 'activity_id,student_id';
+const PORTAL_DEFAULT_COURSES = ['AI学习课程'];
 
 function normalizePortalCourseName(value) {
   return sanitizeText(value, 120) || '未命名课程';
@@ -3908,6 +3909,11 @@ function normalizePortalCourseName(value) {
 
 function buildPortalCourseKey(courseName) {
   return crypto.createHash('sha1').update(normalizePortalCourseName(courseName)).digest('hex').slice(0, 12);
+}
+
+function portalCoursePriority(courseName) {
+  const index = PORTAL_DEFAULT_COURSES.map(normalizePortalCourseName).indexOf(normalizePortalCourseName(courseName));
+  return index === -1 ? 1000 : index;
 }
 
 function resolvePortalMediaType(row = {}) {
@@ -3939,6 +3945,23 @@ function emptyPortalMetrics() {
     image_count: 0,
     video_count: 0,
     latest_upload_at: null
+  };
+}
+
+function emptyPortalCourse(courseName) {
+  const normalized = normalizePortalCourseName(courseName);
+  return {
+    course_key: buildPortalCourseKey(normalized),
+    course_name: normalized,
+    activity_count: 0,
+    student_count: 0,
+    submission_count: 0,
+    image_count: 0,
+    video_count: 0,
+    latest_activity_at: null,
+    latest_upload_at: null,
+    activities: [],
+    studentIds: new Set()
   };
 }
 
@@ -4017,21 +4040,8 @@ async function buildPortalCourseDirectory(courseNameFilter = null) {
   const courses = new Map();
   for (const activity of activities) {
     const courseName = normalizePortalCourseName(activity.course_name);
-    const courseKey = buildPortalCourseKey(courseName);
     if (!courses.has(courseName)) {
-      courses.set(courseName, {
-        course_key: courseKey,
-        course_name: courseName,
-        activity_count: 0,
-        student_count: 0,
-        submission_count: 0,
-        image_count: 0,
-        video_count: 0,
-        latest_activity_at: null,
-        latest_upload_at: null,
-        activities: [],
-        studentIds: new Set()
-      });
+      courses.set(courseName, emptyPortalCourse(courseName));
     }
 
     const course = courses.get(courseName);
@@ -4048,6 +4058,13 @@ async function buildPortalCourseDirectory(courseNameFilter = null) {
     }
     if (metrics.latest_upload_at && (!course.latest_upload_at || new Date(metrics.latest_upload_at) > new Date(course.latest_upload_at))) {
       course.latest_upload_at = metrics.latest_upload_at;
+    }
+  }
+
+  if (!normalizedFilter) {
+    for (const defaultCourseName of PORTAL_DEFAULT_COURSES) {
+      const normalized = normalizePortalCourseName(defaultCourseName);
+      if (!courses.has(normalized)) courses.set(normalized, emptyPortalCourse(normalized));
     }
   }
 
@@ -4069,6 +4086,8 @@ async function buildPortalCourseDirectory(courseNameFilter = null) {
       return result;
     })
     .sort((a, b) => {
+      const priorityDelta = portalCoursePriority(a.course_name) - portalCoursePriority(b.course_name);
+      if (priorityDelta !== 0) return priorityDelta;
       const left = new Date(a.latest_upload_at || a.latest_activity_at || 0).getTime();
       const right = new Date(b.latest_upload_at || b.latest_activity_at || 0).getTime();
       return right - left;
@@ -4094,18 +4113,8 @@ app.get('/api/portal/course-activities', async (req, res) => {
   try {
     const courseName = normalizePortalCourseName(req.query.course_name);
     const courses = await buildPortalCourseDirectory(courseName);
-    const course = courses[0] || {
-      course_key: buildPortalCourseKey(courseName),
-      course_name: courseName,
-      activity_count: 0,
-      student_count: 0,
-      submission_count: 0,
-      image_count: 0,
-      video_count: 0,
-      latest_activity_at: null,
-      latest_upload_at: null,
-      activities: []
-    };
+    const course = courses[0] || emptyPortalCourse(courseName);
+    delete course.studentIds;
     res.json({ course });
   } catch (e) {
     res.status(500).json({ error: e.message });

@@ -9,6 +9,7 @@
 - Added homepage course cards with course-level activity, student, image, video, and work counts.
 - Added `course.html` as the course landing page. It lists all activities for a course and provides student entry, guest browsing, and big-screen display shortcuts.
 - Course directory APIs intentionally do not expose activity invite codes. Students still need the teacher-provided course invite code to enter, preserving course isolation.
+- `AI学习课程` is now pinned as the first default course card even before its first activity is created.
 - Kept the current invite-code login as the fallback path, so teachers and students can still enter a class even if the course directory is temporarily unavailable.
 - Local validation passed: `/api/health` OK, `/api/portal/courses` returned 27 course groups, `invite_code_exposed = false`, and `course.html` loaded successfully.
 
