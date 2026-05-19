@@ -71,6 +71,167 @@
       border-color: rgba(239, 68, 68, 0.2);
       color: #b91c1c;
     }
+    .archive-gauge-layout {
+      display: grid;
+      grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
+      gap: 16px;
+      margin: 16px 0 14px;
+      align-items: stretch;
+    }
+    .archive-gauge-card {
+      padding: 18px 16px 14px;
+      border-radius: 24px;
+      background: radial-gradient(circle at top, rgba(37, 99, 235, 0.1), rgba(15, 23, 42, 0.04) 64%);
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.45);
+    }
+    .archive-gauge-title {
+      font-size: 0.82rem;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #1e3a8a;
+      margin-bottom: 10px;
+    }
+    .archive-speedometer {
+      --gauge-progress: 0deg;
+      --gauge-color: #22c55e;
+      position: relative;
+      width: 100%;
+      max-width: 310px;
+      aspect-ratio: 2 / 1;
+      overflow: hidden;
+      margin: 0 auto;
+    }
+    .archive-speedometer-ring {
+      position: absolute;
+      left: 50%;
+      bottom: -6px;
+      width: 252px;
+      height: 252px;
+      transform: translateX(-50%);
+      border-radius: 50%;
+      background:
+        conic-gradient(
+          from 180deg,
+          var(--gauge-color) 0deg var(--gauge-progress),
+          rgba(148, 163, 184, 0.24) var(--gauge-progress) 180deg,
+          transparent 180deg 360deg
+        );
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.45);
+    }
+    .archive-speedometer-ring::after {
+      content: "";
+      position: absolute;
+      inset: 22px;
+      border-radius: 50%;
+      background: linear-gradient(180deg, rgba(255,255,255,0.98), rgba(248,250,252,0.96));
+      box-shadow: inset 0 10px 24px rgba(15, 23, 42, 0.06);
+    }
+    .archive-speedometer-needle {
+      position: absolute;
+      left: 50%;
+      bottom: 2px;
+      width: 6px;
+      height: 116px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, #0f172a, #475569);
+      transform: translateX(-50%) rotate(-90deg);
+      transform-origin: 50% calc(100% - 6px);
+      box-shadow: 0 0 0 1px rgba(255,255,255,0.18);
+      z-index: 2;
+      transition: transform 0.28s ease;
+    }
+    .archive-speedometer-needle::before {
+      content: "";
+      position: absolute;
+      inset: 12px 1px auto;
+      height: 44px;
+      border-radius: 999px;
+      background: linear-gradient(180deg, rgba(255,255,255,0.38), rgba(255,255,255,0));
+    }
+    .archive-speedometer-hub {
+      position: absolute;
+      left: 50%;
+      bottom: 0;
+      width: 26px;
+      height: 26px;
+      border-radius: 50%;
+      transform: translate(-50%, 50%);
+      background: radial-gradient(circle at 30% 30%, #fff, #e2e8f0 45%, #475569 100%);
+      box-shadow: 0 8px 18px rgba(15, 23, 42, 0.16);
+      z-index: 3;
+    }
+    .archive-speedometer-tick {
+      position: absolute;
+      bottom: 10px;
+      font-size: 0.72rem;
+      font-weight: 800;
+      color: var(--text-light);
+      z-index: 3;
+    }
+    .archive-speedometer-tick.left { left: 14px; }
+    .archive-speedometer-tick.center { left: 50%; transform: translateX(-50%); }
+    .archive-speedometer-tick.right { right: 14px; }
+    .archive-speedometer-value {
+      position: absolute;
+      left: 50%;
+      bottom: 24px;
+      transform: translateX(-50%);
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      z-index: 3;
+      text-align: center;
+    }
+    .archive-speedometer-value strong {
+      font-size: 1.5rem;
+      line-height: 1;
+      font-weight: 900;
+      color: var(--text-main);
+    }
+    .archive-speedometer-value span {
+      margin-top: 6px;
+      font-size: 0.78rem;
+      font-weight: 800;
+      color: var(--text-muted);
+    }
+    .archive-gauge-status {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      margin-top: 12px;
+    }
+    .archive-gauge-panel {
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    .archive-gauge-note {
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(15, 23, 42, 0.04);
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      color: var(--text-muted);
+      font-size: 0.84rem;
+      line-height: 1.65;
+    }
+    .archive-gauge-note.warning-attention {
+      background: rgba(245, 158, 11, 0.12);
+      border-color: rgba(245, 158, 11, 0.2);
+      color: #92400e;
+    }
+    .archive-gauge-note.warning-warning {
+      background: rgba(245, 158, 11, 0.12);
+      border-color: rgba(245, 158, 11, 0.2);
+      color: #92400e;
+    }
+    .archive-gauge-note.warning-critical {
+      background: rgba(239, 68, 68, 0.12);
+      border-color: rgba(239, 68, 68, 0.2);
+      color: #b91c1c;
+    }
     .inline-expiry-alert {
       display: none;
       margin-top: 12px;
@@ -581,6 +742,9 @@
       .archive-control-grid {
         grid-template-columns: 1fr;
       }
+      .archive-gauge-layout {
+        grid-template-columns: 1fr;
+      }
       .missing-media-item {
         flex-direction: column;
       }
@@ -751,6 +915,29 @@
               </div>
               <div class="mini-stat-grid" id="storageForecastStats"></div>
               <div class="storage-meta-row" id="storageForecastMeta"></div>
+              <div class="archive-gauge-layout">
+                <div class="archive-gauge-card">
+                  <div class="archive-gauge-title">R2 archive usage</div>
+                  <div class="archive-speedometer" id="archiveStorageGauge">
+                    <div class="archive-speedometer-ring" id="archiveStorageGaugeRing"></div>
+                    <div class="archive-speedometer-needle" id="archiveStorageGaugeNeedle"></div>
+                    <div class="archive-speedometer-hub"></div>
+                    <div class="archive-speedometer-tick left">0 GB</div>
+                    <div class="archive-speedometer-tick center">5 GB</div>
+                    <div class="archive-speedometer-tick right">10 GB</div>
+                    <div class="archive-speedometer-value">
+                      <strong id="archiveStorageGaugeValue">0.00 GB</strong>
+                      <span id="archiveStorageGaugePercent">0%</span>
+                    </div>
+                  </div>
+                  <div class="archive-gauge-status" id="archiveStorageGaugeStatus"></div>
+                </div>
+                <div class="archive-gauge-panel">
+                  <div class="mini-stat-grid" id="archiveStorageGaugeStats"></div>
+                  <div class="storage-meta-row" id="archiveStorageGaugeMeta"></div>
+                  <div class="archive-gauge-note" id="archiveStorageGaugeNote">R2 storage usage is loading...</div>
+                </div>
+              </div>
               <div class="archive-control-grid">
                 <label class="archive-control-field">
                   <strong>自动归档阈值（天）</strong>
@@ -1534,9 +1721,97 @@
       panel.innerHTML = header + groupHtml + detailHtml;
     }
 
+    function formatArchiveGaugeGb(bytes) {
+      const value = Math.max(0, Number(bytes || 0)) / (1024 * 1024 * 1024);
+      return `${value.toFixed(value >= 9.95 ? 1 : 2)} GB`;
+    }
+
+    function resolveArchiveGaugeColor(level) {
+      if (level === 'critical') return '#ef4444';
+      if (level === 'warning' || level === 'attention') return '#f59e0b';
+      return '#22c55e';
+    }
+
+    function resolveArchiveGaugeLabel(level) {
+      if (level === 'critical') return 'R2 红区';
+      if (level === 'warning' || level === 'attention') return 'R2 预警';
+      return 'R2 安全';
+    }
+
+    function renderArchiveStorageGauge(archiveStorage = {}, provider = {}) {
+      const ring = document.getElementById('archiveStorageGaugeRing');
+      const needle = document.getElementById('archiveStorageGaugeNeedle');
+      const valueEl = document.getElementById('archiveStorageGaugeValue');
+      const percentEl = document.getElementById('archiveStorageGaugePercent');
+      const statusEl = document.getElementById('archiveStorageGaugeStatus');
+      const statsEl = document.getElementById('archiveStorageGaugeStats');
+      const metaEl = document.getElementById('archiveStorageGaugeMeta');
+      const noteEl = document.getElementById('archiveStorageGaugeNote');
+      if (!ring || !needle || !valueEl || !percentEl || !statusEl || !statsEl || !metaEl || !noteEl) return;
+
+      const totalBytes = Math.max(0, Number(archiveStorage.total_bytes || 0));
+      const quotaBytes = Math.max(Number(archiveStorage.quota_bytes || 0), totalBytes, 1);
+      const usagePercent = Math.max(
+        0,
+        Math.min(
+          Number(archiveStorage.usage_percent || ((totalBytes / quotaBytes) * 100)),
+          100
+        )
+      );
+      const level = archiveStorage.warning?.level || 'healthy';
+      const gaugeColor = resolveArchiveGaugeColor(level);
+      const gaugeDegrees = Math.max(0, Math.min((usagePercent / 100) * 180, 180));
+      const needleDegrees = -90 + gaugeDegrees;
+      const remainingBytes = Math.max(0, Number(archiveStorage.remaining_bytes || 0));
+      const attentionBytes = Number(archiveStorage.attention_threshold_bytes || 0);
+      const criticalBytes = Number(archiveStorage.critical_threshold_bytes || 0);
+      const providerName = archiveStorage.source_label || provider.name || archiveStorage.provider_name || 'R2 / S3';
+      const providerConfigured = provider.configured !== false && archiveStorage.configured !== false;
+
+      ring.style.setProperty('--gauge-progress', `${gaugeDegrees.toFixed(1)}deg`);
+      ring.style.setProperty('--gauge-color', gaugeColor);
+      needle.style.transform = `translateX(-50%) rotate(${needleDegrees.toFixed(1)}deg)`;
+
+      valueEl.textContent = formatArchiveGaugeGb(totalBytes);
+      percentEl.textContent = `${usagePercent.toFixed(1)}% of 10 GB free tier`;
+      statusEl.innerHTML = [
+        `<span class="storage-meta-chip">${escapeHtml(resolveArchiveGaugeLabel(level))}</span>`,
+        `<span class="storage-meta-chip">${escapeHtml('8.5 GB 预警')}</span>`,
+        `<span class="storage-meta-chip">${escapeHtml('9.0 GB 告警')}</span>`
+      ].join('');
+
+      statsEl.innerHTML = [
+        ['已归档对象', archiveStorage.object_count || 0],
+        ['快照文件', archiveStorage.snapshot_count || 0],
+        ['快照占用', formatBytes(archiveStorage.snapshot_bytes || 0)],
+        ['媒体归档', formatBytes(archiveStorage.media_bytes || 0)]
+      ].map(item => `
+        <div class="mini-stat">
+          <strong>${escapeHtml(item[1])}</strong>
+          <span>${escapeHtml(item[0])}</span>
+        </div>
+      `).join('');
+
+      metaEl.innerHTML = [
+        `${providerName} bucket ${archiveStorage.bucket || '-'}`,
+        `当前剩余 ${formatBytes(remainingBytes)}`,
+        archiveStorage.endpoint_host ? `Endpoint ${archiveStorage.endpoint_host}` : '',
+        attentionBytes ? `预警线 ${formatArchiveGaugeGb(attentionBytes)}` : '',
+        criticalBytes ? `红线 ${formatArchiveGaugeGb(criticalBytes)}` : '',
+        archiveStorage.can_serve_public_url ? '归档可公网访问' : '当前仅做云端备份'
+      ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+
+      noteEl.className = `archive-gauge-note${level === 'healthy' ? '' : ` warning-${level}`}`;
+      noteEl.textContent = archiveStorage.warning?.message
+        || (providerConfigured
+          ? 'R2 archive usage is healthy. Continue using mirrored backup mode until you are ready to release primary storage.'
+          : 'R2 archive provider is not configured yet.');
+    }
+
     function renderArchiveControls(summary) {
       const activity = summary.activity || {};
       const storage = summary.storage || {};
+      const archiveStorage = storage.archive_storage || {};
       const provider = summary.media_pipeline?.provider || {};
       const providerDestination = provider.destination || {};
       const providerWarning = provider.warning || providerDestination.warning || providerDestination.error || '';
@@ -1588,6 +1863,8 @@
       hint.textContent = provider.configured
         ? '这里保存的是“当前活动”的归档与回收保护策略，不会改动 Google Drive 凭据本身。首次建议先用镜像模式观察 1 至 2 天，再决定是否开启冷存。'
         : '归档提供方尚未配置完成，当前只能保存策略草稿，不能真正归档。回收区保留期仍会照常生效。';
+      renderArchiveStorageGauge(archiveStorage, provider);
+
       if (providerWarning) {
         hint.textContent += ` 当前告警：${providerWarning}`;
       }

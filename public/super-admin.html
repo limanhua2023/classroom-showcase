@@ -12,6 +12,10 @@
     <div class="topbar-right">
       <button class="btn btn-secondary btn-sm" onclick="location.href='index.html'">总门户</button>
       <button class="btn btn-secondary btn-sm" onclick="location.href='teacher-login.html'">教师入口</button>
+      <button id="superArchiveAlertButton" class="btn btn-secondary btn-sm archive-alert-button" type="button" onclick="scrollToArchiveStorage()" hidden>
+        R2 存储预警
+        <span id="superArchiveAlertBadge" class="archive-alert-badge">!</span>
+      </button>
       <button class="btn btn-secondary btn-sm" onclick="logoutSuperAdmin()">退出超级管理</button>
     </div>
   </header>
@@ -54,6 +58,41 @@
       <div class="course-search">
         <input id="superSearch" type="search" placeholder="按课程名 / slug / 状态搜索" oninput="renderOverviewBlocks()">
         <button class="btn btn-secondary btn-sm" onclick="loadOverview()">刷新</button>
+      </div>
+    </section>
+
+    <section class="course-portal archive-storage-shell" id="superArchiveStorageSection">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">R2 STORAGE</div>
+          <h2>云端归档占用仪表盘</h2>
+          <p>按 10 GB 免费额度显示 R2 占用比例。8.5 GB 进入预警区，9 GB 进入红色告警区。</p>
+        </div>
+      </div>
+      <div class="archive-gauge-layout">
+        <div class="archive-gauge-card">
+          <div class="archive-gauge-title">
+            <span>R2 占用比例</span>
+            <span id="superArchiveGaugeStatus" class="archive-gauge-status">加载中</span>
+          </div>
+          <div class="archive-speedometer" id="superArchiveStorageGauge">
+            <div class="archive-speedometer-ring" id="superArchiveStorageGaugeRing"></div>
+            <div class="archive-speedometer-needle" id="superArchiveStorageGaugeNeedle"></div>
+            <div class="archive-speedometer-hub"></div>
+            <span class="archive-speedometer-tick tick-left">0</span>
+            <span class="archive-speedometer-tick tick-mid">5 GB</span>
+            <span class="archive-speedometer-tick tick-right">10 GB</span>
+            <div class="archive-speedometer-value">
+              <strong id="superArchiveStorageGaugeValue">0.00 GB</strong>
+              <span id="superArchiveStorageGaugePercent">0%</span>
+            </div>
+          </div>
+          <div id="superArchiveStorageGaugeNote" class="archive-gauge-note">R2 storage usage is loading...</div>
+        </div>
+        <div class="archive-gauge-panel">
+          <div class="mini-stat-grid" id="superArchiveStorageGaugeStats"></div>
+          <div class="storage-meta-row" id="superArchiveStorageGaugeMeta"></div>
+        </div>
       </div>
     </section>
 
@@ -331,9 +370,93 @@
 
     function renderOverviewBlocks() {
       renderOverviewSummary();
+      renderArchiveStorageGauge();
       renderCourses();
       renderRegistry();
       renderRecentActivities();
+    }
+
+    function formatArchiveGaugeGb(bytes) {
+      return `${(Number(bytes || 0) / (1024 ** 3)).toFixed(2)} GB`;
+    }
+
+    function resolveArchiveGaugeColor(level) {
+      if (level === 'critical') return '#ef4444';
+      if (level === 'warning') return '#f59e0b';
+      return '#10b981';
+    }
+
+    function resolveArchiveGaugeLabel(level) {
+      if (level === 'critical') return '红色告警';
+      if (level === 'warning') return '黄色预警';
+      return '安全区';
+    }
+
+    function scrollToArchiveStorage() {
+      document.getElementById('superArchiveStorageSection')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
+    function renderArchiveStorageGauge() {
+      const archiveStorage = overview?.archive_storage || {};
+      const warning = archiveStorage.warning || {};
+      const quotaBytes = Number(archiveStorage.quota_bytes || (10 * 1024 * 1024 * 1024));
+      const totalBytes = Number(archiveStorage.total_bytes || 0);
+      const usagePercentRaw = Number(archiveStorage.usage_percent);
+      const usagePercent = Number.isFinite(usagePercentRaw)
+        ? usagePercentRaw
+        : (quotaBytes > 0 ? (totalBytes / quotaBytes) * 100 : 0);
+      const boundedPercent = Math.max(0, Math.min(usagePercent, 100));
+      const color = resolveArchiveGaugeColor(warning.level);
+      const angle = -120 + (boundedPercent / 100) * 240;
+
+      const ring = document.getElementById('superArchiveStorageGaugeRing');
+      const needle = document.getElementById('superArchiveStorageGaugeNeedle');
+      const valueEl = document.getElementById('superArchiveStorageGaugeValue');
+      const percentEl = document.getElementById('superArchiveStorageGaugePercent');
+      const statusEl = document.getElementById('superArchiveGaugeStatus');
+      const statsEl = document.getElementById('superArchiveStorageGaugeStats');
+      const metaEl = document.getElementById('superArchiveStorageGaugeMeta');
+      const noteEl = document.getElementById('superArchiveStorageGaugeNote');
+      const alertButton = document.getElementById('superArchiveAlertButton');
+      const alertBadge = document.getElementById('superArchiveAlertBadge');
+
+      ring?.style.setProperty('--gauge-color', color);
+      if (needle) needle.style.transform = `translateX(-50%) rotate(${angle}deg)`;
+      if (valueEl) valueEl.textContent = formatArchiveGaugeGb(totalBytes);
+      if (percentEl) percentEl.textContent = `${boundedPercent.toFixed(1)}%`;
+      if (statusEl) {
+        statusEl.textContent = resolveArchiveGaugeLabel(warning.level);
+        statusEl.style.color = color;
+      }
+      if (statsEl) {
+        statsEl.innerHTML = [
+          `<div class="mini-stat"><strong>${Number(archiveStorage.object_count || 0)}</strong><span>归档对象</span></div>`,
+          `<div class="mini-stat"><strong>${formatArchiveGaugeGb(archiveStorage.snapshot_bytes || 0)}</strong><span>快照占用</span></div>`,
+          `<div class="mini-stat"><strong>${formatArchiveGaugeGb(archiveStorage.media_bytes || 0)}</strong><span>媒体占用</span></div>`,
+          `<div class="mini-stat"><strong>${formatArchiveGaugeGb(archiveStorage.remaining_bytes || 0)}</strong><span>剩余空间</span></div>`
+        ].join('');
+      }
+      if (metaEl) {
+        metaEl.textContent = [
+          archiveStorage.source_label || 'R2 / S3',
+          archiveStorage.bucket || '-',
+          archiveStorage.endpoint_host || '-'
+        ].join(' · ');
+      }
+      if (noteEl) {
+        noteEl.className = `archive-gauge-note warning-${warning.level || 'healthy'}`;
+        noteEl.textContent = warning.message || 'R2 storage usage is ready.';
+      }
+      const isCritical = warning.level === 'critical';
+      if (alertButton) {
+        alertButton.hidden = !isCritical;
+        if (isCritical) {
+          alertButton.setAttribute('aria-label', `R2 占用已进入红色告警区，当前 ${boundedPercent.toFixed(1)}%`);
+        }
+      }
+      if (alertBadge) {
+        alertBadge.textContent = isCritical ? '1' : '!';
+      }
     }
 
     function renderOverviewSummary() {

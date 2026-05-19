@@ -92,6 +92,10 @@ const ARCHIVE_S3_SECRET_ACCESS_KEY = String(process.env.ARCHIVE_S3_SECRET_ACCESS
 const ARCHIVE_S3_FORCE_PATH_STYLE = /^true$/i.test(String(process.env.ARCHIVE_S3_FORCE_PATH_STYLE || 'true'));
 const ARCHIVE_S3_PUBLIC_BASE_URL = String(process.env.ARCHIVE_S3_PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
 const STORAGE_WARNING_LIMIT_BYTES = Math.max(128 * 1024 * 1024, Number(process.env.STORAGE_WARNING_LIMIT_BYTES || 1024 * 1024 * 1024));
+const ARCHIVE_STORAGE_FREE_QUOTA_BYTES = Math.max(128 * 1024 * 1024, Number(process.env.ARCHIVE_STORAGE_FREE_QUOTA_BYTES || 10 * 1024 * 1024 * 1024));
+const ARCHIVE_STORAGE_ATTENTION_BYTES = Math.max(0, Number(process.env.ARCHIVE_STORAGE_ATTENTION_BYTES || Math.floor(ARCHIVE_STORAGE_FREE_QUOTA_BYTES * 0.85)));
+const ARCHIVE_STORAGE_CRITICAL_BYTES = Math.max(0, Number(process.env.ARCHIVE_STORAGE_CRITICAL_BYTES || Math.floor(ARCHIVE_STORAGE_FREE_QUOTA_BYTES * 0.9)));
+const ARCHIVE_STORAGE_CACHE_TTL_MS = Math.max(30 * 1000, Number(process.env.ARCHIVE_STORAGE_CACHE_TTL_MS || 5 * 60 * 1000));
 const STORAGE_SAFE_DELETE = !/^false$/i.test(String(process.env.STORAGE_SAFE_DELETE || 'true'));
 const ARCHIVE_PERMANENT_DELETE = /^true$/i.test(String(process.env.ARCHIVE_PERMANENT_DELETE || 'false'));
 const OPS_SNAPSHOT_LIST_TTL_MS = 60 * 1000;
@@ -972,6 +976,7 @@ async function buildStorageDiagnostics(activityId, storageSummary = null) {
 
 const mediaManifestCache = new Map();
 const storageSummaryCache = new Map();
+const archiveStorageSummaryCache = new Map();
 const missingMediaExportCache = new Map();
 let googleDriveClientPromise = null;
 let googleDriveDestinationInfoPromise = null;
@@ -1052,6 +1057,10 @@ function invalidateActivityOpsCache(activityId) {
   if (!key) return;
   storageSummaryCache.delete(`storage:${key}`);
   missingMediaExportCache.delete(`missing-media:${key}`);
+}
+
+function invalidateArchiveStorageSummaryCache() {
+  archiveStorageSummaryCache.clear();
 }
 
 async function uploadLocalFileToPrimaryStorage(localPath, storagePath, contentType) {
@@ -1563,6 +1572,141 @@ function invalidateArchiveSnapshotListCache(activityId) {
   }
 }
 
+function buildArchiveStorageWarningSummary(totalBytes, quotaBytes) {
+  const usagePercent = quotaBytes > 0 ? (totalBytes / quotaBytes) * 100 : 0;
+  const remainingBytes = Math.max(quotaBytes - totalBytes, 0);
+  if (totalBytes >= ARCHIVE_STORAGE_CRITICAL_BYTES || usagePercent >= 90) {
+    return {
+      level: 'critical',
+      title: 'R2 归档空间进入红区',
+      message: `当前约占用 ${formatStorageBytes(totalBytes)}，已接近 10 GB 免费额度的高风险区间。建议立即清理旧快照，或把低频历史课件转存到本地硬盘 / U 盘。`
+    };
+  }
+  if (totalBytes >= ARCHIVE_STORAGE_ATTENTION_BYTES || usagePercent >= 85) {
+    return {
+      level: 'warning',
+      title: 'R2 归档空间进入预警区',
+      message: `当前约占用 ${formatStorageBytes(totalBytes)}，距 10 GB 免费额度仅剩 ${formatStorageBytes(remainingBytes)}。建议尽快检查大体积历史视频和重复快照。`
+    };
+  }
+  return {
+    level: 'healthy',
+    title: 'R2 归档空间充足',
+    message: `当前约占用 ${formatStorageBytes(totalBytes)}，仍在免费额度安全区内。`
+  };
+}
+
+async function buildArchiveStorageSummary(provider = getArchiveProviderInfo()) {
+  const quotaBytes = ARCHIVE_STORAGE_FREE_QUOTA_BYTES;
+  const base = {
+    provider_name: provider?.name || 'none',
+    configured: !!provider?.configured,
+    bucket: ARCHIVE_S3_BUCKET || null,
+    endpoint_host: ARCHIVE_S3_ENDPOINT ? new URL(ARCHIVE_S3_ENDPOINT).host : null,
+    quota_bytes: quotaBytes,
+    attention_threshold_bytes: ARCHIVE_STORAGE_ATTENTION_BYTES,
+    critical_threshold_bytes: ARCHIVE_STORAGE_CRITICAL_BYTES,
+    usage_percent: 0,
+    total_bytes: 0,
+    remaining_bytes: quotaBytes,
+    object_count: 0,
+    snapshot_bytes: 0,
+    snapshot_count: 0,
+    media_bytes: 0,
+    media_count: 0,
+    can_serve_public_url: !!provider?.can_serve_public_url,
+    source_label: provider?.name === 's3' ? 'R2 / S3' : (provider?.name || 'none')
+  };
+
+  if (!(provider?.name === 's3' && provider?.configured)) {
+    return {
+      ...base,
+      warning: {
+        level: 'healthy',
+        title: '未启用 R2 归档',
+        message: '当前未使用 R2 / S3 作为归档存储。'
+      }
+    };
+  }
+
+  const client = getS3ArchiveClient();
+  if (!client || !ARCHIVE_S3_BUCKET) {
+    return {
+      ...base,
+      configured: false,
+      warning: {
+        level: 'warning',
+        title: 'R2 配置不完整',
+        message: 'R2 / S3 归档环境变量不完整，暂时无法统计真实占用。'
+      }
+    };
+  }
+
+  let continuationToken = null;
+  let totalBytes = 0;
+  let objectCount = 0;
+  let snapshotBytes = 0;
+  let snapshotCount = 0;
+  let mediaBytes = 0;
+  let mediaCount = 0;
+
+  do {
+    const response = await client.send(new ListObjectsV2Command({
+      Bucket: ARCHIVE_S3_BUCKET,
+      MaxKeys: 1000,
+      ContinuationToken: continuationToken || undefined
+    }));
+    for (const item of response.Contents || []) {
+      const key = String(item.Key || '');
+      const size = Number(item.Size || 0);
+      totalBytes += size;
+      objectCount += 1;
+      if (key.startsWith('classshow-backups/')) {
+        snapshotBytes += size;
+        snapshotCount += 1;
+      } else if (key.startsWith('classshow/')) {
+        mediaBytes += size;
+        mediaCount += 1;
+      }
+    }
+    continuationToken = response.IsTruncated ? response.NextContinuationToken : null;
+  } while (continuationToken);
+
+  const usagePercent = quotaBytes > 0 ? Math.min((totalBytes / quotaBytes) * 100, 999) : 0;
+  const remainingBytes = Math.max(quotaBytes - totalBytes, 0);
+  return {
+    ...base,
+    total_bytes: totalBytes,
+    object_count: objectCount,
+    snapshot_bytes: snapshotBytes,
+    snapshot_count: snapshotCount,
+    media_bytes: mediaBytes,
+    media_count: mediaCount,
+    usage_percent: Math.round(usagePercent * 10) / 10,
+    remaining_bytes: remainingBytes,
+    warning: buildArchiveStorageWarningSummary(totalBytes, quotaBytes)
+  };
+}
+
+async function getCachedArchiveStorageSummary(options = {}) {
+  const provider = getArchiveProviderInfo();
+  const key = `archive-storage:${provider.name}:${ARCHIVE_S3_BUCKET || 'none'}`;
+  if (options.refresh) {
+    const value = await buildArchiveStorageSummary(provider);
+    archiveStorageSummaryCache.set(key, {
+      value,
+      expiresAt: Date.now() + ARCHIVE_STORAGE_CACHE_TTL_MS
+    });
+    return value;
+  }
+  return getCachedOpsValue(
+    archiveStorageSummaryCache,
+    key,
+    ARCHIVE_STORAGE_CACHE_TTL_MS,
+    () => buildArchiveStorageSummary(provider)
+  );
+}
+
 async function uploadLocalFileToArchiveObject(localPath, objectKey, contentType, provider = getArchiveProviderInfo()) {
   if (!provider.configured || !objectKey) return null;
 
@@ -1587,7 +1731,7 @@ async function uploadLocalFileToArchiveObject(localPath, objectKey, contentType,
         requestBody: { role: 'reader', type: 'anyone' }
       });
     }
-    return {
+    const result = {
       provider: 'google-drive',
       key: data.id,
       name: data.name || null,
@@ -1596,6 +1740,8 @@ async function uploadLocalFileToArchiveObject(localPath, objectKey, contentType,
       size: Number(data.size || 0),
       url: GOOGLE_DRIVE_PUBLIC_LINKS ? `https://drive.google.com/uc?export=download&id=${data.id}` : null
     };
+    invalidateArchiveStorageSummaryCache();
+    return result;
   }
 
   if (provider.name === 's3') {
@@ -1607,7 +1753,7 @@ async function uploadLocalFileToArchiveObject(localPath, objectKey, contentType,
       Body: fs.createReadStream(localPath),
       ContentType: contentType
     }));
-    return {
+    const result = {
       provider: 's3',
       key: objectKey,
       name: path.posix.basename(objectKey),
@@ -1616,6 +1762,8 @@ async function uploadLocalFileToArchiveObject(localPath, objectKey, contentType,
       size: 0,
       url: buildS3ArchivePublicUrl(objectKey)
     };
+    invalidateArchiveStorageSummaryCache();
+    return result;
   }
 
   return null;
@@ -1642,6 +1790,7 @@ async function deleteArchiveObject(archiveKey, providerName, options = {}) {
         requestBody: { trashed: true }
       }).catch(() => {});
     }
+    invalidateArchiveStorageSummaryCache();
     return true;
   }
   if (providerName === 's3') {
@@ -1649,6 +1798,7 @@ async function deleteArchiveObject(archiveKey, providerName, options = {}) {
     const client = getS3ArchiveClient();
     if (!client) return false;
     await client.send(new DeleteObjectCommand({ Bucket: ARCHIVE_S3_BUCKET, Key: archiveKey })).catch(() => {});
+    invalidateArchiveStorageSummaryCache();
     return true;
   }
   return false;
@@ -3131,6 +3281,30 @@ async function buildStorageSummary(activityId) {
   const usagePercent = quotaBytes > 0 ? Math.min((storageBytes / quotaBytes) * 100, 999) : 0;
   const remainingBytes = Math.max(quotaBytes - storageBytes, 0);
   const estimatedDaysToLimit = dailyGrowthBytes > 0 ? Math.max(0, Math.floor(remainingBytes / dailyGrowthBytes)) : null;
+  const archiveStorage = await getCachedArchiveStorageSummary().catch(error => ({
+    provider_name: getArchiveProviderInfo().name,
+    configured: false,
+    bucket: ARCHIVE_S3_BUCKET || null,
+    endpoint_host: ARCHIVE_S3_ENDPOINT ? new URL(ARCHIVE_S3_ENDPOINT).host : null,
+    quota_bytes: ARCHIVE_STORAGE_FREE_QUOTA_BYTES,
+    attention_threshold_bytes: ARCHIVE_STORAGE_ATTENTION_BYTES,
+    critical_threshold_bytes: ARCHIVE_STORAGE_CRITICAL_BYTES,
+    usage_percent: 0,
+    total_bytes: 0,
+    remaining_bytes: ARCHIVE_STORAGE_FREE_QUOTA_BYTES,
+    object_count: 0,
+    snapshot_bytes: 0,
+    snapshot_count: 0,
+    media_bytes: 0,
+    media_count: 0,
+    can_serve_public_url: false,
+    source_label: 'R2 / S3',
+    warning: {
+      level: 'warning',
+      title: 'R2 archive metrics unavailable',
+      message: String(error?.message || error || 'Failed to load archive storage summary')
+    }
+  }));
   let warningLevel = 'healthy';
   let warningTitle = '空间健康';
   let warningMessage = '当前空间占用较低，继续保持压缩上传和定期清理即可。';
@@ -3179,6 +3353,7 @@ async function buildStorageSummary(activityId) {
     recent_upload_bytes_7d: recentReferencedBytes7d,
     estimated_growth_bytes_per_day: dailyGrowthBytes,
     estimated_days_to_limit: estimatedDaysToLimit,
+    archive_storage: archiveStorage,
     warning: {
       level: warningLevel,
       title: warningTitle,
@@ -3623,6 +3798,11 @@ app.get('/api/health', async (_req, res) => {
     archive_provider: getArchiveProviderInfo(),
     tasks: buildTaskOpsOverview()
   };
+  health.archive_storage = await getCachedArchiveStorageSummary().catch(error => ({
+    provider_name: health.archive_provider?.name || 'none',
+    configured: !!health.archive_provider?.configured,
+    error: String(error?.message || error || 'Failed to load archive storage summary')
+  }));
 
   if (!healthClient) {
     health.supabase_ok = false;
@@ -4867,6 +5047,11 @@ async function buildPortalCourseDirectory(courseNameFilter = null, options = {})
 async function buildSuperAdminOverview() {
   const registry = await getCourseRegistry();
   const courses = await buildPortalCourseDirectory(null, { includeInactive: true });
+  const archiveStorage = await getCachedArchiveStorageSummary().catch(error => ({
+    provider_name: getArchiveProviderInfo().name,
+    configured: !!getArchiveProviderInfo().configured,
+    error: String(error?.message || error || 'Failed to load archive storage summary')
+  }));
   const liveCourseMap = new Map(courses.map(course => [normalizePortalCourseName(course.course_name), course]));
   const registryCourses = registry.courses.map(entry => {
     const live = liveCourseMap.get(normalizePortalCourseName(entry.course_name));
@@ -4910,6 +5095,7 @@ async function buildSuperAdminOverview() {
   return {
     generated_at: new Date().toISOString(),
     super_admin_configured: isSuperAdminConfigured(),
+    archive_storage: archiveStorage,
     health: {
       version: process.env.RENDER_GIT_COMMIT || process.env.npm_package_version || 'local',
       environment: process.env.RENDER ? 'render' : (process.env.NODE_ENV || 'development'),

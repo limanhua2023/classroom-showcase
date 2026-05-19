@@ -203,3 +203,17 @@
 - Backup runs persist a state file, write machine-readable reports under the local backup root, and keep stale-file warnings instead of auto-deleting local copies.
 - Added `scripts/usb-secondary-backup.ps1` to create timestamped USB snapshots from the local backup root, plus optional `latest` mirroring without destructive purge mode.
 - Added `scripts/install-local-backup-task.ps1`, `.env.local-backup.example`, and `LOCAL_BACKUP_AGENT.md` so the backup agent can be installed as a Windows logon task and operated without editing code.
+
+## 2026-05-19 R2 Storage Gauge and Threshold Alerts
+- Added backend R2 archive storage summary caching with configurable free-quota, attention-threshold, and critical-threshold byte values. The default thresholds now track Cloudflare R2 free usage at 10 GB with warning levels at 8.5 GB and 9.0 GB.
+- Teacher dashboard storage summaries now include `storage.archive_storage`, covering total archived bytes, snapshot/media split, object counts, endpoint host, remaining free capacity, and warning status.
+- Added a speedometer-style R2 storage gauge to the teacher dashboard archive panel. The gauge renders current GB usage, percentage of the free tier, threshold chips, archive object statistics, and warning notes.
+- The R2 gauge uses healthy / warning / critical states so teachers can see archive pressure before the free tier is exhausted, while keeping `ARCHIVE_DELETE_PRIMARY_AFTER_SUCCESS=false` safe mode unchanged.
+- Validation completed with `node --check server.js` and inline script parsing for `public/teacher-dashboard.html`.
+
+## 2026-05-19 Super Admin R2 Gauge and Health Summary
+- Extended `/api/health` to return `archive_storage`, sourced from the same cached R2 usage summary used by the archive dashboards.
+- Extended `/api/super-admin/overview` to return `archive_storage` so the portal layer can visualize archive pressure without triggering a second bucket scan.
+- Added an R2 speedometer gauge to `/super-admin.html`, including snapshot/media split, object count, remaining capacity, and bucket metadata.
+- Added a critical topbar alert button for the super-admin page. When R2 crosses the 9 GB red zone, the button appears and scrolls directly to the archive gauge.
+- Validated `server.js`, `public/super-admin.html`, and `public/teacher-dashboard.html` after the change before deployment.

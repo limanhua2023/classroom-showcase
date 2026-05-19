@@ -105,6 +105,26 @@ img, video { max-width: 100%; display: block; }
 }
 .topbar-logo span { color: var(--text); }
 .topbar-right { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; justify-content: flex-end; }
+.archive-alert-button {
+  position: relative;
+  border-color: rgba(239, 68, 68, 0.18);
+  color: #991b1b;
+  background: rgba(254, 242, 242, 0.92);
+}
+.archive-alert-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #ef4444;
+  color: #fff;
+  font-size: 0.72rem;
+  font-weight: 900;
+  line-height: 1;
+}
 
 /* Cards */
 .card {
@@ -612,6 +632,140 @@ img, video { max-width: 100%; display: block; }
   border-radius: 999px;
   background: rgba(15, 23, 42, 0.04);
   border: 1px solid rgba(15, 23, 42, 0.07);
+  color: var(--text-light);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+.archive-storage-shell {
+  margin-bottom: 18px;
+}
+.archive-gauge-layout {
+  display: grid;
+  grid-template-columns: minmax(320px, 1.1fr) minmax(280px, 1fr);
+  gap: 18px;
+  align-items: stretch;
+}
+.archive-gauge-card,
+.archive-gauge-panel {
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.06);
+}
+.archive-gauge-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+  font-weight: 800;
+}
+.archive-gauge-status {
+  font-size: 0.84rem;
+  color: #047857;
+}
+.archive-speedometer {
+  position: relative;
+  width: min(100%, 360px);
+  aspect-ratio: 1.7 / 1;
+  margin: 0 auto;
+}
+.archive-speedometer-ring {
+  --gauge-color: #10b981;
+  position: absolute;
+  inset: 0;
+  border-radius: 220px 220px 0 0;
+  overflow: hidden;
+  background:
+    conic-gradient(from 240deg, var(--gauge-color) 0deg, rgba(15, 23, 42, 0.12) 0deg 240deg, transparent 240deg 360deg);
+  -webkit-mask: radial-gradient(circle at 50% 100%, transparent 0 56%, #000 57% 100%);
+          mask: radial-gradient(circle at 50% 100%, transparent 0 56%, #000 57% 100%);
+}
+.archive-speedometer-needle {
+  position: absolute;
+  left: 50%;
+  bottom: 0;
+  width: 4px;
+  height: 42%;
+  transform-origin: center bottom;
+  transform: translateX(-50%) rotate(-120deg);
+  border-radius: 999px;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.18), rgba(15, 23, 42, 0.92));
+  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.46);
+}
+.archive-speedometer-hub {
+  position: absolute;
+  left: 50%;
+  bottom: -2px;
+  width: 20px;
+  height: 20px;
+  transform: translateX(-50%);
+  border-radius: 50%;
+  background: #0f172a;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.94);
+}
+.archive-speedometer-tick {
+  position: absolute;
+  bottom: 8px;
+  font-size: 0.76rem;
+  color: var(--text-light);
+  font-weight: 700;
+}
+.archive-speedometer-tick.tick-left { left: 18px; }
+.archive-speedometer-tick.tick-mid { left: 50%; transform: translateX(-50%); }
+.archive-speedometer-tick.tick-right { right: 18px; }
+.archive-speedometer-value {
+  position: absolute;
+  left: 50%;
+  bottom: 18px;
+  transform: translateX(-50%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  text-align: center;
+}
+.archive-speedometer-value strong {
+  font-size: clamp(1.75rem, 4vw, 2.3rem);
+  line-height: 1;
+  letter-spacing: -0.05em;
+}
+.archive-speedometer-value span {
+  color: var(--text-muted);
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+.archive-gauge-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  justify-content: center;
+}
+.archive-gauge-note {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: 16px;
+  background: rgba(16, 185, 129, 0.1);
+  border: 1px solid rgba(16, 185, 129, 0.18);
+  color: #047857;
+  font-size: 0.88rem;
+  line-height: 1.55;
+}
+.archive-gauge-note.warning-warning {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.22);
+  color: #b45309;
+}
+.archive-gauge-note.warning-critical {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(239, 68, 68, 0.2);
+  color: #b91c1c;
+}
+.storage-meta-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
   color: var(--text-light);
   font-size: 0.82rem;
   font-weight: 700;
@@ -1712,6 +1866,10 @@ td img { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; }
   .dashboard-metrics,
   .mini-stat-grid,
   .exhibit-stats {
+    grid-template-columns: 1fr;
+  }
+  .archive-gauge-layout {
+    display: grid;
     grid-template-columns: 1fr;
   }
   .dashboard-hero { margin-top: 16px; }
