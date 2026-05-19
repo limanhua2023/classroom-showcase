@@ -655,7 +655,7 @@
                   <strong>#${index + 1} ${escapeHtml(item.label || item.key || 'archive-object')}</strong>
                   <small>${escapeHtml(item.key || '')}</small>
                 </div>
-                <div class="archive-object-size">${escapeHtml(formatBytes(item.size_bytes || 0))}</div>
+                <div class="archive-object-size">${escapeHtml(formatBytes(item.size_bytes || item.size || 0))}</div>
               </div>
             `).join('')}
           </div>
@@ -669,6 +669,7 @@
       if (!listEl) return;
       const suggestions = Array.isArray(archiveStorage.cleanup_suggestions) ? archiveStorage.cleanup_suggestions : [];
       const largestMedia = Array.isArray(archiveStorage.largest_media_objects) ? archiveStorage.largest_media_objects : [];
+      const largestVideos = Array.isArray(archiveStorage.largest_video_objects) ? archiveStorage.largest_video_objects : [];
       const largestSnapshots = Array.isArray(archiveStorage.largest_snapshot_objects) ? archiveStorage.largest_snapshot_objects : [];
       const largestActivities = Array.isArray(archiveStorage.largest_activity_groups) ? archiveStorage.largest_activity_groups : [];
       const largestCourses = Array.isArray(archiveStorage.largest_course_groups) ? archiveStorage.largest_course_groups : [];
@@ -684,6 +685,7 @@
         suggestionHtml,
         renderArchiveRankGroup('Largest courses Top 5', largestCourses, 'No course-level archive groups are available yet.'),
         renderArchiveRankGroup('Largest activities Top 5', largestActivities, 'No activity-level archive groups are available yet.'),
+        renderArchiveRankGroup('Largest videos Top 5', largestVideos, 'No archived videos are stored in R2 yet.'),
         renderArchiveRankGroup('Largest media Top 5', largestMedia, 'No media objects are stored in R2 yet.'),
         renderArchiveRankGroup('Largest snapshots Top 5', largestSnapshots, 'No activity snapshots are stored in R2 yet.')
       ].join('');

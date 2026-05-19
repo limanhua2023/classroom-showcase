@@ -1665,6 +1665,10 @@ function pushArchiveTopRank(list = [], item = {}, limit = 5) {
   return next;
 }
 
+function isArchiveVideoObjectKey(key = '') {
+  return isVideoFilePath(String(key || '').trim());
+}
+
 function normalizeArchiveStorageHistoryPoint(point = {}, quotaBytes = ARCHIVE_STORAGE_FREE_QUOTA_BYTES) {
   const totalBytes = Math.max(0, Number(point.total_bytes || 0));
   const snapshotBytes = Math.max(0, Number(point.snapshot_bytes || 0));
@@ -1852,10 +1856,18 @@ function normalizeLocalBackupStatus(raw = null) {
   const finishedAt = toIsoStringOrNull(raw.finished_at || report.finished_at || report.generated_at) || lastHeartbeatAt;
   const lastSuccessAt = toIsoStringOrNull(raw.last_success_at || report.generated_at || (status === 'ok' ? finishedAt : null)) || null;
   const reportAgeMs = lastHeartbeatAt ? Math.max(0, Date.now() - new Date(lastHeartbeatAt).getTime()) : null;
-  const storageFailures = Array.isArray(report.storage_failures) ? report.storage_failures : [];
-  const staleLocalFiles = Array.isArray(report.stale_local_files) ? report.stale_local_files : [];
-  const tables = report.tables && typeof report.tables === 'object' ? report.tables : {};
-  const storage = report.storage && typeof report.storage === 'object' ? report.storage : {};
+  const storageFailures = Array.isArray(raw.storage_failures)
+    ? raw.storage_failures
+    : (Array.isArray(report.storage_failures) ? report.storage_failures : []);
+  const staleLocalFiles = Array.isArray(raw.stale_local_files)
+    ? raw.stale_local_files
+    : (Array.isArray(report.stale_local_files) ? report.stale_local_files : []);
+  const tables = raw.tables && typeof raw.tables === 'object'
+    ? raw.tables
+    : (report.tables && typeof report.tables === 'object' ? report.tables : {});
+  const storage = raw.storage && typeof raw.storage === 'object'
+    ? raw.storage
+    : (report.storage && typeof report.storage === 'object' ? report.storage : {});
   const warningLevel = !lastHeartbeatAt
     ? 'warning'
     : status === 'error'
@@ -1943,6 +1955,7 @@ function buildArchiveStorageCleanupSuggestions(summary = {}, historySummary = {}
   const durationHours = Number(historySummary.duration_hours || 0);
   const largestSnapshots = Array.isArray(summary.largest_snapshot_objects) ? summary.largest_snapshot_objects : [];
   const largestMedia = Array.isArray(summary.largest_media_objects) ? summary.largest_media_objects : [];
+  const largestVideos = Array.isArray(summary.largest_video_objects) ? summary.largest_video_objects : [];
   const largestActivities = Array.isArray(summary.largest_activity_groups) ? summary.largest_activity_groups : [];
   const largestCourses = Array.isArray(summary.largest_course_groups) ? summary.largest_course_groups : [];
 
@@ -2003,6 +2016,17 @@ function buildArchiveStorageCleanupSuggestions(summary = {}, historySummary = {}
       level: warningLevel,
       title: 'Top media objects should be reviewed first',
       message: largestMedia
+        .slice(0, 3)
+        .map(item => `${item.name} (${formatStorageBytes(item.size)})`)
+        .join(' | ')
+    });
+  }
+
+  if ((warningLevel === 'warning' || warningLevel === 'critical') && largestVideos.length) {
+    suggestions.push({
+      level: warningLevel === 'critical' ? 'critical' : 'warning',
+      title: 'Largest archived videos should be reviewed first',
+      message: largestVideos
         .slice(0, 3)
         .map(item => `${item.name} (${formatStorageBytes(item.size)})`)
         .join(' | ')
@@ -2132,6 +2156,7 @@ async function buildArchiveStorageSummary(provider = getArchiveProviderInfo()) {
   let mediaCount = 0;
   let largestSnapshotObjects = [];
   let largestMediaObjects = [];
+  let largestVideoObjects = [];
   const activityUsageMap = new Map();
 
   do {
@@ -2163,6 +2188,13 @@ async function buildArchiveStorageSummary(provider = getArchiveProviderInfo()) {
           size,
           last_modified_at: item.LastModified || item.last_modified_at || null
         });
+        if (isArchiveVideoObjectKey(key)) {
+          largestVideoObjects = pushArchiveTopRank(largestVideoObjects, {
+            key,
+            size,
+            last_modified_at: item.LastModified || item.last_modified_at || null
+          });
+        }
       }
     }
     continuationToken = response.IsTruncated ? response.NextContinuationToken : null;
@@ -2236,6 +2268,7 @@ async function buildArchiveStorageSummary(provider = getArchiveProviderInfo()) {
     media_count: mediaCount,
     largest_snapshot_objects: largestSnapshotObjects,
     largest_media_objects: largestMediaObjects,
+    largest_video_objects: largestVideoObjects,
     largest_activity_groups: largestActivityGroups,
     largest_course_groups: largestCourseGroups,
     usage_percent: Math.round(usagePercent * 10) / 10,

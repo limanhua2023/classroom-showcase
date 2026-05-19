@@ -240,3 +240,11 @@
 - Backend archive summaries now group R2 usage by activity and by course using archive object paths plus `activities` metadata, exposing `largest_activity_groups` and `largest_course_groups` for targeted cleanup planning.
 - Cleanup suggestion panels now elevate the heaviest courses and activities first whenever R2 crosses the 8.5 GB warning line, alongside the existing largest-media and largest-snapshot object lists.
 - Local validation completed with `node --check server.js` and inline script parsing for `public/super-admin.html` and `public/teacher-dashboard.html` before deployment.
+
+## 2026-05-19 Largest Video Top-N and Local Backup Closed Loop
+- Added `largest_video_objects` to the archive storage summary so R2 cleanup guidance can distinguish oversized videos from generic media objects and thumbnails.
+- Teacher and super-admin cleanup panels now render `Largest videos Top 5` alongside the existing course/activity/media/snapshot lists.
+- Archive object rank cards now support both `size_bytes` and raw `size`, fixing generic object lists so video/media entries no longer render as `0 B`.
+- Verified the Windows local backup heartbeat end to end by running `npm run backup:local -- --output tmp_local_backup_verify --activity-id e538b984-727a-4f97-8cfa-0375ff20d2cf --exclude-trash`.
+- Closed-loop backup result: `activities=1`, `submissions=29`, `downloaded=466`, `failed=0`. This confirmed that the current local environment can generate a real backup set and upload the heartbeat document consumed by `/api/health` and the super-admin console.
+- Fixed local-backup status normalization so heartbeat summaries now read `storage/tables` counts from the root payload as well as legacy nested `report.*` fields, preventing healthy runs from showing zeroed statistics in the dashboard.
