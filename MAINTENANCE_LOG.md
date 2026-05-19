@@ -248,3 +248,10 @@
 - Verified the Windows local backup heartbeat end to end by running `npm run backup:local -- --output tmp_local_backup_verify --activity-id e538b984-727a-4f97-8cfa-0375ff20d2cf --exclude-trash`.
 - Closed-loop backup result: `activities=1`, `submissions=29`, `downloaded=466`, `failed=0`. This confirmed that the current local environment can generate a real backup set and upload the heartbeat document consumed by `/api/health` and the super-admin console.
 - Fixed local-backup status normalization so heartbeat summaries now read `storage/tables` counts from the root payload as well as legacy nested `report.*` fields, preventing healthy runs from showing zeroed statistics in the dashboard.
+
+## 2026-05-19 Supabase Hot-Tier Dashboard and Storage Cost Forecast
+- Added a global `hot_storage` summary to `/api/health`, teacher storage summaries, and `/api/super-admin/overview`, treating Supabase free storage as a 1 GB hot tier with default strategy thresholds at 40%, 50%, 70%, and 85%.
+- Teacher archive controls now surface a dedicated Supabase hot-tier speedometer, mirrored/cold policy hints, recommended archive-after-days guidance, and grouped course/activity/file migration suggestions before the existing R2 gauge.
+- Super-admin now exposes a matching `SUPABASE HOT TIER` section so portal-level operators can see the same hot-tier pressure, phase labels, and Top-N hot-file pressure without opening an activity dashboard first.
+- Added `cost_projection` to the R2 archive summary. Both dashboards now show a rough storage-only monthly overage estimate plus Cloudflare free-operation reminders, so budget planning stays visible beside the `$1 / $3` alert thresholds.
+- The intended operating model is now explicit in-product: Supabase is the hot tier for recent teaching assets, while R2 is the cold archive tier. Suggested archive pressure steps are `40% prepare -> 50% archive -> 70% accelerate -> 85% critical`.

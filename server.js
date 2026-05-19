@@ -92,9 +92,19 @@ const ARCHIVE_S3_SECRET_ACCESS_KEY = String(process.env.ARCHIVE_S3_SECRET_ACCESS
 const ARCHIVE_S3_FORCE_PATH_STYLE = /^true$/i.test(String(process.env.ARCHIVE_S3_FORCE_PATH_STYLE || 'true'));
 const ARCHIVE_S3_PUBLIC_BASE_URL = String(process.env.ARCHIVE_S3_PUBLIC_BASE_URL || '').trim().replace(/\/+$/, '');
 const STORAGE_WARNING_LIMIT_BYTES = Math.max(128 * 1024 * 1024, Number(process.env.STORAGE_WARNING_LIMIT_BYTES || 1024 * 1024 * 1024));
+const HOT_STORAGE_FREE_QUOTA_BYTES = Math.max(128 * 1024 * 1024, Number(process.env.HOT_STORAGE_FREE_QUOTA_BYTES || STORAGE_WARNING_LIMIT_BYTES));
+const HOT_STORAGE_PREPARE_BYTES = Math.max(0, Number(process.env.HOT_STORAGE_PREPARE_BYTES || Math.floor(HOT_STORAGE_FREE_QUOTA_BYTES * 0.4)));
+const HOT_STORAGE_ARCHIVE_BYTES = Math.max(0, Number(process.env.HOT_STORAGE_ARCHIVE_BYTES || Math.floor(HOT_STORAGE_FREE_QUOTA_BYTES * 0.5)));
+const HOT_STORAGE_ACCELERATE_BYTES = Math.max(0, Number(process.env.HOT_STORAGE_ACCELERATE_BYTES || Math.floor(HOT_STORAGE_FREE_QUOTA_BYTES * 0.7)));
+const HOT_STORAGE_CRITICAL_BYTES = Math.max(0, Number(process.env.HOT_STORAGE_CRITICAL_BYTES || Math.floor(HOT_STORAGE_FREE_QUOTA_BYTES * 0.85)));
 const ARCHIVE_STORAGE_FREE_QUOTA_BYTES = Math.max(128 * 1024 * 1024, Number(process.env.ARCHIVE_STORAGE_FREE_QUOTA_BYTES || 10 * 1024 * 1024 * 1024));
 const ARCHIVE_STORAGE_ATTENTION_BYTES = Math.max(0, Number(process.env.ARCHIVE_STORAGE_ATTENTION_BYTES || Math.floor(ARCHIVE_STORAGE_FREE_QUOTA_BYTES * 0.85)));
 const ARCHIVE_STORAGE_CRITICAL_BYTES = Math.max(0, Number(process.env.ARCHIVE_STORAGE_CRITICAL_BYTES || Math.floor(ARCHIVE_STORAGE_FREE_QUOTA_BYTES * 0.9)));
+const ARCHIVE_STORAGE_RATE_PER_GB_MONTH_USD = Math.max(0, Number(process.env.ARCHIVE_STORAGE_RATE_PER_GB_MONTH_USD || 0.015));
+const ARCHIVE_STORAGE_FREE_CLASS_A_OPS = Math.max(0, Number(process.env.ARCHIVE_STORAGE_FREE_CLASS_A_OPS || 1_000_000));
+const ARCHIVE_STORAGE_FREE_CLASS_B_OPS = Math.max(0, Number(process.env.ARCHIVE_STORAGE_FREE_CLASS_B_OPS || 10_000_000));
+const ARCHIVE_STORAGE_CLASS_A_RATE_PER_MILLION_USD = Math.max(0, Number(process.env.ARCHIVE_STORAGE_CLASS_A_RATE_PER_MILLION_USD || 4.5));
+const ARCHIVE_STORAGE_CLASS_B_RATE_PER_MILLION_USD = Math.max(0, Number(process.env.ARCHIVE_STORAGE_CLASS_B_RATE_PER_MILLION_USD || 0.36));
 const ARCHIVE_STORAGE_CACHE_TTL_MS = Math.max(30 * 1000, Number(process.env.ARCHIVE_STORAGE_CACHE_TTL_MS || 5 * 60 * 1000));
 const ARCHIVE_STORAGE_BUDGET_ALERTS_USD = [...new Set(
   String(process.env.ARCHIVE_STORAGE_BUDGET_ALERTS_USD || '1,3')
@@ -989,6 +999,8 @@ async function buildStorageDiagnostics(activityId, storageSummary = null) {
 const mediaManifestCache = new Map();
 const storageSummaryCache = new Map();
 const archiveStorageSummaryCache = new Map();
+let globalHotStorageSummaryCache = null;
+let globalHotStorageSummaryLoadedAt = 0;
 let archiveStorageHistoryCache = null;
 let archiveStorageHistoryLoadedAt = 0;
 let localBackupStatusCache = null;
@@ -1073,6 +1085,8 @@ function invalidateActivityOpsCache(activityId) {
   if (!key) return;
   storageSummaryCache.delete(`storage:${key}`);
   missingMediaExportCache.delete(`missing-media:${key}`);
+  globalHotStorageSummaryCache = null;
+  globalHotStorageSummaryLoadedAt = 0;
 }
 
 function invalidateArchiveStorageSummaryCache() {
@@ -1847,6 +1861,369 @@ async function loadArchiveActivityMetadata(activityIds = []) {
   return metadataMap;
 }
 
+function buildHotStorageStrategySummary({
+  totalBytes = 0,
+  quotaBytes = HOT_STORAGE_FREE_QUOTA_BYTES,
+  remainingBytes = Math.max(0, quotaBytes - totalBytes),
+  estimatedDaysToLimit = null
+} = {}) {
+  const usagePercent = quotaBytes > 0 ? (totalBytes / quotaBytes) * 100 : 0;
+  const checkpoints = [
+    { phase: 'prepare', bytes: HOT_STORAGE_PREPARE_BYTES, percent: 40, recommended_archive_after_days: 21 },
+    { phase: 'archive', bytes: HOT_STORAGE_ARCHIVE_BYTES, percent: 50, recommended_archive_after_days: 14 },
+    { phase: 'accelerate', bytes: HOT_STORAGE_ACCELERATE_BYTES, percent: 70, recommended_archive_after_days: 7 },
+    { phase: 'critical', bytes: HOT_STORAGE_CRITICAL_BYTES, percent: 85, recommended_archive_after_days: 3 }
+  ];
+  const nextCheckpoint = checkpoints.find(item => totalBytes < item.bytes) || null;
+  const base = {
+    phase: 'safe',
+    level: 'healthy',
+    title: 'Supabase hot tier remains comfortable',
+    message: `Current hot storage uses ${formatStorageBytes(totalBytes)}. Keep recent works in Supabase, mirror them to R2, and preserve delete-after-archive in safe mode only after restore checks pass.`,
+    recommended_archive_after_days: 30,
+    next_threshold_bytes: nextCheckpoint?.bytes || null,
+    next_threshold_percent: nextCheckpoint?.percent || null,
+    next_phase: nextCheckpoint?.phase || null,
+    checkpoints: checkpoints.map(item => ({
+      phase: item.phase,
+      bytes: item.bytes,
+      percent: item.percent,
+      recommended_archive_after_days: item.recommended_archive_after_days
+    }))
+  };
+
+  if (totalBytes >= HOT_STORAGE_CRITICAL_BYTES || usagePercent >= 85 || (estimatedDaysToLimit !== null && estimatedDaysToLimit <= 10)) {
+    return {
+      ...base,
+      phase: 'critical',
+      level: 'critical',
+      title: 'Supabase hot tier is inside the red zone',
+      message: `Only ${formatStorageBytes(remainingBytes)} remains in the 1 GB hot tier. Stop treating Supabase as long-term storage, archive older media now, and release primary copies only after R2 plus local restore verification succeeds.`,
+      recommended_archive_after_days: 3,
+      next_threshold_bytes: null,
+      next_threshold_percent: null,
+      next_phase: null
+    };
+  }
+
+  if (totalBytes >= HOT_STORAGE_ACCELERATE_BYTES || usagePercent >= 70 || (estimatedDaysToLimit !== null && estimatedDaysToLimit <= 21)) {
+    return {
+      ...base,
+      phase: 'accelerate',
+      level: 'warning',
+      title: 'Hot tier should start draining aggressively',
+      message: `Supabase is already using ${formatStorageBytes(totalBytes)}. Lower archive-after-days to 7 or below, move historical videos out first, and treat R2 as the default home for older teaching assets.`,
+      recommended_archive_after_days: 7
+    };
+  }
+
+  if (totalBytes >= HOT_STORAGE_ARCHIVE_BYTES || usagePercent >= 50 || (estimatedDaysToLimit !== null && estimatedDaysToLimit <= 45)) {
+    return {
+      ...base,
+      phase: 'archive',
+      level: 'attention',
+      title: 'Begin steady hot-to-cold migration now',
+      message: `The hot tier has crossed the halfway line. Keep current-week uploads in Supabase, but start shifting older works to R2 in chronological order so free space recovers before the next heavy class session.`,
+      recommended_archive_after_days: 14
+    };
+  }
+
+  if (totalBytes >= HOT_STORAGE_PREPARE_BYTES || usagePercent >= 40 || (estimatedDaysToLimit !== null && estimatedDaysToLimit <= 60)) {
+    return {
+      ...base,
+      phase: 'prepare',
+      level: 'attention',
+      title: 'Prepare the archive lane before pressure appears',
+      message: `Hot storage is approaching the early-warning band. Keep mirror mode active, review old activities, and be ready to lower archive-after-days to around two weeks once usage passes 50%.`,
+      recommended_archive_after_days: 21
+    };
+  }
+
+  return base;
+}
+
+function buildHotStorageMigrationSuggestions(summary = {}) {
+  const suggestions = [];
+  const strategy = summary.strategy || {};
+  const largestActivities = Array.isArray(summary.largest_activity_groups) ? summary.largest_activity_groups : [];
+  const largestCourses = Array.isArray(summary.largest_course_groups) ? summary.largest_course_groups : [];
+  const largestItems = Array.isArray(summary.largest_items) ? summary.largest_items : [];
+  const totalBytes = Math.max(0, Number(summary.total_bytes || 0));
+  const recentGrowthBytes = Math.max(0, Number(summary.estimated_growth_bytes_per_day || 0));
+
+  if (totalBytes <= 0) {
+    return [{
+      level: 'info',
+      title: 'Hot tier is almost empty',
+      message: 'Supabase still has plenty of room. Keep recent uploads hot, and let R2 stay in mirrored backup mode for now.'
+    }];
+  }
+
+  suggestions.push({
+    level: strategy.level || 'info',
+    title: strategy.title || 'Hot-to-cold strategy',
+    message: strategy.message || 'Supabase hot tier strategy is ready.'
+  });
+
+  if (recentGrowthBytes > 0) {
+    suggestions.push({
+      level: strategy.phase === 'safe' ? 'info' : 'warning',
+      title: 'Daily growth forecast',
+      message: `The hot tier is expanding by about ${formatStorageBytes(recentGrowthBytes)} per day based on the latest 7-day window. Adjust archive-after-days before this trend pushes the 1 GB tier into the next phase.`
+    });
+  }
+
+  if ((strategy.phase === 'archive' || strategy.phase === 'accelerate' || strategy.phase === 'critical') && largestActivities.length) {
+    suggestions.push({
+      level: strategy.level || 'warning',
+      title: 'Archive these activities first',
+      message: largestActivities
+        .slice(0, 3)
+        .map(item => `${item.label} (${formatStorageBytes(item.size_bytes || 0)})`)
+        .join(' | ')
+    });
+  }
+
+  if ((strategy.phase === 'archive' || strategy.phase === 'accelerate' || strategy.phase === 'critical') && largestCourses.length) {
+    suggestions.push({
+      level: strategy.phase === 'critical' ? 'critical' : 'warning',
+      title: 'Courses that dominate the hot tier',
+      message: largestCourses
+        .slice(0, 3)
+        .map(item => `${item.label} (${formatStorageBytes(item.size_bytes || 0)})`)
+        .join(' | ')
+    });
+  }
+
+  if ((strategy.phase === 'accelerate' || strategy.phase === 'critical') && largestItems.length) {
+    suggestions.push({
+      level: strategy.phase === 'critical' ? 'critical' : 'warning',
+      title: 'Large primary media should leave Supabase first',
+      message: largestItems
+        .slice(0, 3)
+        .map(item => `${item.title || item.id || 'Untitled'} (${formatStorageBytes(item.media_size || 0)})`)
+        .join(' | ')
+    });
+  }
+
+  return suggestions;
+}
+
+async function buildHotStorageSummaryFromRows(rows = [], storageFiles = []) {
+  const normalizedRows = Array.isArray(rows) ? rows : [];
+  const now = Date.now();
+  const referencedRows = normalizedRows.filter(row => row.storage_path);
+  const referencedBytes = referencedRows.reduce((sum, row) => sum + Number(row.media_size || 0), 0);
+  const storageBytes = storageFiles.reduce((sum, file) => sum + Number(file.metadata?.size || 0), 0);
+  const imageCount = referencedRows.filter(row => row.media_type !== 'video').length;
+  const videoCount = referencedRows.filter(row => row.media_type === 'video').length;
+  const averageSize = referencedRows.length ? Math.round(referencedBytes / referencedRows.length) : 0;
+  const recentUploads7d = referencedRows.filter(row => {
+    const uploadedMs = new Date(row.upload_time || 0).getTime();
+    return Number.isFinite(uploadedMs) && uploadedMs > 0 && (now - uploadedMs) <= 7 * 24 * 60 * 60 * 1000;
+  });
+  const recentReferencedBytes7d = recentUploads7d.reduce((sum, row) => sum + Number(row.media_size || 0), 0);
+  const overheadRatio = referencedBytes > 0 ? Math.max(1, storageBytes / referencedBytes) : 1;
+  const dailyGrowthBytes = recentReferencedBytes7d > 0
+    ? Math.round((recentReferencedBytes7d * overheadRatio) / 7)
+    : 0;
+  const quotaBytes = HOT_STORAGE_FREE_QUOTA_BYTES;
+  const usagePercent = quotaBytes > 0 ? Math.min((storageBytes / quotaBytes) * 100, 999) : 0;
+  const remainingBytes = Math.max(quotaBytes - storageBytes, 0);
+  const estimatedDaysToLimit = dailyGrowthBytes > 0 ? Math.max(0, Math.floor(remainingBytes / dailyGrowthBytes)) : null;
+
+  const globallyReferencedPathSet = new Set(
+    normalizedRows.flatMap(row => {
+      const derivedThumbPath = row.storage_path
+        ? createSidecarStoragePath(row.storage_path, MEDIA_THUMBNAIL_FOLDER, row.media_type === 'video' ? 'jpg' : 'webp')
+        : null;
+      return [
+        row.storage_path,
+        derivedThumbPath,
+        sanitizeStoragePath(row.thumbnail_path),
+        row.manifest_path || createMediaManifestStoragePath(row.id)
+      ].filter(Boolean);
+    })
+  );
+  const trashFiles = storageFiles.filter(file => String(file.path || '').startsWith(`${STORAGE_TRASH_FOLDER}/`));
+  const orphanFiles = storageFiles.filter(file => {
+    if (String(file.path || '').startsWith(`${STORAGE_TRASH_FOLDER}/`)) return false;
+    if (globallyReferencedPathSet.has(file.path)) return false;
+    const createdMs = new Date(file.created_at || file.updated_at || 0).getTime();
+    if (!Number.isFinite(createdMs) || createdMs <= 0) return false;
+    return (now - createdMs) >= STORAGE_ORPHAN_MIN_AGE_MS;
+  }).map(file => ({
+    path: file.path,
+    name: file.name,
+    size: Number(file.metadata?.size || 0),
+    created_at: file.created_at || file.updated_at || null
+  }));
+
+  const largestItems = referencedRows
+    .slice()
+    .sort((a, b) => (b.media_size || 0) - (a.media_size || 0))
+    .slice(0, 5);
+
+  const activityMetadataMap = await loadArchiveActivityMetadata(
+    [...new Set(referencedRows.map(row => String(row.activity_id || '')).filter(Boolean))]
+  );
+  const activityUsageMap = new Map();
+  const courseUsageMap = new Map();
+  for (const row of referencedRows) {
+    const activityId = String(row.activity_id || '').trim();
+    if (!activityId) continue;
+    const mediaSize = Math.max(0, Number(row.media_size || 0));
+    const mediaType = row.media_type === 'video' ? 'video' : 'image';
+    const activityMeta = activityMetadataMap.get(activityId) || {};
+    const currentActivity = activityUsageMap.get(activityId) || {
+      activity_id: activityId,
+      total_bytes: 0,
+      size_bytes: 0,
+      submission_count: 0,
+      image_count: 0,
+      video_count: 0,
+      latest_upload_at: null
+    };
+    currentActivity.total_bytes += mediaSize;
+    currentActivity.size_bytes = currentActivity.total_bytes;
+    currentActivity.submission_count += 1;
+    currentActivity.image_count += mediaType === 'video' ? 0 : 1;
+    currentActivity.video_count += mediaType === 'video' ? 1 : 0;
+    if (!currentActivity.latest_upload_at || new Date(row.upload_time || 0).getTime() > new Date(currentActivity.latest_upload_at || 0).getTime()) {
+      currentActivity.latest_upload_at = row.upload_time || null;
+    }
+    activityUsageMap.set(activityId, currentActivity);
+
+    const rawCourseName = String(activityMeta.course_name || '').trim() || 'Unknown course';
+    const courseKey = normalizePortalCourseName(rawCourseName || 'unknown-course');
+    const currentCourse = courseUsageMap.get(courseKey) || {
+      course_name: rawCourseName,
+      total_bytes: 0,
+      size_bytes: 0,
+      submission_count: 0,
+      activity_count: 0,
+      image_count: 0,
+      video_count: 0,
+      activity_ids: new Set()
+    };
+    currentCourse.total_bytes += mediaSize;
+    currentCourse.size_bytes = currentCourse.total_bytes;
+    currentCourse.submission_count += 1;
+    currentCourse.image_count += mediaType === 'video' ? 0 : 1;
+    currentCourse.video_count += mediaType === 'video' ? 1 : 0;
+    currentCourse.activity_ids.add(activityId);
+    currentCourse.activity_count = currentCourse.activity_ids.size;
+    courseUsageMap.set(courseKey, currentCourse);
+  }
+
+  const largestActivityGroups = [...activityUsageMap.values()]
+    .map(group => {
+      const activity = activityMetadataMap.get(String(group.activity_id)) || {};
+      return {
+        ...group,
+        course_name: String(activity.course_name || '').trim() || null,
+        class_name: String(activity.class_name || '').trim() || null,
+        activity_name: String(activity.activity_name || '').trim() || null,
+        invite_code: String(activity.invite_code || '').trim() || null,
+        label: String(activity.activity_name || activity.invite_code || group.activity_id || 'activity').trim(),
+        key: [
+          activity.course_name || '',
+          activity.class_name || '',
+          `${group.submission_count} works`
+        ].filter(Boolean).join(' | ')
+      };
+    })
+    .sort((left, right) => right.size_bytes - left.size_bytes)
+    .slice(0, 5);
+
+  const largestCourseGroups = [...courseUsageMap.values()]
+    .map(group => ({
+      ...group,
+      activity_ids: undefined,
+      label: group.course_name,
+      key: `${group.activity_count} activities | ${group.submission_count} works`
+    }))
+    .sort((left, right) => right.size_bytes - left.size_bytes)
+    .slice(0, 5);
+
+  const strategy = buildHotStorageStrategySummary({
+    totalBytes: storageBytes,
+    quotaBytes,
+    remainingBytes,
+    estimatedDaysToLimit
+  });
+  const summary = {
+    provider_name: 'supabase-storage',
+    source_label: 'Supabase hot tier',
+    quota_bytes: quotaBytes,
+    prepare_threshold_bytes: HOT_STORAGE_PREPARE_BYTES,
+    archive_threshold_bytes: HOT_STORAGE_ARCHIVE_BYTES,
+    accelerate_threshold_bytes: HOT_STORAGE_ACCELERATE_BYTES,
+    critical_threshold_bytes: HOT_STORAGE_CRITICAL_BYTES,
+    total_bytes: storageBytes,
+    remaining_bytes: remainingBytes,
+    usage_percent: Math.round(usagePercent * 10) / 10,
+    total_files: storageFiles.length,
+    referenced_files: referencedRows.length,
+    referenced_bytes: referencedBytes,
+    image_count: imageCount,
+    video_count: videoCount,
+    average_file_bytes: averageSize,
+    recent_upload_count_7d: recentUploads7d.length,
+    recent_upload_bytes_7d: recentReferencedBytes7d,
+    estimated_growth_bytes_per_day: dailyGrowthBytes,
+    estimated_days_to_limit: estimatedDaysToLimit,
+    orphan_count: orphanFiles.length,
+    orphan_bytes: orphanFiles.reduce((sum, file) => sum + Number(file.size || 0), 0),
+    trash_count: trashFiles.length,
+    trash_bytes: trashFiles.reduce((sum, file) => sum + Number(file.metadata?.size || 0), 0),
+    largest_items: largestItems,
+    largest_activity_groups: largestActivityGroups,
+    largest_course_groups: largestCourseGroups,
+    strategy,
+    warning: {
+      level: strategy.level,
+      title: strategy.title,
+      message: strategy.message
+    }
+  };
+  return {
+    ...summary,
+    migration_suggestions: buildHotStorageMigrationSuggestions(summary)
+  };
+}
+
+async function buildGlobalHotStorageSummary() {
+  const { data, error } = await supabase
+    .from('submissions')
+    .select('id,title,upload_time,storage_path,image_url,media_type,media_size,activity_id');
+  if (error) throw error;
+  const rows = await Promise.all((data || []).map(async row => {
+    const manifest = normalizeSubmissionMediaManifest(row, await readSubmissionMediaManifest(row.id).catch(() => null));
+    const storagePath = sanitizeStoragePath(row.storage_path) || storagePathFromPublicUrl(row.image_url);
+    return {
+      ...row,
+      storage_path: storagePath,
+      media_type: row.media_type || (isVideoFilePath(storagePath) ? 'video' : 'image'),
+      media_size: Number(row.media_size || 0),
+      thumbnail_path: sanitizeStoragePath(manifest.thumbnail_path),
+      manifest_path: createMediaManifestStoragePath(row.id)
+    };
+  }));
+  const storageFiles = await listTrackedStorageFiles();
+  return buildHotStorageSummaryFromRows(rows, storageFiles);
+}
+
+async function getCachedGlobalHotStorageSummary({ forceRefresh = false } = {}) {
+  if (!forceRefresh && globalHotStorageSummaryCache && (Date.now() - globalHotStorageSummaryLoadedAt) < OPS_HEAVY_QUERY_CACHE_TTL_MS) {
+    return JSON.parse(JSON.stringify(globalHotStorageSummaryCache));
+  }
+  const summary = await buildGlobalHotStorageSummary();
+  globalHotStorageSummaryCache = summary;
+  globalHotStorageSummaryLoadedAt = Date.now();
+  return JSON.parse(JSON.stringify(summary));
+}
+
 function normalizeLocalBackupStatus(raw = null) {
   if (!raw || typeof raw !== 'object') return null;
   const report = raw.report && typeof raw.report === 'object' ? raw.report : {};
@@ -2081,6 +2458,36 @@ function buildArchiveStorageCleanupSuggestions(summary = {}, historySummary = {}
   return suggestions.slice(0, 6);
 }
 
+function buildArchiveStorageCostProjection(summary = {}, historySummary = {}) {
+  const quotaBytes = Math.max(1, Number(summary.quota_bytes || ARCHIVE_STORAGE_FREE_QUOTA_BYTES));
+  const totalBytes = Math.max(0, Number(summary.total_bytes || 0));
+  const deltaBytes = Math.max(0, Number(historySummary.delta_bytes || 0));
+  const durationHours = Math.max(0, Number(historySummary.duration_hours || 0));
+  const growthPerDayBytes = deltaBytes > 0 && durationHours > 0
+    ? deltaBytes / Math.max(durationHours / 24, 0.25)
+    : 0;
+  const projected30dBytes = totalBytes + (growthPerDayBytes * 30);
+  const currentOverageBytes = Math.max(totalBytes - quotaBytes, 0);
+  const projectedOverageBytes = Math.max(projected30dBytes - quotaBytes, 0);
+  const currentStorageCostUsd = Number(((currentOverageBytes / (1024 ** 3)) * ARCHIVE_STORAGE_RATE_PER_GB_MONTH_USD).toFixed(4));
+  const projectedStorageCostUsd = Number(((projectedOverageBytes / (1024 ** 3)) * ARCHIVE_STORAGE_RATE_PER_GB_MONTH_USD).toFixed(4));
+  return {
+    storage_rate_per_gb_month_usd: ARCHIVE_STORAGE_RATE_PER_GB_MONTH_USD,
+    free_storage_quota_bytes: quotaBytes,
+    free_class_a_ops: ARCHIVE_STORAGE_FREE_CLASS_A_OPS,
+    free_class_b_ops: ARCHIVE_STORAGE_FREE_CLASS_B_OPS,
+    class_a_rate_per_million_usd: ARCHIVE_STORAGE_CLASS_A_RATE_PER_MILLION_USD,
+    class_b_rate_per_million_usd: ARCHIVE_STORAGE_CLASS_B_RATE_PER_MILLION_USD,
+    estimated_growth_bytes_per_day: Math.round(growthPerDayBytes),
+    current_overage_bytes: currentOverageBytes,
+    projected_30d_total_bytes: Math.round(projected30dBytes),
+    projected_30d_overage_bytes: Math.round(projectedOverageBytes),
+    current_storage_cost_usd: currentStorageCostUsd,
+    projected_30d_storage_cost_usd: projectedStorageCostUsd,
+    note: 'Storage-only estimate. Class A/B costs usually stay near $0 until usage reaches millions of operations.'
+  };
+}
+
 function decorateArchiveStorageSummary(summary = {}, historyDocument = null) {
   const normalizedHistory = normalizeArchiveStorageHistoryDocument(historyDocument);
   const historyWindows = Object.fromEntries(
@@ -2097,6 +2504,7 @@ function decorateArchiveStorageSummary(summary = {}, historyDocument = null) {
     history_window_days: ARCHIVE_STORAGE_TREND_WINDOWS_DAYS,
     history_windows: historyWindows,
     history_summary: historySummary,
+    cost_projection: buildArchiveStorageCostProjection(summary, historySummary),
     cleanup_suggestions: buildArchiveStorageCleanupSuggestions(summary, historySummary)
   };
 }
@@ -3793,7 +4201,7 @@ async function buildStorageSummary(activityId) {
     .select('id,title,upload_time,storage_path,image_url,media_type,media_size')
       .eq('activity_id', activityId),
     supabase.from('submissions')
-      .select('id,storage_path,image_url,media_type')
+      .select('id,title,upload_time,storage_path,image_url,media_type,media_size,activity_id')
   ]);
   if (error) throw error;
   if (allSubsError) throw allSubsError;
@@ -3818,7 +4226,15 @@ async function buildStorageSummary(activityId) {
 
   const allRows = await Promise.all((allSubs || []).map(async row => {
     const manifest = normalizeSubmissionMediaManifest(row, await readSubmissionMediaManifest(row.id).catch(() => null));
-    return { ...row, thumbnail_path: manifest.thumbnail_path };
+    const storagePath = sanitizeStoragePath(row.storage_path) || storagePathFromPublicUrl(row.image_url);
+    return {
+      ...row,
+      storage_path: storagePath,
+      media_type: row.media_type || (isVideoFilePath(storagePath) ? 'video' : 'image'),
+      media_size: Number(row.media_size || 0),
+      thumbnail_path: sanitizeStoragePath(manifest.thumbnail_path),
+      manifest_path: createMediaManifestStoragePath(row.id)
+    };
   }));
 
   const globallyReferencedPathSet = new Set(
@@ -3907,6 +4323,30 @@ async function buildStorageSummary(activityId) {
       message: String(error?.message || error || 'Failed to load archive storage summary')
     }
   }));
+  const hotStorage = await buildHotStorageSummaryFromRows(allRows, storageFiles).catch(error => ({
+    provider_name: 'supabase-storage',
+    source_label: 'Supabase hot tier',
+    quota_bytes: HOT_STORAGE_FREE_QUOTA_BYTES,
+    total_bytes: storageBytes,
+    remaining_bytes: Math.max(HOT_STORAGE_FREE_QUOTA_BYTES - storageBytes, 0),
+    usage_percent: HOT_STORAGE_FREE_QUOTA_BYTES > 0 ? Math.min((storageBytes / HOT_STORAGE_FREE_QUOTA_BYTES) * 100, 999) : 0,
+    strategy: {
+      phase: 'critical',
+      level: 'critical',
+      title: 'Hot tier metrics unavailable',
+      message: String(error?.message || error || 'Failed to load hot storage summary')
+    },
+    warning: {
+      level: 'critical',
+      title: 'Hot tier metrics unavailable',
+      message: String(error?.message || error || 'Failed to load hot storage summary')
+    },
+    migration_suggestions: [{
+      level: 'critical',
+      title: 'Hot tier metrics unavailable',
+      message: String(error?.message || error || 'Failed to load hot storage summary')
+    }]
+  }));
   let warningLevel = 'healthy';
   let warningTitle = '空间健康';
   let warningMessage = '当前空间占用较低，继续保持压缩上传和定期清理即可。';
@@ -3955,6 +4395,7 @@ async function buildStorageSummary(activityId) {
     recent_upload_bytes_7d: recentReferencedBytes7d,
     estimated_growth_bytes_per_day: dailyGrowthBytes,
     estimated_days_to_limit: estimatedDaysToLimit,
+    hot_storage: hotStorage,
     archive_storage: archiveStorage,
     warning: {
       level: warningLevel,
@@ -4404,6 +4845,11 @@ app.get('/api/health', async (_req, res) => {
     provider_name: health.archive_provider?.name || 'none',
     configured: !!health.archive_provider?.configured,
     error: String(error?.message || error || 'Failed to load archive storage summary')
+  }));
+  health.hot_storage = await getCachedGlobalHotStorageSummary().catch(error => ({
+    provider_name: 'supabase-storage',
+    source_label: 'Supabase hot tier',
+    error: String(error?.message || error || 'Failed to load hot storage summary')
   }));
   health.local_backup_status = await getCachedLocalBackupStatus().catch(error => ({
     status: 'error',
@@ -5654,6 +6100,27 @@ async function buildPortalCourseDirectory(courseNameFilter = null, options = {})
 async function buildSuperAdminOverview() {
   const registry = await getCourseRegistry();
   const courses = await buildPortalCourseDirectory(null, { includeInactive: true });
+  const hotStorage = await getCachedGlobalHotStorageSummary().catch(error => ({
+    provider_name: 'supabase-storage',
+    source_label: 'Supabase hot tier',
+    error: String(error?.message || error || 'Failed to load hot storage summary'),
+    strategy: {
+      phase: 'critical',
+      level: 'critical',
+      title: 'Hot tier metrics unavailable',
+      message: String(error?.message || error || 'Failed to load hot storage summary')
+    },
+    warning: {
+      level: 'critical',
+      title: 'Hot tier metrics unavailable',
+      message: String(error?.message || error || 'Failed to load hot storage summary')
+    },
+    migration_suggestions: [{
+      level: 'critical',
+      title: 'Hot tier metrics unavailable',
+      message: String(error?.message || error || 'Failed to load hot storage summary')
+    }]
+  }));
   const archiveStorage = await getCachedArchiveStorageSummary().catch(error => ({
     provider_name: getArchiveProviderInfo().name,
     configured: !!getArchiveProviderInfo().configured,
@@ -5710,6 +6177,7 @@ async function buildSuperAdminOverview() {
   return {
     generated_at: new Date().toISOString(),
     super_admin_configured: isSuperAdminConfigured(),
+    hot_storage: hotStorage,
     archive_storage: archiveStorage,
     local_backup_status: localBackupStatus,
     health: {

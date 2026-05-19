@@ -61,6 +61,52 @@
       </div>
     </section>
 
+    <section class="course-portal archive-storage-shell" id="superHotStorageSection">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">SUPABASE HOT TIER</div>
+          <h2>热层占用仪表盘</h2>
+          <p>把 Supabase 1 GB 免费空间当作热层。40% 预热，50% 开始归档，70% 加速，85% 进入红线，自动给出热层到冷层的迁移建议。</p>
+        </div>
+      </div>
+      <div class="archive-gauge-layout">
+        <div class="archive-gauge-card">
+          <div class="archive-gauge-title">
+            <span>Supabase hot tier</span>
+            <span id="superHotStorageGaugeStatus" class="archive-gauge-status">Loading</span>
+          </div>
+          <div class="archive-speedometer" id="superHotStorageGauge">
+            <div class="archive-speedometer-ring" id="superHotStorageGaugeRing"></div>
+            <div class="archive-speedometer-needle" id="superHotStorageGaugeNeedle"></div>
+            <div class="archive-speedometer-hub"></div>
+            <span class="archive-speedometer-tick tick-left">0</span>
+            <span class="archive-speedometer-tick tick-mid" id="superHotStorageTickCenter">0.5 GB</span>
+            <span class="archive-speedometer-tick tick-right" id="superHotStorageTickRight">1.0 GB</span>
+            <div class="archive-speedometer-value">
+              <strong id="superHotStorageGaugeValue">0.00 GB</strong>
+              <span id="superHotStorageGaugePercent">0%</span>
+            </div>
+          </div>
+          <div id="superHotStorageGaugeNote" class="archive-gauge-note">Supabase hot tier usage is loading...</div>
+        </div>
+        <div class="archive-gauge-panel">
+          <div class="mini-stat-grid" id="superHotStorageGaugeStats"></div>
+          <div class="storage-meta-row" id="superHotStorageGaugeMeta"></div>
+        </div>
+      </div>
+      <div class="archive-ops-grid">
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>热层 -> 冷层自动归档建议</strong>
+            <span class="storage-meta-chip">40% prepare / 50% archive / 70% accelerate / 85% critical</span>
+          </div>
+          <div class="archive-suggestion-list" id="superHotStorageStrategyList">
+            <div class="archive-empty-state">Loading hot-tier strategy...</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section class="course-portal archive-storage-shell" id="superArchiveStorageSection">
       <div class="course-portal-head">
         <div>
@@ -412,6 +458,8 @@
 
     function renderOverviewBlocks() {
       renderOverviewSummary();
+      renderHotStorageGauge();
+      renderHotStorageOpsPanel();
       renderArchiveStorageGauge();
       renderArchiveStorageTrend();
       renderArchiveOpsPanel();
@@ -423,6 +471,83 @@
 
     function formatArchiveGaugeGb(bytes) {
       return `${(Number(bytes || 0) / (1024 ** 3)).toFixed(2)} GB`;
+    }
+
+    function resolveHotStorageGaugeColor(level) {
+      if (level === 'critical') return '#ef4444';
+      if (level === 'warning') return '#f59e0b';
+      if (level === 'attention') return '#f97316';
+      return '#22c55e';
+    }
+
+    function resolveHotStorageGaugeLabel(phase) {
+      if (phase === 'critical') return 'Hot tier red zone';
+      if (phase === 'accelerate') return 'Accelerate archive';
+      if (phase === 'archive') return 'Archive now';
+      if (phase === 'prepare') return 'Prepare lane';
+      return 'Hot tier safe';
+    }
+
+    function renderHotStorageGauge() {
+      const hotStorage = overview?.hot_storage || {};
+      const ring = document.getElementById('superHotStorageGaugeRing');
+      const needle = document.getElementById('superHotStorageGaugeNeedle');
+      const valueEl = document.getElementById('superHotStorageGaugeValue');
+      const percentEl = document.getElementById('superHotStorageGaugePercent');
+      const statusEl = document.getElementById('superHotStorageGaugeStatus');
+      const statsEl = document.getElementById('superHotStorageGaugeStats');
+      const metaEl = document.getElementById('superHotStorageGaugeMeta');
+      const noteEl = document.getElementById('superHotStorageGaugeNote');
+      const tickCenter = document.getElementById('superHotStorageTickCenter');
+      const tickRight = document.getElementById('superHotStorageTickRight');
+      if (!ring || !needle || !valueEl || !percentEl || !statusEl || !statsEl || !metaEl || !noteEl) return;
+
+      const totalBytes = Math.max(0, Number(hotStorage.total_bytes || 0));
+      const quotaBytes = Math.max(Number(hotStorage.quota_bytes || 0), totalBytes, 1);
+      const usagePercent = Math.max(0, Math.min(Number(hotStorage.usage_percent || ((totalBytes / quotaBytes) * 100)), 100));
+      const strategy = hotStorage.strategy || {};
+      const warning = hotStorage.warning || strategy || {};
+      const gaugeColor = resolveHotStorageGaugeColor(warning.level || strategy.level || 'healthy');
+      const gaugeDegrees = Math.max(0, Math.min((usagePercent / 100) * 180, 180));
+      const needleDegrees = -90 + gaugeDegrees;
+      const remainingBytes = Math.max(0, Number(hotStorage.remaining_bytes || 0));
+      const recommendedDays = Number(strategy.recommended_archive_after_days || 30);
+
+      ring.style.setProperty('--gauge-color', gaugeColor);
+      if (needle) needle.style.transform = `translateX(-50%) rotate(${needleDegrees.toFixed(1)}deg)`;
+      if (tickCenter) tickCenter.textContent = formatArchiveGaugeGb(quotaBytes / 2);
+      if (tickRight) tickRight.textContent = formatArchiveGaugeGb(quotaBytes);
+      valueEl.textContent = formatArchiveGaugeGb(totalBytes);
+      percentEl.textContent = `${usagePercent.toFixed(1)}% of hot tier`;
+      statusEl.innerHTML = [
+        `<span class="storage-meta-chip">${escapeHtml(resolveHotStorageGaugeLabel(strategy.phase || 'safe'))}</span>`,
+        '<span class="storage-meta-chip">40% prepare</span>',
+        '<span class="storage-meta-chip">50% archive</span>',
+        '<span class="storage-meta-chip">70% accelerate</span>',
+        '<span class="storage-meta-chip">85% critical</span>'
+      ].join('');
+      statsEl.innerHTML = [
+        ['Hot files', hotStorage.referenced_files || 0],
+        ['Videos', hotStorage.video_count || 0],
+        ['7D growth', formatBytes(hotStorage.recent_upload_bytes_7d || 0)],
+        ['Days left', hotStorage.estimated_days_to_limit === null ? 'Stable' : `${hotStorage.estimated_days_to_limit} d`]
+      ].map(item => `
+        <div class="mini-stat">
+          <strong>${escapeHtml(item[1])}</strong>
+          <span>${escapeHtml(item[0])}</span>
+        </div>
+      `).join('');
+      metaEl.innerHTML = [
+        `Remaining ${formatBytes(remainingBytes)}`,
+        `Daily growth ${formatBytes(hotStorage.estimated_growth_bytes_per_day || 0)}`,
+        hotStorage.prepare_threshold_bytes ? `Prepare ${formatArchiveGaugeGb(hotStorage.prepare_threshold_bytes)}` : '',
+        hotStorage.archive_threshold_bytes ? `Archive ${formatArchiveGaugeGb(hotStorage.archive_threshold_bytes)}` : '',
+        hotStorage.accelerate_threshold_bytes ? `Accelerate ${formatArchiveGaugeGb(hotStorage.accelerate_threshold_bytes)}` : '',
+        hotStorage.critical_threshold_bytes ? `Critical ${formatArchiveGaugeGb(hotStorage.critical_threshold_bytes)}` : '',
+        `Suggested archive-after-days ${recommendedDays}`
+      ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+      noteEl.className = `archive-gauge-note warning-${warning.level || 'healthy'}`;
+      noteEl.textContent = warning.message || 'Supabase hot tier remains healthy.';
     }
 
     function resolveArchiveGaugeColor(level) {
@@ -595,6 +720,7 @@
       const deltaBytes = Number(historySummary.delta_bytes || 0);
       const warningLevel = archiveStorage.warning?.level || 'healthy';
       const color = resolveArchiveGaugeColor(warningLevel);
+      const costProjection = archiveStorage.cost_projection || {};
 
       lineEl.setAttribute('points', dataset.linePoints);
       fillEl.setAttribute('points', dataset.fillPoints);
@@ -611,6 +737,12 @@
         budgetEl.innerHTML = (archiveStorage.budget_alerts_usd || [1, 3])
           .map(value => `<span class="storage-meta-chip">Budget $${escapeHtml(value)}</span>`)
           .join('');
+        budgetEl.innerHTML = [
+          ...(archiveStorage.budget_alerts_usd || [1, 3]).map(value => `Budget $${value}`),
+          `Projected storage bill $${Number(costProjection.projected_30d_storage_cost_usd || 0).toFixed(2)} / mo`,
+          'Class A free 1M / month',
+          'Class B free 10M / month'
+        ].map(value => `<span class="storage-meta-chip">${escapeHtml(value)}</span>`).join('');
         return;
       }
 
@@ -630,6 +762,8 @@
       ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
       budgetEl.innerHTML = [
         ...(archiveStorage.budget_alerts_usd || [1, 3]).map(value => `Cloudflare budget $${value}`),
+        `Projected storage bill $${Number(costProjection.projected_30d_storage_cost_usd || 0).toFixed(2)} / mo`,
+        costProjection.note || 'Class A/B costs stay near $0 until operations reach the millions.',
         'Storage warning 8.5 GB',
         'Storage critical 9.0 GB'
       ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
@@ -661,6 +795,40 @@
           </div>
         </article>
       `;
+    }
+
+    function renderHotStorageOpsPanel() {
+      const hotStorage = overview?.hot_storage || {};
+      const listEl = document.getElementById('superHotStorageStrategyList');
+      if (!listEl) return;
+      const suggestions = Array.isArray(hotStorage.migration_suggestions) ? hotStorage.migration_suggestions : [];
+      const largestCourses = Array.isArray(hotStorage.largest_course_groups) ? hotStorage.largest_course_groups : [];
+      const largestActivities = Array.isArray(hotStorage.largest_activity_groups) ? hotStorage.largest_activity_groups : [];
+      const largestItems = Array.isArray(hotStorage.largest_items)
+        ? hotStorage.largest_items.map(item => ({
+          ...item,
+          label: item.title || item.storage_path || item.id || 'hot-file',
+          key: [
+            item.media_type === 'video' ? 'Video' : 'Image',
+            item.upload_time ? `Uploaded ${formatDateTime(item.upload_time) || item.upload_time}` : ''
+          ].filter(Boolean).join(' | '),
+          size_bytes: item.media_size || 0
+        }))
+        : [];
+      const suggestionHtml = suggestions.length
+        ? suggestions.map(item => `
+            <article class="archive-suggestion-card level-${escapeHtml(item.level || 'info')}">
+              <strong>${escapeHtml(item.title || 'Hot tier advice')}</strong>
+              <p>${escapeHtml(item.message || '')}</p>
+            </article>
+          `).join('')
+        : '<div class="archive-empty-state">Hot storage remains comfortable. Keep recent class assets in Supabase and continue mirrored archive to R2.</div>';
+      listEl.innerHTML = [
+        suggestionHtml,
+        renderArchiveRankGroup('Hottest courses Top 5', largestCourses, 'No course-level hot storage groups are available yet.'),
+        renderArchiveRankGroup('Hottest activities Top 5', largestActivities, 'No activity-level hot storage groups are available yet.'),
+        renderArchiveRankGroup('Largest hot files Top 5', largestItems, 'No hot-tier media files are available yet.')
+      ].join('');
     }
 
     function renderArchiveOpsPanel() {
@@ -747,10 +915,11 @@
 
       const health = overview?.health || {};
       const localBackup = overview?.local_backup_status || {};
+      const hotStorage = overview?.hot_storage || {};
       const registryBackend = superStatus?.registry_backend || '-';
       const registryPath = superStatus?.registry_storage_path || '-';
       document.getElementById('healthLine').textContent =
-        `Version ${health.version || '-'} | Storage ${health.storage_maintenance_mode || '-'} | App key ${health.supabase_app_key_type || '-'} | Maint key ${health.supabase_maintenance_key_type || '-'} | Registry ${registryBackend} ${registryPath} | Local backup ${localBackup.warning?.level || localBackup.status || 'missing'}`;
+        `Version ${health.version || '-'} | Storage ${health.storage_maintenance_mode || '-'} | App key ${health.supabase_app_key_type || '-'} | Maint key ${health.supabase_maintenance_key_type || '-'} | Hot tier ${hotStorage.strategy?.phase || hotStorage.warning?.level || 'unknown'} | Registry ${registryBackend} ${registryPath} | Local backup ${localBackup.warning?.level || localBackup.status || 'missing'}`;
 
       document.getElementById('registryMeta').textContent =
         `版本 ${Number(overview?.registry?.version || 0)} | 最近更新 ${formatDateTime(overview?.registry?.updated_at, { withSeconds: true }) || '-'} | 已停用 ${Number(summary.disabled_course_count || 0)} | 动态骨架 ${Number(summary.scaffold_course_count || 0)}`;

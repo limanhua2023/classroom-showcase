@@ -917,14 +917,48 @@
               <div class="storage-meta-row" id="storageForecastMeta"></div>
               <div class="archive-gauge-layout">
                 <div class="archive-gauge-card">
+                  <div class="archive-gauge-title">Supabase hot tier</div>
+                  <div class="archive-speedometer" id="hotStorageGauge">
+                    <div class="archive-speedometer-ring" id="hotStorageGaugeRing"></div>
+                    <div class="archive-speedometer-needle" id="hotStorageGaugeNeedle"></div>
+                    <div class="archive-speedometer-hub"></div>
+                    <div class="archive-speedometer-tick tick-left" id="hotStorageTickLeft">0</div>
+                    <div class="archive-speedometer-tick tick-mid" id="hotStorageTickCenter">0.5 GB</div>
+                    <div class="archive-speedometer-tick tick-right" id="hotStorageTickRight">1.0 GB</div>
+                    <div class="archive-speedometer-value">
+                      <strong id="hotStorageGaugeValue">0.00 GB</strong>
+                      <span id="hotStorageGaugePercent">0%</span>
+                    </div>
+                  </div>
+                  <div class="archive-gauge-status" id="hotStorageGaugeStatus"></div>
+                </div>
+                <div class="archive-gauge-panel">
+                  <div class="mini-stat-grid" id="hotStorageGaugeStats"></div>
+                  <div class="storage-meta-row" id="hotStorageGaugeMeta"></div>
+                  <div class="archive-gauge-note" id="hotStorageGaugeNote">Supabase hot tier usage is loading...</div>
+                </div>
+              </div>
+              <div class="archive-ops-grid">
+                <div class="archive-ops-card">
+                  <div class="archive-ops-head">
+                    <strong>热层 -> 冷层自动归档建议</strong>
+                    <span class="storage-meta-chip">40% 预热 / 50% 开始归档 / 70% 加速 / 85% 红线</span>
+                  </div>
+                  <div class="archive-suggestion-list" id="hotStorageStrategyList">
+                    <div class="archive-empty-state">正在读取热存储策略...</div>
+                  </div>
+                </div>
+              </div>
+              <div class="archive-gauge-layout">
+                <div class="archive-gauge-card">
                   <div class="archive-gauge-title">R2 archive usage</div>
                   <div class="archive-speedometer" id="archiveStorageGauge">
                     <div class="archive-speedometer-ring" id="archiveStorageGaugeRing"></div>
                     <div class="archive-speedometer-needle" id="archiveStorageGaugeNeedle"></div>
                     <div class="archive-speedometer-hub"></div>
-                    <div class="archive-speedometer-tick left">0 GB</div>
-                    <div class="archive-speedometer-tick center">5 GB</div>
-                    <div class="archive-speedometer-tick right">10 GB</div>
+                    <div class="archive-speedometer-tick tick-left">0 GB</div>
+                    <div class="archive-speedometer-tick tick-mid">5 GB</div>
+                    <div class="archive-speedometer-tick tick-right">10 GB</div>
                     <div class="archive-speedometer-value">
                       <strong id="archiveStorageGaugeValue">0.00 GB</strong>
                       <span id="archiveStorageGaugePercent">0%</span>
@@ -1757,6 +1791,91 @@
       return `${value.toFixed(value >= 9.95 ? 1 : 2)} GB`;
     }
 
+    function formatHotStorageGaugeValue(bytes) {
+      return formatBytes(Math.max(0, Number(bytes || 0)));
+    }
+
+    function resolveHotStorageGaugeColor(level) {
+      if (level === 'critical') return '#ef4444';
+      if (level === 'warning') return '#f59e0b';
+      if (level === 'attention') return '#f97316';
+      return '#22c55e';
+    }
+
+    function resolveHotStorageGaugeLabel(phase) {
+      if (phase === 'critical') return 'Hot tier red zone';
+      if (phase === 'accelerate') return 'Accelerate archive';
+      if (phase === 'archive') return 'Archive now';
+      if (phase === 'prepare') return 'Prepare lane';
+      return 'Hot tier safe';
+    }
+
+    function renderHotStorageGauge(hotStorage = {}) {
+      const ring = document.getElementById('hotStorageGaugeRing');
+      const needle = document.getElementById('hotStorageGaugeNeedle');
+      const valueEl = document.getElementById('hotStorageGaugeValue');
+      const percentEl = document.getElementById('hotStorageGaugePercent');
+      const statusEl = document.getElementById('hotStorageGaugeStatus');
+      const statsEl = document.getElementById('hotStorageGaugeStats');
+      const metaEl = document.getElementById('hotStorageGaugeMeta');
+      const noteEl = document.getElementById('hotStorageGaugeNote');
+      const tickCenter = document.getElementById('hotStorageTickCenter');
+      const tickRight = document.getElementById('hotStorageTickRight');
+      if (!ring || !needle || !valueEl || !percentEl || !statusEl || !statsEl || !metaEl || !noteEl) return;
+
+      const totalBytes = Math.max(0, Number(hotStorage.total_bytes || 0));
+      const quotaBytes = Math.max(Number(hotStorage.quota_bytes || 0), totalBytes, 1);
+      const usagePercent = Math.max(0, Math.min(Number(hotStorage.usage_percent || ((totalBytes / quotaBytes) * 100)), 100));
+      const strategy = hotStorage.strategy || {};
+      const warning = hotStorage.warning || strategy || {};
+      const gaugeColor = resolveHotStorageGaugeColor(warning.level || strategy.level || 'healthy');
+      const gaugeDegrees = Math.max(0, Math.min((usagePercent / 100) * 180, 180));
+      const needleDegrees = -90 + gaugeDegrees;
+      const remainingBytes = Math.max(0, Number(hotStorage.remaining_bytes || 0));
+      const recommendedDays = Number(strategy.recommended_archive_after_days || 30);
+
+      ring.style.setProperty('--gauge-progress', `${gaugeDegrees.toFixed(1)}deg`);
+      ring.style.setProperty('--gauge-color', gaugeColor);
+      needle.style.transform = `translateX(-50%) rotate(${needleDegrees.toFixed(1)}deg)`;
+      if (tickCenter) tickCenter.textContent = formatHotStorageGaugeValue(quotaBytes / 2);
+      if (tickRight) tickRight.textContent = formatHotStorageGaugeValue(quotaBytes);
+
+      valueEl.textContent = formatHotStorageGaugeValue(totalBytes);
+      percentEl.textContent = `${usagePercent.toFixed(1)}% of hot tier`;
+      statusEl.innerHTML = [
+        `<span class="storage-meta-chip">${escapeHtml(resolveHotStorageGaugeLabel(strategy.phase || 'safe'))}</span>`,
+        `<span class="storage-meta-chip">${escapeHtml('40% prepare')}</span>`,
+        `<span class="storage-meta-chip">${escapeHtml('50% archive')}</span>`,
+        `<span class="storage-meta-chip">${escapeHtml('70% accelerate')}</span>`,
+        `<span class="storage-meta-chip">${escapeHtml('85% critical')}</span>`
+      ].join('');
+
+      statsEl.innerHTML = [
+        ['Hot files', hotStorage.referenced_files || 0],
+        ['Videos', hotStorage.video_count || 0],
+        ['7D growth', formatBytes(hotStorage.recent_upload_bytes_7d || 0)],
+        ['Days left', hotStorage.estimated_days_to_limit === null ? 'Stable' : `${hotStorage.estimated_days_to_limit} d`]
+      ].map(item => `
+        <div class="mini-stat">
+          <strong>${escapeHtml(item[1])}</strong>
+          <span>${escapeHtml(item[0])}</span>
+        </div>
+      `).join('');
+
+      metaEl.innerHTML = [
+        `Remaining ${formatBytes(remainingBytes)}`,
+        `Daily growth ${formatBytes(hotStorage.estimated_growth_bytes_per_day || 0)}`,
+        hotStorage.prepare_threshold_bytes ? `Prepare ${formatHotStorageGaugeValue(hotStorage.prepare_threshold_bytes)}` : '',
+        hotStorage.archive_threshold_bytes ? `Archive ${formatHotStorageGaugeValue(hotStorage.archive_threshold_bytes)}` : '',
+        hotStorage.accelerate_threshold_bytes ? `Accelerate ${formatHotStorageGaugeValue(hotStorage.accelerate_threshold_bytes)}` : '',
+        hotStorage.critical_threshold_bytes ? `Critical ${formatHotStorageGaugeValue(hotStorage.critical_threshold_bytes)}` : '',
+        `Suggested archive-after-days ${recommendedDays}`
+      ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+
+      noteEl.className = `archive-gauge-note${warning.level ? ` warning-${warning.level}` : ''}`;
+      noteEl.textContent = warning.message || 'Supabase hot tier remains healthy.';
+    }
+
     function resolveArchiveGaugeColor(level) {
       if (level === 'critical') return '#ef4444';
       if (level === 'warning' || level === 'attention') return '#f59e0b';
@@ -1929,6 +2048,7 @@
       const deltaBytes = Number(historySummary.delta_bytes || 0);
       const warningLevel = archiveStorage.warning?.level || 'healthy';
       const color = resolveArchiveGaugeColor(warningLevel);
+      const costProjection = archiveStorage.cost_projection || {};
 
       lineEl.setAttribute('points', dataset.linePoints);
       fillEl.setAttribute('points', dataset.fillPoints);
@@ -1945,6 +2065,12 @@
         budgetEl.innerHTML = (archiveStorage.budget_alerts_usd || [1, 3])
           .map(value => `<span class="storage-meta-chip">Budget $${escapeHtml(value)}</span>`)
           .join('');
+        budgetEl.innerHTML = [
+          ...(archiveStorage.budget_alerts_usd || [1, 3]).map(value => `Budget $${value}`),
+          `Projected storage bill $${Number(costProjection.projected_30d_storage_cost_usd || 0).toFixed(2)} / mo`,
+          'Class A free 1M / month',
+          'Class B free 10M / month'
+        ].map(value => `<span class="storage-meta-chip">${escapeHtml(value)}</span>`).join('');
         return;
       }
 
@@ -1964,6 +2090,8 @@
       ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
       budgetEl.innerHTML = [
         ...(archiveStorage.budget_alerts_usd || [1, 3]).map(value => `Cloudflare budget $${value}`),
+        `Projected storage bill $${Number(costProjection.projected_30d_storage_cost_usd || 0).toFixed(2)} / mo`,
+        costProjection.note || 'Class A/B costs stay near $0 until operations reach the millions.',
         'Storage warning 8.5 GB',
         'Storage critical 9.0 GB'
       ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
@@ -1996,6 +2124,37 @@
       `;
     }
 
+    function renderHotStorageStrategyPanel(hotStorage = {}) {
+      const listEl = document.getElementById('hotStorageStrategyList');
+      if (!listEl) return;
+      const suggestions = Array.isArray(hotStorage.migration_suggestions) ? hotStorage.migration_suggestions : [];
+      const largestCourses = Array.isArray(hotStorage.largest_course_groups) ? hotStorage.largest_course_groups : [];
+      const largestActivities = Array.isArray(hotStorage.largest_activity_groups) ? hotStorage.largest_activity_groups : [];
+      const largestItems = Array.isArray(hotStorage.largest_items) ? hotStorage.largest_items.map(item => ({
+        ...item,
+        label: item.title || item.storage_path || item.id || 'hot-file',
+        key: [
+          item.media_type === 'video' ? 'Video' : 'Image',
+          item.upload_time ? `Uploaded ${formatDateTime(item.upload_time) || item.upload_time}` : ''
+        ].filter(Boolean).join(' | '),
+        size_bytes: item.media_size || 0
+      })) : [];
+      const suggestionHtml = suggestions.length
+        ? suggestions.map(item => `
+            <article class="archive-suggestion-card level-${escapeHtml(item.level || 'info')}">
+              <strong>${escapeHtml(item.title || 'Hot tier advice')}</strong>
+              <p>${escapeHtml(item.message || '')}</p>
+            </article>
+          `).join('')
+        : '<div class="archive-empty-state">Hot storage remains comfortable. Keep recent class assets in Supabase and continue mirrored archive to R2.</div>';
+      listEl.innerHTML = [
+        suggestionHtml,
+        renderArchiveRankGroup('Hottest courses Top 5', largestCourses, 'No course-level hot storage groups are available yet.'),
+        renderArchiveRankGroup('Hottest activities Top 5', largestActivities, 'No activity-level hot storage groups are available yet.'),
+        renderArchiveRankGroup('Largest hot files Top 5', largestItems, 'No hot-tier media files are available yet.')
+      ].join('');
+    }
+
     function renderArchiveStorageCleanupSuggestions(archiveStorage = {}) {
       const listEl = document.getElementById("archiveStorageCleanupList");
       if (!listEl) return;
@@ -2025,6 +2184,7 @@
     function renderArchiveControls(summary) {
       const activity = summary.activity || {};
       const storage = summary.storage || {};
+      const hotStorage = storage.hot_storage || {};
       const archiveStorage = storage.archive_storage || {};
       const provider = summary.media_pipeline?.provider || {};
       const providerDestination = provider.destination || {};
@@ -2038,6 +2198,62 @@
       const metaBox = document.getElementById('storageForecastMeta');
 
       if (!daysInput || !quarantineInput || !deleteToggle || !badge || !hint || !statsBox || !metaBox) return;
+
+      daysInput.value = Number(activity.archive_after_days ?? provider.after_days ?? 30);
+      quarantineInput.value = Number(activity.quarantine_retention_days ?? 3);
+      deleteToggle.checked = !!activity.archive_delete_primary_after_success;
+
+      const hotStrategy = hotStorage.strategy || {};
+      const recommendedDays = Number(hotStrategy.recommended_archive_after_days || daysInput.value || 30);
+      const hotPhaseLabel = resolveHotStorageGaugeLabel(hotStrategy.phase || 'safe');
+
+      badge.textContent = deleteToggle.checked
+        ? `Cold storage on · archive ${daysInput.value}d / recycle ${quarantineInput.value}d`
+        : `Mirror mode · archive ${daysInput.value}d / recycle ${quarantineInput.value}d · ${hotPhaseLabel}`;
+
+      statsBox.innerHTML = [
+        ['Hot quota', formatBytes(hotStorage.quota_bytes || storage.quota_bytes || 0)],
+        ['Hot used', `${Number(hotStorage.usage_percent || storage.usage_percent || 0).toFixed(1)}%`],
+        ['7D growth', formatBytes(hotStorage.recent_upload_bytes_7d || storage.recent_upload_bytes_7d || 0)],
+        ['Suggested archive', `${recommendedDays} d`]
+      ].map(item => `
+        <div class="mini-stat">
+          <strong>${escapeHtml(item[1])}</strong>
+          <span>${escapeHtml(item[0])}</span>
+        </div>
+      `).join('');
+
+      metaBox.innerHTML = [
+        `7D uploads ${hotStorage.recent_upload_count_7d || storage.recent_upload_count_7d || 0} items`,
+        `Daily growth ${formatBytes(hotStorage.estimated_growth_bytes_per_day || storage.estimated_growth_bytes_per_day || 0)}`,
+        hotStrategy.next_phase ? `Next stage ${resolveHotStorageGaugeLabel(hotStrategy.next_phase)}` : '',
+        hotStorage.remaining_bytes ? `Hot remaining ${formatBytes(hotStorage.remaining_bytes)}` : '',
+        provider.configured
+          ? `Archive ${provider.auth_mode ? `${provider.name}/${provider.auth_mode}` : provider.name}`
+          : 'Archive provider offline',
+        providerDestination.destination_type === 'shared-drive'
+          ? 'Target Shared Drive'
+          : providerDestination.destination_type === 'my-drive'
+            ? 'Target My Drive'
+            : '',
+        `Recycle retention ${quarantineInput.value} d`,
+        deleteToggle.checked ? 'Cold release enabled after archive verification' : 'Primary Supabase files stay mirrored'
+      ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+
+      hint.textContent = provider.configured
+        ? `Supabase works as the hot tier and R2 works as the cold tier. The current policy suggestion is to keep archive-after-days around ${recommendedDays}, then tighten it as the hot tier approaches 50%, 70%, and 85% of the free 1 GB quota.`
+        : 'Archive provider is not configured yet. You can still save the policy draft, but no real archive job will run until the provider is connected.';
+
+      renderHotStorageGauge(hotStorage);
+      renderHotStorageStrategyPanel(hotStorage);
+      renderArchiveStorageGauge(archiveStorage, provider);
+      renderArchiveStorageTrend(archiveStorage);
+      renderArchiveStorageCleanupSuggestions(archiveStorage);
+
+      if (providerWarning) {
+        hint.textContent += ` Current provider warning: ${providerWarning}`;
+      }
+      return;
 
       daysInput.value = Number(activity.archive_after_days ?? provider.after_days ?? 30);
       quarantineInput.value = Number(activity.quarantine_retention_days ?? 3);
