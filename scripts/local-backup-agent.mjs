@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { Readable } from 'stream';
@@ -21,6 +22,7 @@ const STATE_VERSION = 1;
 const DEFAULT_CONCURRENCY = 3;
 const DEFAULT_INTERVAL_MS = 10 * 60 * 1000;
 const DEFAULT_REPORT_RETENTION = 40;
+const LOCAL_BACKUP_STATUS_PATH = String(process.env.LOCAL_BACKUP_STATUS_PATH || 'system/local-backup-status.json').trim();
 
 function printHelp() {
   console.log(`
@@ -149,6 +151,15 @@ function ensureDir(dirPath) {
 function writeJson(filePath, value) {
   ensureDir(path.dirname(filePath));
   fs.writeFileSync(filePath, JSON.stringify(value, null, 2), 'utf8');
+}
+
+async function uploadJsonDocument(bucket, remotePath, value) {
+  const payload = Buffer.from(JSON.stringify(value, null, 2), 'utf8');
+  const { error } = await bucket.upload(remotePath, payload, {
+    upsert: true,
+    contentType: 'application/json'
+  });
+  if (error) throw error;
 }
 
 function readJson(filePath, fallback = null) {
@@ -551,6 +562,39 @@ function pruneOldReports(reportRoot, retention) {
   }
 }
 
+function buildCloudStatusPayload(config, report = {}, patch = {}) {
+  return {
+    schema_version: 'classshow-local-backup-status-v1',
+    agent: 'local-backup-agent',
+    host: os.hostname(),
+    status: patch.status || report.status || 'ok',
+    mode: config.mode,
+    generated_at: patch.generated_at || report.generated_at || new Date().toISOString(),
+    started_at: patch.started_at || report.started_at || config.startedAt || new Date().toISOString(),
+    finished_at: patch.finished_at || report.finished_at || report.generated_at || null,
+    last_success_at: patch.last_success_at || report.last_success_at || report.generated_at || null,
+    duration_ms: Math.max(0, Number(patch.duration_ms ?? report.duration_ms ?? 0)),
+    backup_root: config.backupRoot,
+    report_path: patch.report_path || report.report_path || 'reports/latest-report.json',
+    report_payload_sha256: patch.report_payload_sha256 || report.report_payload_sha256 || null,
+    scope: patch.scope || report.scope || {
+      course_name: config.courseName || null,
+      activity_id: config.activityId || null,
+      invite_code: config.inviteCode || null
+    },
+    supabase: patch.supabase || report.supabase || {
+      url: config.supabaseUrl,
+      key_type: config.supabaseKeyType
+    },
+    storage: patch.storage || report.storage || {},
+    tables: patch.tables || report.tables || {},
+    course_count: Math.max(0, Number(patch.course_count ?? report.course_count ?? 0)),
+    storage_failures: patch.storage_failures || report.storage_failures || [],
+    stale_local_files: patch.stale_local_files || report.stale_local_files || [],
+    error: patch.error || report.error || null
+  };
+}
+
 async function runBackupOnce(config) {
   const client = createSupabaseClient(config);
   const bucket = client.storage.from(STORAGE_BUCKET);
@@ -562,55 +606,17 @@ async function runBackupOnce(config) {
   ensureDir(config.storageRoot);
   ensureDir(config.reportRoot);
 
-  console.log(`[backup] start ${new Date().toISOString()} mode=${config.mode} root=${config.backupRoot}`);
+  const startedAtIso = new Date().toISOString();
+  console.log(`[backup] start ${startedAtIso} mode=${config.mode} root=${config.backupRoot}`);
   console.log(`[backup] supabase key type: ${config.supabaseKeyType}`);
 
   const startedAt = Date.now();
-  const { storageObjects, report: storageReport } = await syncStorageFiles(bucket, config, state);
-  const activities = await fetchActivities(client, config);
-  const activityIds = activities.map(item => item.id).filter(Boolean);
+  try {
+    const { storageObjects, report: storageReport } = await syncStorageFiles(bucket, config, state);
+    const activities = await fetchActivities(client, config);
+    const activityIds = activities.map(item => item.id).filter(Boolean);
 
-  const [
-    users,
-    studentRoster,
-    submissions,
-    ratings,
-    comments,
-    views,
-    feedbackLikes,
-    learningSessions
-  ] = await Promise.all([
-    fetchRowsByActivityIds(client, 'users', activityIds),
-    fetchOptionalRowsByActivityIds(client, 'student_roster', activityIds),
-    fetchRowsByActivityIds(client, 'submissions', activityIds),
-    fetchOptionalRowsByActivityIds(client, 'ratings', activityIds),
-    fetchOptionalRowsByActivityIds(client, 'comments', activityIds),
-    fetchOptionalRowsByActivityIds(client, 'views', activityIds),
-    fetchOptionalRowsByActivityIds(client, 'activity_feedback_likes', activityIds),
-    fetchOptionalRowsByActivityIds(client, 'student_learning_sessions', activityIds)
-  ]);
-
-  const generatedAt = new Date().toISOString();
-  const courseCatalog = buildCourseCatalog(activities, submissions, learningSessions);
-
-  writeJson(path.join(config.metadataRoot, 'activities.json'), activities);
-  writeJson(path.join(config.metadataRoot, 'users.json'), users);
-  writeJson(path.join(config.metadataRoot, 'student_roster.json'), studentRoster);
-  writeJson(path.join(config.metadataRoot, 'submissions.json'), submissions.map(item => enrichSubmissionForBackup(config, item)));
-  writeJson(path.join(config.metadataRoot, 'ratings.json'), ratings);
-  writeJson(path.join(config.metadataRoot, 'comments.json'), comments);
-  writeJson(path.join(config.metadataRoot, 'views.json'), views);
-  writeJson(path.join(config.metadataRoot, 'activity_feedback_likes.json'), feedbackLikes);
-  writeJson(path.join(config.metadataRoot, 'student_learning_sessions.json'), learningSessions);
-  writeJson(path.join(config.metadataRoot, 'course_catalog.json'), courseCatalog);
-
-  const activityIndex = [];
-  for (const activity of activities) {
-    const courseFolder = sanitizeSlugSegment(activity.course_name || 'uncategorized', 'uncategorized');
-    const activityFolder = buildActivityDirectoryName(activity);
-    const outputDir = path.join(config.activityRoot, courseFolder, activityFolder);
-    ensureDir(outputDir);
-    const snapshot = buildActivitySnapshot(config, activity, {
+    const [
       users,
       studentRoster,
       submissions,
@@ -619,76 +625,158 @@ async function runBackupOnce(config) {
       views,
       feedbackLikes,
       learningSessions
+    ] = await Promise.all([
+      fetchRowsByActivityIds(client, 'users', activityIds),
+      fetchOptionalRowsByActivityIds(client, 'student_roster', activityIds),
+      fetchRowsByActivityIds(client, 'submissions', activityIds),
+      fetchOptionalRowsByActivityIds(client, 'ratings', activityIds),
+      fetchOptionalRowsByActivityIds(client, 'comments', activityIds),
+      fetchOptionalRowsByActivityIds(client, 'views', activityIds),
+      fetchOptionalRowsByActivityIds(client, 'activity_feedback_likes', activityIds),
+      fetchOptionalRowsByActivityIds(client, 'student_learning_sessions', activityIds)
+    ]);
+
+    const generatedAt = new Date().toISOString();
+    const courseCatalog = buildCourseCatalog(activities, submissions, learningSessions);
+
+    writeJson(path.join(config.metadataRoot, 'activities.json'), activities);
+    writeJson(path.join(config.metadataRoot, 'users.json'), users);
+    writeJson(path.join(config.metadataRoot, 'student_roster.json'), studentRoster);
+    writeJson(path.join(config.metadataRoot, 'submissions.json'), submissions.map(item => enrichSubmissionForBackup(config, item)));
+    writeJson(path.join(config.metadataRoot, 'ratings.json'), ratings);
+    writeJson(path.join(config.metadataRoot, 'comments.json'), comments);
+    writeJson(path.join(config.metadataRoot, 'views.json'), views);
+    writeJson(path.join(config.metadataRoot, 'activity_feedback_likes.json'), feedbackLikes);
+    writeJson(path.join(config.metadataRoot, 'student_learning_sessions.json'), learningSessions);
+    writeJson(path.join(config.metadataRoot, 'course_catalog.json'), courseCatalog);
+
+    const activityIndex = [];
+    for (const activity of activities) {
+      const courseFolder = sanitizeSlugSegment(activity.course_name || 'uncategorized', 'uncategorized');
+      const activityFolder = buildActivityDirectoryName(activity);
+      const outputDir = path.join(config.activityRoot, courseFolder, activityFolder);
+      ensureDir(outputDir);
+      const snapshot = buildActivitySnapshot(config, activity, {
+        users,
+        studentRoster,
+        submissions,
+        ratings,
+        comments,
+        views,
+        feedbackLikes,
+        learningSessions
+      });
+      writeJson(path.join(outputDir, 'snapshot.json'), snapshot);
+      activityIndex.push({
+        course_name: activity.course_name,
+        activity_name: activity.activity_name,
+        invite_code: activity.invite_code,
+        activity_id: activity.id,
+        relative_path: path.relative(config.currentRoot, path.join(outputDir, 'snapshot.json')).replace(/\\/g, '/')
+      });
+    }
+    writeJson(path.join(config.activityRoot, 'index.json'), activityIndex);
+
+    const systemSummary = {
+      schema_version: 'classshow-local-backup-run-v1',
+      generated_at: generatedAt,
+      started_at: startedAtIso,
+      finished_at: generatedAt,
+      scope: {
+        course_name: config.courseName || null,
+        activity_id: config.activityId || null,
+        invite_code: config.inviteCode || null
+      },
+      supabase: {
+        url: config.supabaseUrl,
+        key_type: config.supabaseKeyType
+      },
+      storage: {
+        bucket: STORAGE_BUCKET,
+        object_count: storageObjects.length,
+        downloaded_count: storageReport.downloaded,
+        skipped_count: storageReport.skipped,
+        failed_count: storageReport.failed.length,
+        stale_local_file_count: storageReport.stale_local_files.length
+      },
+      tables: {
+        activities: activities.length,
+        users: users.length,
+        student_roster: studentRoster.length,
+        submissions: submissions.length,
+        ratings: ratings.length,
+        comments: comments.length,
+        views: views.length,
+        activity_feedback_likes: feedbackLikes.length,
+        student_learning_sessions: learningSessions.length
+      },
+      course_count: courseCatalog.length
+    };
+    writeJson(path.join(config.metadataRoot, 'system_summary.json'), systemSummary);
+
+    state.last_run = generatedAt;
+    saveState(config.stateFile, state);
+
+    const report = {
+      ...systemSummary,
+      status: 'ok',
+      duration_ms: Date.now() - startedAt,
+      storage_failures: storageReport.failed,
+      stale_local_files: storageReport.stale_local_files
+    };
+    const reportPayloadSha256 = crypto
+      .createHash('sha256')
+      .update(JSON.stringify(report))
+      .digest('hex');
+    report.report_payload_sha256 = reportPayloadSha256;
+    report.report_path = 'reports/latest-report.json';
+    const reportPath = path.join(config.reportRoot, `backup-report_${timestampStamp(generatedAt)}.json`);
+    writeJson(reportPath, report);
+    writeJson(path.join(config.reportRoot, 'latest-report.json'), report);
+    pruneOldReports(config.reportRoot, config.reportRetention);
+
+    await uploadJsonDocument(bucket, LOCAL_BACKUP_STATUS_PATH, buildCloudStatusPayload(config, report, {
+      report_payload_sha256: reportPayloadSha256,
+      started_at: startedAtIso,
+      finished_at: generatedAt,
+      last_success_at: generatedAt
+    }));
+
+    console.log(
+      `[backup] done activities=${activities.length} submissions=${submissions.length} downloaded=${storageReport.downloaded} skipped=${storageReport.skipped} failed=${storageReport.failed.length}`
+    );
+    return report;
+  } catch (error) {
+    const failedAt = new Date().toISOString();
+    const failurePayload = buildCloudStatusPayload(config, {}, {
+      status: 'error',
+      generated_at: failedAt,
+      started_at: startedAtIso,
+      finished_at: failedAt,
+      duration_ms: Date.now() - startedAt,
+      error: error.message || String(error),
+      storage: {
+        bucket: STORAGE_BUCKET,
+        object_count: 0,
+        downloaded_count: 0,
+        skipped_count: 0,
+        failed_count: 0,
+        stale_local_file_count: 0
+      },
+      tables: {
+        activities: 0,
+        submissions: 0,
+        student_learning_sessions: 0
+      },
+      storage_failures: []
     });
-    writeJson(path.join(outputDir, 'snapshot.json'), snapshot);
-    activityIndex.push({
-      course_name: activity.course_name,
-      activity_name: activity.activity_name,
-      invite_code: activity.invite_code,
-      activity_id: activity.id,
-      relative_path: path.relative(config.currentRoot, path.join(outputDir, 'snapshot.json')).replace(/\\/g, '/')
-    });
+    try {
+      await uploadJsonDocument(bucket, LOCAL_BACKUP_STATUS_PATH, failurePayload);
+    } catch (uploadError) {
+      console.warn(`[backup] failed to upload backup status: ${uploadError.message}`);
+    }
+    throw error;
   }
-  writeJson(path.join(config.activityRoot, 'index.json'), activityIndex);
-
-  const systemSummary = {
-    schema_version: 'classshow-local-backup-run-v1',
-    generated_at: generatedAt,
-    scope: {
-      course_name: config.courseName || null,
-      activity_id: config.activityId || null,
-      invite_code: config.inviteCode || null
-    },
-    supabase: {
-      url: config.supabaseUrl,
-      key_type: config.supabaseKeyType
-    },
-    storage: {
-      bucket: STORAGE_BUCKET,
-      object_count: storageObjects.length,
-      downloaded_count: storageReport.downloaded,
-      skipped_count: storageReport.skipped,
-      failed_count: storageReport.failed.length,
-      stale_local_file_count: storageReport.stale_local_files.length
-    },
-    tables: {
-      activities: activities.length,
-      users: users.length,
-      student_roster: studentRoster.length,
-      submissions: submissions.length,
-      ratings: ratings.length,
-      comments: comments.length,
-      views: views.length,
-      activity_feedback_likes: feedbackLikes.length,
-      student_learning_sessions: learningSessions.length
-    },
-    course_count: courseCatalog.length
-  };
-  writeJson(path.join(config.metadataRoot, 'system_summary.json'), systemSummary);
-
-  state.last_run = generatedAt;
-  saveState(config.stateFile, state);
-
-  const report = {
-    ...systemSummary,
-    duration_ms: Date.now() - startedAt,
-    storage_failures: storageReport.failed,
-    stale_local_files: storageReport.stale_local_files
-  };
-  const reportPayloadSha256 = crypto
-    .createHash('sha256')
-    .update(JSON.stringify(report))
-    .digest('hex');
-  report.report_payload_sha256 = reportPayloadSha256;
-  const reportPath = path.join(config.reportRoot, `backup-report_${timestampStamp(generatedAt)}.json`);
-  writeJson(reportPath, report);
-  writeJson(path.join(config.reportRoot, 'latest-report.json'), report);
-  pruneOldReports(config.reportRoot, config.reportRetention);
-
-  console.log(
-    `[backup] done activities=${activities.length} submissions=${submissions.length} downloaded=${storageReport.downloaded} skipped=${storageReport.skipped} failed=${storageReport.failed.length}`
-  );
-  return report;
 }
 
 async function main() {

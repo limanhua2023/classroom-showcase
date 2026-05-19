@@ -106,6 +106,7 @@ const ARCHIVE_STORAGE_HISTORY_PATH = 'system/archive-storage-history.json';
 const ARCHIVE_STORAGE_HISTORY_MAX_POINTS = Math.max(24, Number(process.env.ARCHIVE_STORAGE_HISTORY_MAX_POINTS || 168));
 const ARCHIVE_STORAGE_HISTORY_MIN_INTERVAL_MS = Math.max(5 * 60 * 1000, Number(process.env.ARCHIVE_STORAGE_HISTORY_MIN_INTERVAL_MS || 60 * 60 * 1000));
 const ARCHIVE_STORAGE_HISTORY_MIN_DELTA_BYTES = Math.max(512 * 1024, Number(process.env.ARCHIVE_STORAGE_HISTORY_MIN_DELTA_BYTES || 8 * 1024 * 1024));
+const LOCAL_BACKUP_STATUS_PATH = 'system/local-backup-status.json';
 const STORAGE_SAFE_DELETE = !/^false$/i.test(String(process.env.STORAGE_SAFE_DELETE || 'true'));
 const ARCHIVE_PERMANENT_DELETE = /^true$/i.test(String(process.env.ARCHIVE_PERMANENT_DELETE || 'false'));
 const OPS_SNAPSHOT_LIST_TTL_MS = 60 * 1000;
@@ -989,6 +990,8 @@ const storageSummaryCache = new Map();
 const archiveStorageSummaryCache = new Map();
 let archiveStorageHistoryCache = null;
 let archiveStorageHistoryLoadedAt = 0;
+let localBackupStatusCache = null;
+let localBackupStatusLoadedAt = 0;
 const missingMediaExportCache = new Map();
 let googleDriveClientPromise = null;
 let googleDriveDestinationInfoPromise = null;
@@ -1632,6 +1635,35 @@ function buildArchiveStorageWarningSummary(totalBytes, quotaBytes) {
   };
 }
 
+function trimArchiveObjectLabel(key = '') {
+  const normalized = String(key || '').trim();
+  if (!normalized) return '-';
+  if (normalized.length <= 72) return normalized;
+  return `...${normalized.slice(-69)}`;
+}
+
+function buildArchiveObjectRankEntry(item = {}) {
+  const key = String(item.key || '');
+  const size = Math.max(0, Number(item.size || 0));
+  const name = key.split('/').filter(Boolean).pop() || key || '-';
+  return {
+    key,
+    name,
+    label: trimArchiveObjectLabel(key),
+    size,
+    last_modified_at: toIsoStringOrNull(item.last_modified_at) || null
+  };
+}
+
+function pushArchiveTopRank(list = [], item = {}, limit = 5) {
+  const entry = buildArchiveObjectRankEntry(item);
+  if (!entry.key) return list;
+  const next = [...list, entry]
+    .sort((left, right) => Number(right.size || 0) - Number(left.size || 0))
+    .slice(0, limit);
+  return next;
+}
+
 function normalizeArchiveStorageHistoryPoint(point = {}, quotaBytes = ARCHIVE_STORAGE_FREE_QUOTA_BYTES) {
   const totalBytes = Math.max(0, Number(point.total_bytes || 0));
   const snapshotBytes = Math.max(0, Number(point.snapshot_bytes || 0));
@@ -1730,6 +1762,94 @@ function buildArchiveStorageHistorySummary(points = []) {
   };
 }
 
+function normalizeLocalBackupStatus(raw = null) {
+  if (!raw || typeof raw !== 'object') return null;
+  const report = raw.report && typeof raw.report === 'object' ? raw.report : {};
+  const status = String(raw.status || report.status || 'unknown').trim().toLowerCase() || 'unknown';
+  const lastHeartbeatAt = toIsoStringOrNull(raw.generated_at || raw.finished_at || report.generated_at || report.finished_at) || null;
+  const startedAt = toIsoStringOrNull(raw.started_at || report.started_at) || null;
+  const finishedAt = toIsoStringOrNull(raw.finished_at || report.finished_at || report.generated_at) || lastHeartbeatAt;
+  const lastSuccessAt = toIsoStringOrNull(raw.last_success_at || report.generated_at || (status === 'ok' ? finishedAt : null)) || null;
+  const reportAgeMs = lastHeartbeatAt ? Math.max(0, Date.now() - new Date(lastHeartbeatAt).getTime()) : null;
+  const storageFailures = Array.isArray(report.storage_failures) ? report.storage_failures : [];
+  const staleLocalFiles = Array.isArray(report.stale_local_files) ? report.stale_local_files : [];
+  const tables = report.tables && typeof report.tables === 'object' ? report.tables : {};
+  const storage = report.storage && typeof report.storage === 'object' ? report.storage : {};
+  const warningLevel = !lastHeartbeatAt
+    ? 'warning'
+    : status === 'error'
+      ? 'critical'
+      : reportAgeMs > 36 * 60 * 60 * 1000
+        ? 'warning'
+        : storageFailures.length > 0
+          ? 'warning'
+          : 'healthy';
+  const warningMessage = !lastHeartbeatAt
+    ? '本地备份代理尚未回传状态，请先在本地电脑运行一次备份代理。'
+    : status === 'error'
+      ? `最近一次本地备份失败：${raw.error || report.error || 'Unknown error'}`
+      : reportAgeMs > 36 * 60 * 60 * 1000
+        ? '本地备份状态超过 36 小时未更新，请检查电脑是否开机并运行了自动同步任务。'
+        : storageFailures.length > 0
+          ? `最近一次本地备份已完成，但仍有 ${storageFailures.length} 个对象下载失败。`
+          : '本地备份代理最近一次运行正常，云端与本地镜像链路处于健康状态。';
+  return {
+    schema_version: raw.schema_version || 'classshow-local-backup-status-v1',
+    agent: raw.agent || 'local-backup-agent',
+    status,
+    host: String(raw.host || report.host || '').trim() || null,
+    mode: String(raw.mode || report.mode || '').trim() || null,
+    generated_at: lastHeartbeatAt,
+    started_at: startedAt,
+    finished_at: finishedAt,
+    last_success_at: lastSuccessAt,
+    duration_ms: Math.max(0, Number(raw.duration_ms || report.duration_ms || 0)),
+    backup_root: String(raw.backup_root || report.backup_root || '').trim() || null,
+    report_path: String(raw.report_path || report.report_path || '').trim() || null,
+    report_payload_sha256: String(raw.report_payload_sha256 || report.report_payload_sha256 || '').trim() || null,
+    scope: raw.scope && typeof raw.scope === 'object' ? raw.scope : (report.scope && typeof report.scope === 'object' ? report.scope : {}),
+    supabase: raw.supabase && typeof raw.supabase === 'object' ? raw.supabase : (report.supabase && typeof report.supabase === 'object' ? report.supabase : {}),
+    storage: {
+      bucket: String(storage.bucket || '').trim() || 'submissions',
+      object_count: Math.max(0, Number(storage.object_count || 0)),
+      downloaded_count: Math.max(0, Number(storage.downloaded_count || 0)),
+      skipped_count: Math.max(0, Number(storage.skipped_count || 0)),
+      failed_count: Math.max(0, Number(storage.failed_count || storageFailures.length || 0)),
+      stale_local_file_count: Math.max(0, Number(storage.stale_local_file_count || staleLocalFiles.length || 0))
+    },
+    tables: {
+      activities: Math.max(0, Number(tables.activities || 0)),
+      submissions: Math.max(0, Number(tables.submissions || 0)),
+      student_learning_sessions: Math.max(0, Number(tables.student_learning_sessions || 0))
+    },
+    course_count: Math.max(0, Number(raw.course_count || report.course_count || 0)),
+    storage_failures: storageFailures.slice(0, 5).map(item => ({
+      path: String(item?.path || '').trim(),
+      error: String(item?.error || '').trim() || 'Download failed'
+    })),
+    stale_local_files: staleLocalFiles.slice(0, 5).map(item => ({
+      path: String(item?.path || '').trim(),
+      local_relative_path: String(item?.local_relative_path || '').trim() || null
+    })),
+    warning: {
+      level: warningLevel,
+      message: warningMessage,
+      report_age_ms: reportAgeMs
+    },
+    error: String(raw.error || report.error || '').trim() || null
+  };
+}
+
+async function getCachedLocalBackupStatus({ forceRefresh = false } = {}) {
+  if (!forceRefresh && localBackupStatusCache && (Date.now() - localBackupStatusLoadedAt) < ARCHIVE_STORAGE_CACHE_TTL_MS) {
+    return JSON.parse(JSON.stringify(localBackupStatusCache));
+  }
+  const status = normalizeLocalBackupStatus(await readJsonDocumentFromPrimaryStorage(LOCAL_BACKUP_STATUS_PATH));
+  localBackupStatusCache = status;
+  localBackupStatusLoadedAt = Date.now();
+  return status ? JSON.parse(JSON.stringify(status)) : null;
+}
+
 function buildArchiveStorageCleanupSuggestions(summary = {}, historySummary = {}) {
   const suggestions = [];
   const warningLevel = summary.warning?.level || 'healthy';
@@ -1740,6 +1860,8 @@ function buildArchiveStorageCleanupSuggestions(summary = {}, historySummary = {}
   const snapshotCount = Math.max(0, Number(summary.snapshot_count || 0));
   const deltaBytes = Number(historySummary.delta_bytes || 0);
   const durationHours = Number(historySummary.duration_hours || 0);
+  const largestSnapshots = Array.isArray(summary.largest_snapshot_objects) ? summary.largest_snapshot_objects : [];
+  const largestMedia = Array.isArray(summary.largest_media_objects) ? summary.largest_media_objects : [];
 
   if (!summary.configured) {
     return [{
@@ -1790,6 +1912,28 @@ function buildArchiveStorageCleanupSuggestions(summary = {}, historySummary = {}
       level: warningLevel === 'healthy' ? 'info' : 'warning',
       title: 'Large media is the main storage driver',
       message: `Archived media currently uses ${formatStorageBytes(mediaBytes)}. Prioritize moving historical videos and duplicated showcase assets to your local backup agent and USB layer.`
+    });
+  }
+
+  if ((warningLevel === 'warning' || warningLevel === 'critical') && largestMedia.length) {
+    suggestions.push({
+      level: warningLevel,
+      title: 'Top media objects should be reviewed first',
+      message: largestMedia
+        .slice(0, 3)
+        .map(item => `${item.name} (${formatStorageBytes(item.size)})`)
+        .join(' | ')
+    });
+  }
+
+  if ((warningLevel === 'warning' || warningLevel === 'critical') && largestSnapshots.length) {
+    suggestions.push({
+      level: warningLevel === 'critical' ? 'warning' : 'info',
+      title: 'Largest cloud snapshots are ready to offload',
+      message: largestSnapshots
+        .slice(0, 3)
+        .map(item => `${item.name} (${formatStorageBytes(item.size)})`)
+        .join(' | ')
     });
   }
 
@@ -1873,6 +2017,8 @@ async function buildArchiveStorageSummary(provider = getArchiveProviderInfo()) {
   let snapshotCount = 0;
   let mediaBytes = 0;
   let mediaCount = 0;
+  let largestSnapshotObjects = [];
+  let largestMediaObjects = [];
 
   do {
     const response = await client.send(new ListObjectsV2Command({
@@ -1888,9 +2034,19 @@ async function buildArchiveStorageSummary(provider = getArchiveProviderInfo()) {
       if (key.startsWith('classshow-backups/')) {
         snapshotBytes += size;
         snapshotCount += 1;
+        largestSnapshotObjects = pushArchiveTopRank(largestSnapshotObjects, {
+          key,
+          size,
+          last_modified_at: item.LastModified || item.last_modified_at || null
+        });
       } else if (key.startsWith('classshow/')) {
         mediaBytes += size;
         mediaCount += 1;
+        largestMediaObjects = pushArchiveTopRank(largestMediaObjects, {
+          key,
+          size,
+          last_modified_at: item.LastModified || item.last_modified_at || null
+        });
       }
     }
     continuationToken = response.IsTruncated ? response.NextContinuationToken : null;
@@ -1906,6 +2062,8 @@ async function buildArchiveStorageSummary(provider = getArchiveProviderInfo()) {
     snapshot_count: snapshotCount,
     media_bytes: mediaBytes,
     media_count: mediaCount,
+    largest_snapshot_objects: largestSnapshotObjects,
+    largest_media_objects: largestMediaObjects,
     usage_percent: Math.round(usagePercent * 10) / 10,
     remaining_bytes: remainingBytes,
     warning: buildArchiveStorageWarningSummary(totalBytes, quotaBytes)
@@ -4040,6 +4198,11 @@ app.get('/api/health', async (_req, res) => {
     configured: !!health.archive_provider?.configured,
     error: String(error?.message || error || 'Failed to load archive storage summary')
   }));
+  health.local_backup_status = await getCachedLocalBackupStatus().catch(error => ({
+    status: 'error',
+    warning: { level: 'critical', message: String(error?.message || error || 'Local backup status unavailable') },
+    error: String(error?.message || error || 'Local backup status unavailable')
+  }));
 
   if (!healthClient) {
     health.supabase_ok = false;
@@ -5289,6 +5452,14 @@ async function buildSuperAdminOverview() {
     configured: !!getArchiveProviderInfo().configured,
     error: String(error?.message || error || 'Failed to load archive storage summary')
   }));
+  const localBackupStatus = await getCachedLocalBackupStatus().catch(error => ({
+    status: 'error',
+    warning: {
+      level: 'critical',
+      message: String(error?.message || error || 'Failed to load local backup status')
+    },
+    error: String(error?.message || error || 'Failed to load local backup status')
+  }));
   const liveCourseMap = new Map(courses.map(course => [normalizePortalCourseName(course.course_name), course]));
   const registryCourses = registry.courses.map(entry => {
     const live = liveCourseMap.get(normalizePortalCourseName(entry.course_name));
@@ -5333,6 +5504,7 @@ async function buildSuperAdminOverview() {
     generated_at: new Date().toISOString(),
     super_admin_configured: isSuperAdminConfigured(),
     archive_storage: archiveStorage,
+    local_backup_status: localBackupStatus,
     health: {
       version: process.env.RENDER_GIT_COMMIT || process.env.npm_package_version || 'local',
       environment: process.env.RENDER ? 'render' : (process.env.NODE_ENV || 'development'),

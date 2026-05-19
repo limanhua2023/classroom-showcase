@@ -225,3 +225,11 @@
 - Added cleanup / ops suggestion panels for the 8.5 GB warning zone and 9.0 GB critical zone, including snapshot-first cleanup hints, large-media pressure hints, and short-horizon growth warnings.
 - Surfaced Cloudflare budget targets (`$1`, `$3`) alongside storage-threshold reminders in both UI layers, so finance alerts and capacity alerts are visible from the application side even though the actual Cloudflare budget alert objects remain managed in Cloudflare Billing.
 - Local validation passed with `node --check server.js` and inline-script parsing for `public/teacher-dashboard.html` and `public/super-admin.html`.
+
+
+## 2026-05-19 Local Backup Heartbeat and R2 Top-N Cleanup
+- The local Windows backup agent now uploads a cloud heartbeat file to `submissions/system/local-backup-status.json`, including host, mode, bucket, last success time, download/failure counts, and table snapshot totals.
+- `/api/health` and `/api/super-admin/overview` now expose `local_backup_status`, so storage operations and backup-heartbeat diagnostics can be checked from the application without opening the Windows machine.
+- The super-admin archive operations panel now shows a dedicated local-backup status card and includes the local-backup state in the top health summary line.
+- Teacher and super-admin archive cleanup panels now list `Largest media Top 5` and `Largest snapshots Top 5`, so once the 8.5 GB warning zone is reached the operator can immediately see which objects are consuming the most archive space.
+- Local validation completed with `node --check server.js`, `node --check scripts/local-backup-agent.mjs`, and inline script parsing for `public/super-admin.html` and `public/teacher-dashboard.html`.

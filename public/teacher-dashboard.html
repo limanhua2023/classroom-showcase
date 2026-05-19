@@ -1923,23 +1923,54 @@
         'Storage critical 9.0 GB'
       ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
     }
-
-    function renderArchiveStorageCleanupSuggestions(archiveStorage = {}) {
-      const listEl = document.getElementById('archiveStorageCleanupList');
-      if (!listEl) return;
-      const suggestions = Array.isArray(archiveStorage.cleanup_suggestions) ? archiveStorage.cleanup_suggestions : [];
-      if (!suggestions.length) {
-        listEl.innerHTML = '<div class="archive-empty-state">当前没有额外清理动作，继续保持镜像备份模式即可。</div>';
-        return;
+    function renderArchiveRankGroup(title, items, emptyText) {
+      const list = Array.isArray(items) ? items : [];
+      if (!list.length) {
+        return `
+          <article class="archive-suggestion-card level-info">
+            <strong>${escapeHtml(title)}</strong>
+            <p>${escapeHtml(emptyText)}</p>
+          </article>
+        `;
       }
-      listEl.innerHTML = suggestions.map(item => `
-        <article class="archive-suggestion-card level-${escapeHtml(item.level || 'info')}">
-          <strong>${escapeHtml(item.title || 'Archive advice')}</strong>
-          <p>${escapeHtml(item.message || '')}</p>
+      return `
+        <article class="archive-suggestion-card level-info">
+          <strong>${escapeHtml(title)}</strong>
+          <div class="archive-object-rank">
+            ${list.map((item, index) => `
+              <div class="archive-object-row">
+                <div>
+                  <strong>#${index + 1} ${escapeHtml(item.label || item.key || "archive-object")}</strong>
+                  <small>${escapeHtml(item.key || "")}</small>
+                </div>
+                <div class="archive-object-size">${escapeHtml(formatBytes(item.size_bytes || 0))}</div>
+              </div>
+            `).join("")}
+          </div>
         </article>
-      `).join('');
+      `;
     }
 
+    function renderArchiveStorageCleanupSuggestions(archiveStorage = {}) {
+      const listEl = document.getElementById("archiveStorageCleanupList");
+      if (!listEl) return;
+      const suggestions = Array.isArray(archiveStorage.cleanup_suggestions) ? archiveStorage.cleanup_suggestions : [];
+      const largestMedia = Array.isArray(archiveStorage.largest_media_objects) ? archiveStorage.largest_media_objects : [];
+      const largestSnapshots = Array.isArray(archiveStorage.largest_snapshot_objects) ? archiveStorage.largest_snapshot_objects : [];
+      const suggestionHtml = suggestions.length
+        ? suggestions.map(item => `
+            <article class="archive-suggestion-card level-${escapeHtml(item.level || "info")}">
+              <strong>${escapeHtml(item.title || "Archive advice")}</strong>
+              <p>${escapeHtml(item.message || "")}</p>
+            </article>
+          `).join("")
+        : '<div class="archive-empty-state">No extra cleanup action is required right now. Keep mirror mode enabled and continue observing the archive trend.</div>';
+      listEl.innerHTML = [
+        suggestionHtml,
+        renderArchiveRankGroup("Largest media Top 5", largestMedia, "No media objects are stored in R2 yet."),
+        renderArchiveRankGroup("Largest snapshots Top 5", largestSnapshots, "No activity snapshots are stored in R2 yet.")
+      ].join("");
+    }
     function renderArchiveControls(summary) {
       const activity = summary.activity || {};
       const storage = summary.storage || {};
