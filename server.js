@@ -96,6 +96,16 @@ const ARCHIVE_STORAGE_FREE_QUOTA_BYTES = Math.max(128 * 1024 * 1024, Number(proc
 const ARCHIVE_STORAGE_ATTENTION_BYTES = Math.max(0, Number(process.env.ARCHIVE_STORAGE_ATTENTION_BYTES || Math.floor(ARCHIVE_STORAGE_FREE_QUOTA_BYTES * 0.85)));
 const ARCHIVE_STORAGE_CRITICAL_BYTES = Math.max(0, Number(process.env.ARCHIVE_STORAGE_CRITICAL_BYTES || Math.floor(ARCHIVE_STORAGE_FREE_QUOTA_BYTES * 0.9)));
 const ARCHIVE_STORAGE_CACHE_TTL_MS = Math.max(30 * 1000, Number(process.env.ARCHIVE_STORAGE_CACHE_TTL_MS || 5 * 60 * 1000));
+const ARCHIVE_STORAGE_BUDGET_ALERTS_USD = [...new Set(
+  String(process.env.ARCHIVE_STORAGE_BUDGET_ALERTS_USD || '1,3')
+    .split(',')
+    .map(value => Number(String(value || '').trim()))
+    .filter(value => Number.isFinite(value) && value > 0)
+)].sort((a, b) => a - b);
+const ARCHIVE_STORAGE_HISTORY_PATH = 'system/archive-storage-history.json';
+const ARCHIVE_STORAGE_HISTORY_MAX_POINTS = Math.max(24, Number(process.env.ARCHIVE_STORAGE_HISTORY_MAX_POINTS || 168));
+const ARCHIVE_STORAGE_HISTORY_MIN_INTERVAL_MS = Math.max(5 * 60 * 1000, Number(process.env.ARCHIVE_STORAGE_HISTORY_MIN_INTERVAL_MS || 60 * 60 * 1000));
+const ARCHIVE_STORAGE_HISTORY_MIN_DELTA_BYTES = Math.max(512 * 1024, Number(process.env.ARCHIVE_STORAGE_HISTORY_MIN_DELTA_BYTES || 8 * 1024 * 1024));
 const STORAGE_SAFE_DELETE = !/^false$/i.test(String(process.env.STORAGE_SAFE_DELETE || 'true'));
 const ARCHIVE_PERMANENT_DELETE = /^true$/i.test(String(process.env.ARCHIVE_PERMANENT_DELETE || 'false'));
 const OPS_SNAPSHOT_LIST_TTL_MS = 60 * 1000;
@@ -977,6 +987,8 @@ async function buildStorageDiagnostics(activityId, storageSummary = null) {
 const mediaManifestCache = new Map();
 const storageSummaryCache = new Map();
 const archiveStorageSummaryCache = new Map();
+let archiveStorageHistoryCache = null;
+let archiveStorageHistoryLoadedAt = 0;
 const missingMediaExportCache = new Map();
 let googleDriveClientPromise = null;
 let googleDriveDestinationInfoPromise = null;
@@ -1100,6 +1112,30 @@ async function replaceBufferInPrimaryStorage(storagePath, buffer, contentType) {
     if (!error) return;
   }
   throw error;
+}
+
+async function readJsonDocumentFromPrimaryStorage(storagePath) {
+  const bucket = getSubmissionsStorageBucket();
+  if (!bucket) return null;
+  try {
+    const { data, error } = await bucket.download(storagePath);
+    if (error) {
+      if (submissionManifestNotFound(error) || /not[\s-]?found/i.test(String(error.message || ''))) return null;
+      throw error;
+    }
+    const raw = await data.text();
+    if (!raw.trim()) return null;
+    return JSON.parse(raw);
+  } catch (error) {
+    console.warn(`Primary storage JSON read failed for ${storagePath}:`, error.message);
+    return null;
+  }
+}
+
+async function writeJsonDocumentToPrimaryStorage(storagePath, document) {
+  const payload = Buffer.from(JSON.stringify(document, null, 2), 'utf8');
+  await replaceBufferInPrimaryStorage(storagePath, payload, contentTypeForExtension('json'));
+  return document;
 }
 
 function buildDefaultSubmissionMediaManifest(submission = {}) {
@@ -1596,6 +1632,194 @@ function buildArchiveStorageWarningSummary(totalBytes, quotaBytes) {
   };
 }
 
+function normalizeArchiveStorageHistoryPoint(point = {}, quotaBytes = ARCHIVE_STORAGE_FREE_QUOTA_BYTES) {
+  const totalBytes = Math.max(0, Number(point.total_bytes || 0));
+  const snapshotBytes = Math.max(0, Number(point.snapshot_bytes || 0));
+  const mediaBytes = Math.max(0, Number(point.media_bytes || 0));
+  const usagePercentRaw = Number(point.usage_percent);
+  const usagePercent = Number.isFinite(usagePercentRaw)
+    ? usagePercentRaw
+    : (quotaBytes > 0 ? (totalBytes / quotaBytes) * 100 : 0);
+  return {
+    captured_at: toIsoStringOrNull(point.captured_at) || new Date().toISOString(),
+    total_bytes: totalBytes,
+    snapshot_bytes: snapshotBytes,
+    media_bytes: mediaBytes,
+    object_count: Math.max(0, Number(point.object_count || 0)),
+    usage_percent: Math.round(Math.max(0, usagePercent) * 10) / 10
+  };
+}
+
+function normalizeArchiveStorageHistoryDocument(document = null) {
+  const points = Array.isArray(document?.points) ? document.points : [];
+  const normalizedPoints = points
+    .map(point => normalizeArchiveStorageHistoryPoint(point))
+    .sort((left, right) => new Date(left.captured_at).getTime() - new Date(right.captured_at).getTime())
+    .slice(-ARCHIVE_STORAGE_HISTORY_MAX_POINTS);
+  return {
+    version: 1,
+    quota_bytes: ARCHIVE_STORAGE_FREE_QUOTA_BYTES,
+    updated_at: toIsoStringOrNull(document?.updated_at) || toIsoStringOrNull(normalizedPoints.at(-1)?.captured_at) || new Date().toISOString(),
+    points: normalizedPoints
+  };
+}
+
+function cloneArchiveStorageHistoryDocument(document = null) {
+  return JSON.parse(JSON.stringify(normalizeArchiveStorageHistoryDocument(document)));
+}
+
+async function readArchiveStorageHistoryFromStorage() {
+  const raw = await readJsonDocumentFromPrimaryStorage(ARCHIVE_STORAGE_HISTORY_PATH);
+  return normalizeArchiveStorageHistoryDocument(raw);
+}
+
+async function getArchiveStorageHistory({ forceRefresh = false } = {}) {
+  if (!forceRefresh && archiveStorageHistoryCache && (Date.now() - archiveStorageHistoryLoadedAt) < ARCHIVE_STORAGE_CACHE_TTL_MS) {
+    return cloneArchiveStorageHistoryDocument(archiveStorageHistoryCache);
+  }
+  const history = await readArchiveStorageHistoryFromStorage();
+  archiveStorageHistoryCache = normalizeArchiveStorageHistoryDocument(history);
+  archiveStorageHistoryLoadedAt = Date.now();
+  return cloneArchiveStorageHistoryDocument(archiveStorageHistoryCache);
+}
+
+async function persistArchiveStorageHistoryPoint(summary = {}) {
+  const history = await getArchiveStorageHistory({ forceRefresh: true });
+  const nextPoint = normalizeArchiveStorageHistoryPoint(summary);
+  const lastPoint = history.points.at(-1) || null;
+  const lastCapturedAt = lastPoint ? new Date(lastPoint.captured_at).getTime() : 0;
+  const currentCapturedAt = new Date(nextPoint.captured_at).getTime();
+  const intervalMs = Math.max(0, currentCapturedAt - lastCapturedAt);
+  const deltaBytes = lastPoint ? Math.abs(nextPoint.total_bytes - Number(lastPoint.total_bytes || 0)) : Number.MAX_SAFE_INTEGER;
+  const shouldAppend = !lastPoint
+    || intervalMs >= ARCHIVE_STORAGE_HISTORY_MIN_INTERVAL_MS
+    || deltaBytes >= ARCHIVE_STORAGE_HISTORY_MIN_DELTA_BYTES;
+
+  if (!shouldAppend) {
+    return history;
+  }
+
+  const nextHistory = normalizeArchiveStorageHistoryDocument({
+    ...history,
+    updated_at: nextPoint.captured_at,
+    points: [...history.points, nextPoint]
+  });
+  await writeJsonDocumentToPrimaryStorage(ARCHIVE_STORAGE_HISTORY_PATH, nextHistory);
+  archiveStorageHistoryCache = nextHistory;
+  archiveStorageHistoryLoadedAt = Date.now();
+  return cloneArchiveStorageHistoryDocument(nextHistory);
+}
+
+function buildArchiveStorageHistorySummary(points = []) {
+  const visiblePoints = points.slice(-24);
+  const firstPoint = visiblePoints[0] || null;
+  const lastPoint = visiblePoints.at(-1) || null;
+  const deltaBytes = firstPoint && lastPoint ? Number(lastPoint.total_bytes || 0) - Number(firstPoint.total_bytes || 0) : 0;
+  const deltaPercent = firstPoint && lastPoint ? Number(lastPoint.usage_percent || 0) - Number(firstPoint.usage_percent || 0) : 0;
+  const firstAt = firstPoint ? new Date(firstPoint.captured_at).getTime() : 0;
+  const lastAt = lastPoint ? new Date(lastPoint.captured_at).getTime() : 0;
+  const durationHours = firstAt && lastAt && lastAt > firstAt ? Math.round(((lastAt - firstAt) / (60 * 60 * 1000)) * 10) / 10 : 0;
+  return {
+    point_count: points.length,
+    visible_point_count: visiblePoints.length,
+    first_at: firstPoint?.captured_at || null,
+    last_at: lastPoint?.captured_at || null,
+    delta_bytes: deltaBytes,
+    delta_percent: Math.round(deltaPercent * 10) / 10,
+    duration_hours: durationHours
+  };
+}
+
+function buildArchiveStorageCleanupSuggestions(summary = {}, historySummary = {}) {
+  const suggestions = [];
+  const warningLevel = summary.warning?.level || 'healthy';
+  const remainingBytes = Math.max(0, Number(summary.remaining_bytes || 0));
+  const totalBytes = Math.max(0, Number(summary.total_bytes || 0));
+  const snapshotBytes = Math.max(0, Number(summary.snapshot_bytes || 0));
+  const mediaBytes = Math.max(0, Number(summary.media_bytes || 0));
+  const snapshotCount = Math.max(0, Number(summary.snapshot_count || 0));
+  const deltaBytes = Number(historySummary.delta_bytes || 0);
+  const durationHours = Number(historySummary.duration_hours || 0);
+
+  if (!summary.configured) {
+    return [{
+      level: 'info',
+      title: 'R2 chain not configured',
+      message: 'Archive provider is not active yet. Storage trend and cleanup suggestions will become available after R2/S3 is enabled.'
+    }];
+  }
+
+  if (totalBytes <= 0) {
+    return [{
+      level: 'info',
+      title: 'Current archive load is minimal',
+      message: 'R2 still has plenty of room. Keep mirrored backup mode on until you finish validating restore and local disk backup.'
+    }];
+  }
+
+  if (warningLevel === 'critical') {
+    suggestions.push({
+      level: 'critical',
+      title: 'R2 is inside the red zone',
+      message: `Only ${formatStorageBytes(remainingBytes)} remains before crossing the 10 GB free quota. Freeze low-value snapshot generation and move old media to local disk / USB today.`
+    });
+  } else if (warningLevel === 'warning') {
+    suggestions.push({
+      level: 'warning',
+      title: 'R2 is approaching the 9 GB alert line',
+      message: `Only ${formatStorageBytes(remainingBytes)} remains before the red zone. Review old snapshots and media before the next large upload session.`
+    });
+  } else {
+    suggestions.push({
+      level: 'info',
+      title: 'Storage remains inside the safe zone',
+      message: `R2 is currently using ${formatStorageBytes(totalBytes)}. Keep weekly local backup + USB copy running so cloud storage stays a mirror, not the only copy.`
+    });
+  }
+
+  if (snapshotCount >= 4 || snapshotBytes >= 256 * 1024 * 1024) {
+    suggestions.push({
+      level: warningLevel === 'critical' ? 'warning' : 'info',
+      title: 'Review old cloud snapshots first',
+      message: `${snapshotCount} snapshots are stored in R2, taking ${formatStorageBytes(snapshotBytes)}. Keep the latest 2-3 teaching checkpoints in cloud and offload older JSON snapshots to local disk.`
+    });
+  }
+
+  if (mediaBytes > snapshotBytes * 3 && mediaBytes >= 512 * 1024 * 1024) {
+    suggestions.push({
+      level: warningLevel === 'healthy' ? 'info' : 'warning',
+      title: 'Large media is the main storage driver',
+      message: `Archived media currently uses ${formatStorageBytes(mediaBytes)}. Prioritize moving historical videos and duplicated showcase assets to your local backup agent and USB layer.`
+    });
+  }
+
+  if (deltaBytes > 0 && durationHours >= 6) {
+    const growthPerDayBytes = deltaBytes / Math.max(durationHours / 24, 0.25);
+    const projectedDays = growthPerDayBytes > 0 ? Math.floor(remainingBytes / growthPerDayBytes) : null;
+    suggestions.push({
+      level: projectedDays !== null && projectedDays <= 7 ? 'warning' : 'info',
+      title: 'Recent trend suggests continued growth',
+      message: projectedDays !== null
+        ? `R2 grew by ${formatStorageBytes(deltaBytes)} over the latest ${durationHours} hours. At the same pace, the remaining space lasts about ${Math.max(projectedDays, 0)} day(s).`
+        : `R2 grew by ${formatStorageBytes(deltaBytes)} over the latest ${durationHours} hours. Keep an eye on the next teaching cycle before turning on primary-file deletion.`
+    });
+  }
+
+  return suggestions.slice(0, 4);
+}
+
+function decorateArchiveStorageSummary(summary = {}, historyDocument = null) {
+  const normalizedHistory = normalizeArchiveStorageHistoryDocument(historyDocument);
+  const historySummary = buildArchiveStorageHistorySummary(normalizedHistory.points);
+  return {
+    ...summary,
+    budget_alerts_usd: ARCHIVE_STORAGE_BUDGET_ALERTS_USD,
+    history_points: normalizedHistory.points,
+    history_summary: historySummary,
+    cleanup_suggestions: buildArchiveStorageCleanupSuggestions(summary, historySummary)
+  };
+}
+
 async function buildArchiveStorageSummary(provider = getArchiveProviderInfo()) {
   const quotaBytes = ARCHIVE_STORAGE_FREE_QUOTA_BYTES;
   const base = {
@@ -1691,8 +1915,21 @@ async function buildArchiveStorageSummary(provider = getArchiveProviderInfo()) {
 async function getCachedArchiveStorageSummary(options = {}) {
   const provider = getArchiveProviderInfo();
   const key = `archive-storage:${provider.name}:${ARCHIVE_S3_BUCKET || 'none'}`;
+  const buildValue = async () => {
+    const summary = await buildArchiveStorageSummary(provider);
+    let historyDocument = null;
+    try {
+      historyDocument = provider?.name === 's3' && summary.configured
+        ? await persistArchiveStorageHistoryPoint(summary)
+        : await getArchiveStorageHistory({ forceRefresh: true });
+    } catch (error) {
+      console.warn('Archive storage history sync failed:', error.message);
+      historyDocument = await getArchiveStorageHistory({ forceRefresh: true }).catch(() => null);
+    }
+    return decorateArchiveStorageSummary(summary, historyDocument);
+  };
   if (options.refresh) {
-    const value = await buildArchiveStorageSummary(provider);
+    const value = await buildValue();
     archiveStorageSummaryCache.set(key, {
       value,
       expiresAt: Date.now() + ARCHIVE_STORAGE_CACHE_TTL_MS
@@ -1703,7 +1940,7 @@ async function getCachedArchiveStorageSummary(options = {}) {
     archiveStorageSummaryCache,
     key,
     ARCHIVE_STORAGE_CACHE_TTL_MS,
-    () => buildArchiveStorageSummary(provider)
+    buildValue
   );
 }
 

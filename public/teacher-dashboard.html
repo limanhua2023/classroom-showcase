@@ -938,6 +938,30 @@
                   <div class="archive-gauge-note" id="archiveStorageGaugeNote">R2 storage usage is loading...</div>
                 </div>
               </div>
+              <div class="archive-ops-grid">
+                <div class="archive-ops-card">
+                  <div class="archive-ops-head">
+                    <strong>R2 占用趋势</strong>
+                    <span class="storage-meta-chip" id="archiveStorageTrendStatus">数据采集中</span>
+                  </div>
+                  <svg class="archive-trend-svg" viewBox="0 0 420 180" aria-label="R2 storage trend">
+                    <path class="archive-trend-grid" d="M24 24 H396 M24 78 H396 M24 132 H396 M24 24 V156 H396"></path>
+                    <polygon id="archiveStorageTrendFill" class="archive-trend-fill" points=""></polygon>
+                    <polyline id="archiveStorageTrendLine" class="archive-trend-line" points=""></polyline>
+                  </svg>
+                  <div class="storage-meta-row" id="archiveStorageTrendMeta"></div>
+                  <div class="storage-meta-row" id="archiveStorageBudgetMeta"></div>
+                </div>
+                <div class="archive-ops-card">
+                  <div class="archive-ops-head">
+                    <strong>8.5 GB 清理建议</strong>
+                    <span class="storage-meta-chip">按最新占用自动刷新</span>
+                  </div>
+                  <div class="archive-suggestion-list" id="archiveStorageCleanupList">
+                    <div class="archive-empty-state">正在读取清理建议...</div>
+                  </div>
+                </div>
+              </div>
               <div class="archive-control-grid">
                 <label class="archive-control-field">
                   <strong>自动归档阈值（天）</strong>
@@ -1808,6 +1832,114 @@
           : 'R2 archive provider is not configured yet.');
     }
 
+    function buildArchiveTrendDataset(archiveStorage = {}) {
+      const quotaBytes = Math.max(Number(archiveStorage.quota_bytes || 0), 1);
+      const points = Array.isArray(archiveStorage.history_points) ? archiveStorage.history_points.slice(-24) : [];
+      const usablePoints = points.map(point => ({
+        captured_at: point.captured_at || null,
+        total_bytes: Math.max(0, Number(point.total_bytes || 0)),
+        usage_percent: Number(point.usage_percent || 0),
+        object_count: Math.max(0, Number(point.object_count || 0))
+      }));
+      const maxObservedBytes = usablePoints.reduce((max, point) => Math.max(max, point.total_bytes), 0);
+      const trendScaleBytes = Math.max(64 * 1024 * 1024, Math.ceil(maxObservedBytes * 1.12), Math.ceil(Math.min(quotaBytes * 0.2, quotaBytes)));
+      const width = 420;
+      const height = 180;
+      const left = 24;
+      const right = 24;
+      const top = 24;
+      const bottom = 24;
+      const innerWidth = width - left - right;
+      const innerHeight = height - top - bottom;
+      const step = usablePoints.length > 1 ? innerWidth / (usablePoints.length - 1) : 0;
+      const linePoints = usablePoints.map((point, index) => {
+        const x = left + (step * index);
+        const ratio = trendScaleBytes > 0 ? Math.min(point.total_bytes / trendScaleBytes, 1) : 0;
+        const y = top + innerHeight - (ratio * innerHeight);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(' ');
+      const fillPoints = usablePoints.length
+        ? `${left},${height - bottom} ${linePoints} ${left + (step * Math.max(usablePoints.length - 1, 0))},${height - bottom}`
+        : '';
+      return {
+        points: usablePoints,
+        linePoints,
+        fillPoints,
+        trendScaleBytes
+      };
+    }
+
+    function renderArchiveStorageTrend(archiveStorage = {}) {
+      const lineEl = document.getElementById('archiveStorageTrendLine');
+      const fillEl = document.getElementById('archiveStorageTrendFill');
+      const statusEl = document.getElementById('archiveStorageTrendStatus');
+      const metaEl = document.getElementById('archiveStorageTrendMeta');
+      const budgetEl = document.getElementById('archiveStorageBudgetMeta');
+      if (!lineEl || !fillEl || !statusEl || !metaEl || !budgetEl) return;
+
+      const dataset = buildArchiveTrendDataset(archiveStorage);
+      const historySummary = archiveStorage.history_summary || {};
+      const firstPoint = dataset.points[0] || null;
+      const lastPoint = dataset.points.at(-1) || null;
+      const deltaBytes = Number(historySummary.delta_bytes || 0);
+      const warningLevel = archiveStorage.warning?.level || 'healthy';
+      const color = resolveArchiveGaugeColor(warningLevel);
+
+      lineEl.setAttribute('points', dataset.linePoints);
+      fillEl.setAttribute('points', dataset.fillPoints);
+      lineEl.style.stroke = color;
+      fillEl.style.fill = warningLevel === 'critical'
+        ? 'rgba(239, 68, 68, 0.18)'
+        : warningLevel === 'warning'
+          ? 'rgba(245, 158, 11, 0.16)'
+          : 'rgba(34, 197, 94, 0.14)';
+
+      if (!dataset.points.length) {
+        statusEl.textContent = '趋势采集中';
+        metaEl.innerHTML = '<span class="storage-meta-chip">至少需要 1 个采样点后才显示曲线</span>';
+        budgetEl.innerHTML = (archiveStorage.budget_alerts_usd || [1, 3])
+          .map(value => `<span class="storage-meta-chip">Budget $${escapeHtml(value)}</span>`)
+          .join('');
+        return;
+      }
+
+      const deltaLabel = deltaBytes > 0
+        ? `+${formatBytes(deltaBytes)}`
+        : deltaBytes < 0
+          ? `-${formatBytes(Math.abs(deltaBytes))}`
+          : '持平';
+      statusEl.textContent = deltaBytes === 0 ? '最近窗口平稳' : `最近窗口 ${deltaLabel}`;
+      statusEl.style.color = color;
+      metaEl.innerHTML = [
+        firstPoint?.captured_at ? `起点 ${formatDateTime(firstPoint.captured_at, { withSeconds: true })}` : '',
+        lastPoint?.captured_at ? `终点 ${formatDateTime(lastPoint.captured_at, { withSeconds: true })}` : '',
+        dataset.points.length ? `采样点 ${dataset.points.length}` : '',
+        historySummary.duration_hours ? `窗口 ${historySummary.duration_hours} h` : '',
+        `曲线量程 ${formatArchiveGaugeGb(dataset.trendScaleBytes)}`
+      ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+      budgetEl.innerHTML = [
+        ...(archiveStorage.budget_alerts_usd || [1, 3]).map(value => `Cloudflare budget $${value}`),
+        'Storage warning 8.5 GB',
+        'Storage critical 9.0 GB'
+      ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+    }
+
+    function renderArchiveStorageCleanupSuggestions(archiveStorage = {}) {
+      const listEl = document.getElementById('archiveStorageCleanupList');
+      if (!listEl) return;
+      const suggestions = Array.isArray(archiveStorage.cleanup_suggestions) ? archiveStorage.cleanup_suggestions : [];
+      if (!suggestions.length) {
+        listEl.innerHTML = '<div class="archive-empty-state">当前没有额外清理动作，继续保持镜像备份模式即可。</div>';
+        return;
+      }
+      listEl.innerHTML = suggestions.map(item => `
+        <article class="archive-suggestion-card level-${escapeHtml(item.level || 'info')}">
+          <strong>${escapeHtml(item.title || 'Archive advice')}</strong>
+          <p>${escapeHtml(item.message || '')}</p>
+        </article>
+      `).join('');
+    }
+
     function renderArchiveControls(summary) {
       const activity = summary.activity || {};
       const storage = summary.storage || {};
@@ -1864,6 +1996,8 @@
         ? '这里保存的是“当前活动”的归档与回收保护策略，不会改动 Google Drive 凭据本身。首次建议先用镜像模式观察 1 至 2 天，再决定是否开启冷存。'
         : '归档提供方尚未配置完成，当前只能保存策略草稿，不能真正归档。回收区保留期仍会照常生效。';
       renderArchiveStorageGauge(archiveStorage, provider);
+      renderArchiveStorageTrend(archiveStorage);
+      renderArchiveStorageCleanupSuggestions(archiveStorage);
 
       if (providerWarning) {
         hint.textContent += ` 当前告警：${providerWarning}`;

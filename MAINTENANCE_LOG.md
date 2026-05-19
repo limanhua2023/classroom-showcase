@@ -217,3 +217,11 @@
 - Added an R2 speedometer gauge to `/super-admin.html`, including snapshot/media split, object count, remaining capacity, and bucket metadata.
 - Added a critical topbar alert button for the super-admin page. When R2 crosses the 9 GB red zone, the button appears and scrolls directly to the archive gauge.
 - Validated `server.js`, `public/super-admin.html`, and `public/teacher-dashboard.html` after the change before deployment.
+
+## 2026-05-19 R2 Trend History and Cleanup Guidance
+- Added persisted R2 archive history sampling at `submissions/system/archive-storage-history.json`. The server now records hourly archive-usage points by default, or faster when storage jumps sharply.
+- `archive_storage` responses now include `budget_alerts_usd`, `history_points`, `history_summary`, and `cleanup_suggestions`, so `/api/health`, the teacher dashboard, and the super-admin page all read the same archive-operations payload.
+- Added an R2 trend card to the teacher dashboard and super-admin console. Both pages now render a lightweight 24-point SVG trend chart instead of only showing a single-point gauge.
+- Added cleanup / ops suggestion panels for the 8.5 GB warning zone and 9.0 GB critical zone, including snapshot-first cleanup hints, large-media pressure hints, and short-horizon growth warnings.
+- Surfaced Cloudflare budget targets (`$1`, `$3`) alongside storage-threshold reminders in both UI layers, so finance alerts and capacity alerts are visible from the application side even though the actual Cloudflare budget alert objects remain managed in Cloudflare Billing.
+- Local validation passed with `node --check server.js` and inline-script parsing for `public/teacher-dashboard.html` and `public/super-admin.html`.

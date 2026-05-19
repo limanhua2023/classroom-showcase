@@ -94,6 +94,30 @@
           <div class="storage-meta-row" id="superArchiveStorageGaugeMeta"></div>
         </div>
       </div>
+      <div class="archive-ops-grid">
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>R2 占用趋势</strong>
+            <span class="storage-meta-chip" id="superArchiveStorageTrendStatus">数据采集中</span>
+          </div>
+          <svg class="archive-trend-svg" viewBox="0 0 420 180" aria-label="R2 storage trend">
+            <path class="archive-trend-grid" d="M24 24 H396 M24 78 H396 M24 132 H396 M24 24 V156 H396"></path>
+            <polygon id="superArchiveStorageTrendFill" class="archive-trend-fill" points=""></polygon>
+            <polyline id="superArchiveStorageTrendLine" class="archive-trend-line" points=""></polyline>
+          </svg>
+          <div class="storage-meta-row" id="superArchiveStorageTrendMeta"></div>
+          <div class="storage-meta-row" id="superArchiveStorageBudgetMeta"></div>
+        </div>
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>运维建议面板</strong>
+            <span class="storage-meta-chip">同步 Cloudflare / 存储阈值</span>
+          </div>
+          <div class="archive-suggestion-list" id="superArchiveCleanupList">
+            <div class="archive-empty-state">正在读取运维建议...</div>
+          </div>
+        </div>
+      </div>
     </section>
 
     <section class="course-identity-note">
@@ -371,6 +395,8 @@
     function renderOverviewBlocks() {
       renderOverviewSummary();
       renderArchiveStorageGauge();
+      renderArchiveStorageTrend();
+      renderArchiveOpsPanel();
       renderCourses();
       renderRegistry();
       renderRecentActivities();
@@ -457,6 +483,116 @@
       if (alertBadge) {
         alertBadge.textContent = isCritical ? '1' : '!';
       }
+    }
+
+    function buildArchiveTrendDataset(archiveStorage = {}) {
+      const quotaBytes = Math.max(Number(archiveStorage.quota_bytes || 0), 1);
+      const points = Array.isArray(archiveStorage.history_points) ? archiveStorage.history_points.slice(-24) : [];
+      const usablePoints = points.map(point => ({
+        captured_at: point.captured_at || null,
+        total_bytes: Math.max(0, Number(point.total_bytes || 0)),
+        usage_percent: Number(point.usage_percent || 0),
+        object_count: Math.max(0, Number(point.object_count || 0))
+      }));
+      const maxObservedBytes = usablePoints.reduce((max, point) => Math.max(max, point.total_bytes), 0);
+      const trendScaleBytes = Math.max(64 * 1024 * 1024, Math.ceil(maxObservedBytes * 1.12), Math.ceil(Math.min(quotaBytes * 0.2, quotaBytes)));
+      const width = 420;
+      const height = 180;
+      const left = 24;
+      const right = 24;
+      const top = 24;
+      const bottom = 24;
+      const innerWidth = width - left - right;
+      const innerHeight = height - top - bottom;
+      const step = usablePoints.length > 1 ? innerWidth / (usablePoints.length - 1) : 0;
+      const linePoints = usablePoints.map((point, index) => {
+        const x = left + (step * index);
+        const ratio = trendScaleBytes > 0 ? Math.min(point.total_bytes / trendScaleBytes, 1) : 0;
+        const y = top + innerHeight - (ratio * innerHeight);
+        return `${x.toFixed(1)},${y.toFixed(1)}`;
+      }).join(' ');
+      const fillPoints = usablePoints.length
+        ? `${left},${height - bottom} ${linePoints} ${left + (step * Math.max(usablePoints.length - 1, 0))},${height - bottom}`
+        : '';
+      return {
+        points: usablePoints,
+        linePoints,
+        fillPoints,
+        trendScaleBytes
+      };
+    }
+
+    function renderArchiveStorageTrend() {
+      const archiveStorage = overview?.archive_storage || {};
+      const lineEl = document.getElementById('superArchiveStorageTrendLine');
+      const fillEl = document.getElementById('superArchiveStorageTrendFill');
+      const statusEl = document.getElementById('superArchiveStorageTrendStatus');
+      const metaEl = document.getElementById('superArchiveStorageTrendMeta');
+      const budgetEl = document.getElementById('superArchiveStorageBudgetMeta');
+      if (!lineEl || !fillEl || !statusEl || !metaEl || !budgetEl) return;
+
+      const dataset = buildArchiveTrendDataset(archiveStorage);
+      const historySummary = archiveStorage.history_summary || {};
+      const firstPoint = dataset.points[0] || null;
+      const lastPoint = dataset.points.at(-1) || null;
+      const deltaBytes = Number(historySummary.delta_bytes || 0);
+      const warningLevel = archiveStorage.warning?.level || 'healthy';
+      const color = resolveArchiveGaugeColor(warningLevel);
+
+      lineEl.setAttribute('points', dataset.linePoints);
+      fillEl.setAttribute('points', dataset.fillPoints);
+      lineEl.style.stroke = color;
+      fillEl.style.fill = warningLevel === 'critical'
+        ? 'rgba(239, 68, 68, 0.18)'
+        : warningLevel === 'warning'
+          ? 'rgba(245, 158, 11, 0.16)'
+          : 'rgba(34, 197, 94, 0.14)';
+
+      if (!dataset.points.length) {
+        statusEl.textContent = '趋势采集中';
+        metaEl.innerHTML = '<span class="storage-meta-chip">至少需要 1 个采样点后才显示曲线</span>';
+        budgetEl.innerHTML = (archiveStorage.budget_alerts_usd || [1, 3])
+          .map(value => `<span class="storage-meta-chip">Budget $${escapeHtml(value)}</span>`)
+          .join('');
+        return;
+      }
+
+      const deltaLabel = deltaBytes > 0
+        ? `+${formatBytes(deltaBytes)}`
+        : deltaBytes < 0
+          ? `-${formatBytes(Math.abs(deltaBytes))}`
+          : '持平';
+      statusEl.textContent = deltaBytes === 0 ? '最近窗口平稳' : `最近窗口 ${deltaLabel}`;
+      statusEl.style.color = color;
+      metaEl.innerHTML = [
+        firstPoint?.captured_at ? `起点 ${formatDateTime(firstPoint.captured_at, { withSeconds: true }) || firstPoint.captured_at}` : '',
+        lastPoint?.captured_at ? `终点 ${formatDateTime(lastPoint.captured_at, { withSeconds: true }) || lastPoint.captured_at}` : '',
+        dataset.points.length ? `采样点 ${dataset.points.length}` : '',
+        historySummary.duration_hours ? `窗口 ${historySummary.duration_hours} h` : '',
+        `曲线量程 ${formatArchiveGaugeGb(dataset.trendScaleBytes)}`
+      ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+      budgetEl.innerHTML = [
+        ...(archiveStorage.budget_alerts_usd || [1, 3]).map(value => `Cloudflare budget $${value}`),
+        'Storage warning 8.5 GB',
+        'Storage critical 9.0 GB'
+      ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+    }
+
+    function renderArchiveOpsPanel() {
+      const archiveStorage = overview?.archive_storage || {};
+      const listEl = document.getElementById('superArchiveCleanupList');
+      if (!listEl) return;
+      const suggestions = Array.isArray(archiveStorage.cleanup_suggestions) ? archiveStorage.cleanup_suggestions : [];
+      if (!suggestions.length) {
+        listEl.innerHTML = '<div class="archive-empty-state">当前没有额外运维动作，继续观察趋势并保持本地镜像备份即可。</div>';
+        return;
+      }
+      listEl.innerHTML = suggestions.map(item => `
+        <article class="archive-suggestion-card level-${escapeHtml(item.level || 'info')}">
+          <strong>${escapeHtml(item.title || 'Archive advice')}</strong>
+          <p>${escapeHtml(item.message || '')}</p>
+        </article>
+      `).join('');
     }
 
     function renderOverviewSummary() {
