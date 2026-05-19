@@ -98,7 +98,13 @@
         <div class="archive-ops-card">
           <div class="archive-ops-head">
             <strong>R2 占用趋势</strong>
-            <span class="storage-meta-chip" id="superArchiveStorageTrendStatus">数据采集中</span>
+            <div class="archive-ops-actions">
+              <div class="archive-trend-switch" role="tablist" aria-label="R2 trend window">
+                <button class="archive-trend-btn is-active" type="button" id="superArchiveStorageTrendWindow7Btn" onclick="setSuperArchiveTrendWindow(7)">7D</button>
+                <button class="archive-trend-btn" type="button" id="superArchiveStorageTrendWindow30Btn" onclick="setSuperArchiveTrendWindow(30)">30D</button>
+              </div>
+              <span class="storage-meta-chip" id="superArchiveStorageTrendStatus">数据采集中</span>
+            </div>
           </div>
           <svg class="archive-trend-svg" viewBox="0 0 420 180" aria-label="R2 storage trend">
             <path class="archive-trend-grid" d="M24 24 H396 M24 78 H396 M24 132 H396 M24 24 V156 H396"></path>
@@ -343,6 +349,7 @@
   <script>
     let overview = null;
     let superStatus = null;
+    let superArchiveTrendWindowDays = 7;
     const registryEditorState = {
       mode: 'create',
       originalCourseName: '',
@@ -497,9 +504,44 @@
       }
     }
 
-    function buildArchiveTrendDataset(archiveStorage = {}) {
+    function normalizeSuperArchiveTrendWindowDays(windowDays) {
+      return Number(windowDays) === 30 ? 30 : 7;
+    }
+
+    function setSuperArchiveTrendWindow(windowDays) {
+      superArchiveTrendWindowDays = normalizeSuperArchiveTrendWindowDays(windowDays);
+      renderArchiveStorageTrend();
+    }
+
+    function filterSuperArchiveTrendPoints(points = [], windowDays = 7) {
+      const normalizedWindowDays = normalizeSuperArchiveTrendWindowDays(windowDays);
+      const list = Array.isArray(points) ? points : [];
+      const lastPoint = list.at(-1) || null;
+      const lastCapturedAt = lastPoint?.captured_at ? new Date(lastPoint.captured_at).getTime() : 0;
+      if (!lastCapturedAt) return list;
+      const cutoff = lastCapturedAt - (normalizedWindowDays * 24 * 60 * 60 * 1000);
+      return list.filter(point => {
+        const capturedAt = point?.captured_at ? new Date(point.captured_at).getTime() : 0;
+        return capturedAt >= cutoff;
+      });
+    }
+
+    function updateSuperArchiveTrendWindowButtons() {
+      const activeWindow = normalizeSuperArchiveTrendWindowDays(superArchiveTrendWindowDays);
+      const pairs = [
+        [7, document.getElementById('superArchiveStorageTrendWindow7Btn')],
+        [30, document.getElementById('superArchiveStorageTrendWindow30Btn')]
+      ];
+      for (const [windowDays, button] of pairs) {
+        if (!button) continue;
+        button.classList.toggle('is-active', activeWindow === windowDays);
+        button.setAttribute('aria-pressed', activeWindow === windowDays ? 'true' : 'false');
+      }
+    }
+
+    function buildArchiveTrendDataset(archiveStorage = {}, windowDays = superArchiveTrendWindowDays) {
       const quotaBytes = Math.max(Number(archiveStorage.quota_bytes || 0), 1);
-      const points = Array.isArray(archiveStorage.history_points) ? archiveStorage.history_points.slice(-24) : [];
+      const points = filterSuperArchiveTrendPoints(archiveStorage.history_points || [], windowDays);
       const usablePoints = points.map(point => ({
         captured_at: point.captured_at || null,
         total_bytes: Math.max(0, Number(point.total_bytes || 0)),
@@ -530,7 +572,8 @@
         points: usablePoints,
         linePoints,
         fillPoints,
-        trendScaleBytes
+        trendScaleBytes,
+        windowDays: normalizeSuperArchiveTrendWindowDays(windowDays)
       };
     }
 
@@ -543,8 +586,10 @@
       const budgetEl = document.getElementById('superArchiveStorageBudgetMeta');
       if (!lineEl || !fillEl || !statusEl || !metaEl || !budgetEl) return;
 
-      const dataset = buildArchiveTrendDataset(archiveStorage);
-      const historySummary = archiveStorage.history_summary || {};
+      updateSuperArchiveTrendWindowButtons();
+      const activeWindow = normalizeSuperArchiveTrendWindowDays(superArchiveTrendWindowDays);
+      const dataset = buildArchiveTrendDataset(archiveStorage, activeWindow);
+      const historySummary = archiveStorage.history_windows?.[`${activeWindow}d`] || archiveStorage.history_summary || {};
       const firstPoint = dataset.points[0] || null;
       const lastPoint = dataset.points.at(-1) || null;
       const deltaBytes = Number(historySummary.delta_bytes || 0);
@@ -561,8 +606,8 @@
           : 'rgba(34, 197, 94, 0.14)';
 
       if (!dataset.points.length) {
-        statusEl.textContent = '趋势采集中';
-        metaEl.innerHTML = '<span class="storage-meta-chip">至少需要 1 个采样点后才显示曲线</span>';
+        statusEl.textContent = `${activeWindow}D 采集中`;
+        metaEl.innerHTML = `<span class="storage-meta-chip">${activeWindow}D 窗口至少需要 1 个采样点后才显示曲线</span>`;
         budgetEl.innerHTML = (archiveStorage.budget_alerts_usd || [1, 3])
           .map(value => `<span class="storage-meta-chip">Budget $${escapeHtml(value)}</span>`)
           .join('');
@@ -574,13 +619,13 @@
         : deltaBytes < 0
           ? `-${formatBytes(Math.abs(deltaBytes))}`
           : '持平';
-      statusEl.textContent = deltaBytes === 0 ? '最近窗口平稳' : `最近窗口 ${deltaLabel}`;
+      statusEl.textContent = deltaBytes === 0 ? `${activeWindow}D 平稳` : `${activeWindow}D ${deltaLabel}`;
       statusEl.style.color = color;
       metaEl.innerHTML = [
         firstPoint?.captured_at ? `起点 ${formatDateTime(firstPoint.captured_at, { withSeconds: true }) || firstPoint.captured_at}` : '',
         lastPoint?.captured_at ? `终点 ${formatDateTime(lastPoint.captured_at, { withSeconds: true }) || lastPoint.captured_at}` : '',
         dataset.points.length ? `采样点 ${dataset.points.length}` : '',
-        historySummary.duration_hours ? `窗口 ${historySummary.duration_hours} h` : '',
+        historySummary.duration_hours ? `窗口 ${historySummary.duration_hours} h` : `${activeWindow}D 窗口`,
         `曲线量程 ${formatArchiveGaugeGb(dataset.trendScaleBytes)}`
       ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
       budgetEl.innerHTML = [
@@ -625,6 +670,8 @@
       const suggestions = Array.isArray(archiveStorage.cleanup_suggestions) ? archiveStorage.cleanup_suggestions : [];
       const largestMedia = Array.isArray(archiveStorage.largest_media_objects) ? archiveStorage.largest_media_objects : [];
       const largestSnapshots = Array.isArray(archiveStorage.largest_snapshot_objects) ? archiveStorage.largest_snapshot_objects : [];
+      const largestActivities = Array.isArray(archiveStorage.largest_activity_groups) ? archiveStorage.largest_activity_groups : [];
+      const largestCourses = Array.isArray(archiveStorage.largest_course_groups) ? archiveStorage.largest_course_groups : [];
       const suggestionHtml = suggestions.length
         ? suggestions.map(item => `
             <article class="archive-suggestion-card level-${escapeHtml(item.level || 'info')}">
@@ -635,6 +682,8 @@
         : '<div class="archive-empty-state">No extra archive action is required right now. Keep observing the trend and local mirror backup.</div>';
       listEl.innerHTML = [
         suggestionHtml,
+        renderArchiveRankGroup('Largest courses Top 5', largestCourses, 'No course-level archive groups are available yet.'),
+        renderArchiveRankGroup('Largest activities Top 5', largestActivities, 'No activity-level archive groups are available yet.'),
         renderArchiveRankGroup('Largest media Top 5', largestMedia, 'No media objects are stored in R2 yet.'),
         renderArchiveRankGroup('Largest snapshots Top 5', largestSnapshots, 'No activity snapshots are stored in R2 yet.')
       ].join('');

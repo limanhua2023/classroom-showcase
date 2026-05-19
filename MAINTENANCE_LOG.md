@@ -233,3 +233,10 @@
 - The super-admin archive operations panel now shows a dedicated local-backup status card and includes the local-backup state in the top health summary line.
 - Teacher and super-admin archive cleanup panels now list `Largest media Top 5` and `Largest snapshots Top 5`, so once the 8.5 GB warning zone is reached the operator can immediately see which objects are consuming the most archive space.
 - Local validation completed with `node --check server.js`, `node --check scripts/local-backup-agent.mjs`, and inline script parsing for `public/super-admin.html` and `public/teacher-dashboard.html`.
+
+## 2026-05-19 R2 7D/30D Trends and Course/Activity Cleanup Guidance
+- Archive storage history now keeps a longer rolling window by default and publishes both `7d` and `30d` trend summaries, so the dashboards can switch between short-horizon and month-view pressure without rescanning the R2 bucket.
+- Teacher and super-admin dashboards now provide `7D / 30D` trend toggle buttons on the R2 storage chart, with window-aware delta chips and empty-state messaging tied to the selected time range.
+- Backend archive summaries now group R2 usage by activity and by course using archive object paths plus `activities` metadata, exposing `largest_activity_groups` and `largest_course_groups` for targeted cleanup planning.
+- Cleanup suggestion panels now elevate the heaviest courses and activities first whenever R2 crosses the 8.5 GB warning line, alongside the existing largest-media and largest-snapshot object lists.
+- Local validation completed with `node --check server.js` and inline script parsing for `public/super-admin.html` and `public/teacher-dashboard.html` before deployment.

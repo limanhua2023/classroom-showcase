@@ -103,7 +103,8 @@ const ARCHIVE_STORAGE_BUDGET_ALERTS_USD = [...new Set(
     .filter(value => Number.isFinite(value) && value > 0)
 )].sort((a, b) => a - b);
 const ARCHIVE_STORAGE_HISTORY_PATH = 'system/archive-storage-history.json';
-const ARCHIVE_STORAGE_HISTORY_MAX_POINTS = Math.max(24, Number(process.env.ARCHIVE_STORAGE_HISTORY_MAX_POINTS || 168));
+const ARCHIVE_STORAGE_HISTORY_MAX_POINTS = Math.max(24, Number(process.env.ARCHIVE_STORAGE_HISTORY_MAX_POINTS || 720));
+const ARCHIVE_STORAGE_TREND_WINDOWS_DAYS = [7, 30];
 const ARCHIVE_STORAGE_HISTORY_MIN_INTERVAL_MS = Math.max(5 * 60 * 1000, Number(process.env.ARCHIVE_STORAGE_HISTORY_MIN_INTERVAL_MS || 60 * 60 * 1000));
 const ARCHIVE_STORAGE_HISTORY_MIN_DELTA_BYTES = Math.max(512 * 1024, Number(process.env.ARCHIVE_STORAGE_HISTORY_MIN_DELTA_BYTES || 8 * 1024 * 1024));
 const LOCAL_BACKUP_STATUS_PATH = 'system/local-backup-status.json';
@@ -1742,8 +1743,21 @@ async function persistArchiveStorageHistoryPoint(summary = {}) {
   return cloneArchiveStorageHistoryDocument(nextHistory);
 }
 
-function buildArchiveStorageHistorySummary(points = []) {
-  const visiblePoints = points.slice(-24);
+function filterArchiveStorageHistoryPoints(points = [], windowDays = 7) {
+  const normalizedWindowDays = Number(windowDays) === 30 ? 30 : 7;
+  const normalizedPoints = Array.isArray(points) ? points : [];
+  const lastPoint = normalizedPoints.at(-1) || null;
+  const lastCapturedAt = lastPoint?.captured_at ? new Date(lastPoint.captured_at).getTime() : 0;
+  if (!lastCapturedAt) return normalizedPoints;
+  const cutoff = lastCapturedAt - (normalizedWindowDays * 24 * 60 * 60 * 1000);
+  return normalizedPoints.filter(point => {
+    const capturedAt = point?.captured_at ? new Date(point.captured_at).getTime() : 0;
+    return capturedAt >= cutoff;
+  });
+}
+
+function buildArchiveStorageHistorySummary(points = [], { windowDays = 7 } = {}) {
+  const visiblePoints = filterArchiveStorageHistoryPoints(points, windowDays);
   const firstPoint = visiblePoints[0] || null;
   const lastPoint = visiblePoints.at(-1) || null;
   const deltaBytes = firstPoint && lastPoint ? Number(lastPoint.total_bytes || 0) - Number(firstPoint.total_bytes || 0) : 0;
@@ -1752,6 +1766,7 @@ function buildArchiveStorageHistorySummary(points = []) {
   const lastAt = lastPoint ? new Date(lastPoint.captured_at).getTime() : 0;
   const durationHours = firstAt && lastAt && lastAt > firstAt ? Math.round(((lastAt - firstAt) / (60 * 60 * 1000)) * 10) / 10 : 0;
   return {
+    window_days: Number(windowDays) === 30 ? 30 : 7,
     point_count: points.length,
     visible_point_count: visiblePoints.length,
     first_at: firstPoint?.captured_at || null,
@@ -1760,6 +1775,72 @@ function buildArchiveStorageHistorySummary(points = []) {
     delta_percent: Math.round(deltaPercent * 10) / 10,
     duration_hours: durationHours
   };
+}
+
+function chunkValues(values = [], size = 100) {
+  const chunkSize = Math.max(1, Number(size) || 1);
+  const chunks = [];
+  for (let index = 0; index < values.length; index += chunkSize) {
+    chunks.push(values.slice(index, index + chunkSize));
+  }
+  return chunks;
+}
+
+function extractArchiveActivityIdFromKey(key = '') {
+  const value = String(key || '').trim();
+  if (!value) return null;
+  const parts = value.split('/').filter(Boolean);
+  if (parts[0] === 'classshow' && parts[1]) return parts[1];
+  if (parts[0] === 'classshow-backups' && parts[1]) return parts[1];
+  return null;
+}
+
+function upsertArchiveActivityUsage(groupMap, activityId, size, type = 'media') {
+  if (!activityId) return;
+  const nextSize = Math.max(0, Number(size || 0));
+  const current = groupMap.get(activityId) || {
+    activity_id: activityId,
+    total_bytes: 0,
+    object_count: 0,
+    media_bytes: 0,
+    media_count: 0,
+    snapshot_bytes: 0,
+    snapshot_count: 0
+  };
+  current.total_bytes += nextSize;
+  current.object_count += 1;
+  if (type === 'snapshot') {
+    current.snapshot_bytes += nextSize;
+    current.snapshot_count += 1;
+  } else {
+    current.media_bytes += nextSize;
+    current.media_count += 1;
+  }
+  groupMap.set(activityId, current);
+}
+
+async function loadArchiveActivityMetadata(activityIds = []) {
+  const uniqueIds = [...new Set((Array.isArray(activityIds) ? activityIds : []).filter(Boolean))];
+  const metadataMap = new Map();
+  if (!uniqueIds.length) return metadataMap;
+  for (const chunk of chunkValues(uniqueIds, 100)) {
+    try {
+      const { data, error } = await supabase
+        .from('activities')
+        .select('id,course_name,class_name,activity_name,invite_code,created_at')
+        .in('id', chunk);
+      if (error) {
+        console.warn('Archive activity metadata lookup failed:', error.message);
+        continue;
+      }
+      for (const activity of data || []) {
+        metadataMap.set(String(activity.id), activity);
+      }
+    } catch (error) {
+      console.warn('Archive activity metadata lookup failed:', error.message);
+    }
+  }
+  return metadataMap;
 }
 
 function normalizeLocalBackupStatus(raw = null) {
@@ -1862,6 +1943,8 @@ function buildArchiveStorageCleanupSuggestions(summary = {}, historySummary = {}
   const durationHours = Number(historySummary.duration_hours || 0);
   const largestSnapshots = Array.isArray(summary.largest_snapshot_objects) ? summary.largest_snapshot_objects : [];
   const largestMedia = Array.isArray(summary.largest_media_objects) ? summary.largest_media_objects : [];
+  const largestActivities = Array.isArray(summary.largest_activity_groups) ? summary.largest_activity_groups : [];
+  const largestCourses = Array.isArray(summary.largest_course_groups) ? summary.largest_course_groups : [];
 
   if (!summary.configured) {
     return [{
@@ -1937,6 +2020,28 @@ function buildArchiveStorageCleanupSuggestions(summary = {}, historySummary = {}
     });
   }
 
+  if ((warningLevel === 'warning' || warningLevel === 'critical') && largestCourses.length) {
+    suggestions.push({
+      level: warningLevel,
+      title: 'Review the heaviest courses first',
+      message: largestCourses
+        .slice(0, 3)
+        .map(item => `${item.label} (${formatStorageBytes(item.size_bytes)})`)
+        .join(' | ')
+    });
+  }
+
+  if ((warningLevel === 'warning' || warningLevel === 'critical') && largestActivities.length) {
+    suggestions.push({
+      level: warningLevel === 'critical' ? 'critical' : 'warning',
+      title: 'Target the largest activities before the next upload wave',
+      message: largestActivities
+        .slice(0, 3)
+        .map(item => `${item.label} (${formatStorageBytes(item.size_bytes)})`)
+        .join(' | ')
+    });
+  }
+
   if (deltaBytes > 0 && durationHours >= 6) {
     const growthPerDayBytes = deltaBytes / Math.max(durationHours / 24, 0.25);
     const projectedDays = growthPerDayBytes > 0 ? Math.floor(remainingBytes / growthPerDayBytes) : null;
@@ -1949,16 +2054,24 @@ function buildArchiveStorageCleanupSuggestions(summary = {}, historySummary = {}
     });
   }
 
-  return suggestions.slice(0, 4);
+  return suggestions.slice(0, 6);
 }
 
 function decorateArchiveStorageSummary(summary = {}, historyDocument = null) {
   const normalizedHistory = normalizeArchiveStorageHistoryDocument(historyDocument);
-  const historySummary = buildArchiveStorageHistorySummary(normalizedHistory.points);
+  const historyWindows = Object.fromEntries(
+    ARCHIVE_STORAGE_TREND_WINDOWS_DAYS.map(windowDays => [
+      `${windowDays}d`,
+      buildArchiveStorageHistorySummary(normalizedHistory.points, { windowDays })
+    ])
+  );
+  const historySummary = historyWindows['7d'] || buildArchiveStorageHistorySummary(normalizedHistory.points, { windowDays: 7 });
   return {
     ...summary,
     budget_alerts_usd: ARCHIVE_STORAGE_BUDGET_ALERTS_USD,
     history_points: normalizedHistory.points,
+    history_window_days: ARCHIVE_STORAGE_TREND_WINDOWS_DAYS,
+    history_windows: historyWindows,
     history_summary: historySummary,
     cleanup_suggestions: buildArchiveStorageCleanupSuggestions(summary, historySummary)
   };
@@ -2019,6 +2132,7 @@ async function buildArchiveStorageSummary(provider = getArchiveProviderInfo()) {
   let mediaCount = 0;
   let largestSnapshotObjects = [];
   let largestMediaObjects = [];
+  const activityUsageMap = new Map();
 
   do {
     const response = await client.send(new ListObjectsV2Command({
@@ -2034,6 +2148,7 @@ async function buildArchiveStorageSummary(provider = getArchiveProviderInfo()) {
       if (key.startsWith('classshow-backups/')) {
         snapshotBytes += size;
         snapshotCount += 1;
+        upsertArchiveActivityUsage(activityUsageMap, extractArchiveActivityIdFromKey(key), size, 'snapshot');
         largestSnapshotObjects = pushArchiveTopRank(largestSnapshotObjects, {
           key,
           size,
@@ -2042,6 +2157,7 @@ async function buildArchiveStorageSummary(provider = getArchiveProviderInfo()) {
       } else if (key.startsWith('classshow/')) {
         mediaBytes += size;
         mediaCount += 1;
+        upsertArchiveActivityUsage(activityUsageMap, extractArchiveActivityIdFromKey(key), size, 'media');
         largestMediaObjects = pushArchiveTopRank(largestMediaObjects, {
           key,
           size,
@@ -2051,6 +2167,62 @@ async function buildArchiveStorageSummary(provider = getArchiveProviderInfo()) {
     }
     continuationToken = response.IsTruncated ? response.NextContinuationToken : null;
   } while (continuationToken);
+
+  const activityMetadataMap = await loadArchiveActivityMetadata([...activityUsageMap.keys()]);
+  const largestActivityGroups = [...activityUsageMap.values()]
+    .map(group => {
+      const activity = activityMetadataMap.get(String(group.activity_id)) || {};
+      const label = String(activity.activity_name || activity.invite_code || group.activity_id || 'archive-activity').trim();
+      const key = [
+        activity.course_name || '',
+        activity.class_name || '',
+        activity.invite_code || ''
+      ].filter(Boolean).join(' | ');
+      return {
+        ...group,
+        course_name: String(activity.course_name || '').trim() || null,
+        class_name: String(activity.class_name || '').trim() || null,
+        activity_name: String(activity.activity_name || '').trim() || null,
+        invite_code: String(activity.invite_code || '').trim() || null,
+        size_bytes: group.total_bytes,
+        label,
+        key
+      };
+    })
+    .sort((left, right) => right.size_bytes - left.size_bytes)
+    .slice(0, 5);
+
+  const courseUsageMap = new Map();
+  for (const group of activityUsageMap.values()) {
+    const activity = activityMetadataMap.get(String(group.activity_id)) || {};
+    const rawCourseName = String(activity.course_name || '').trim() || 'Unknown course';
+    const courseKey = normalizePortalCourseName(rawCourseName || 'unknown-course');
+    const current = courseUsageMap.get(courseKey) || {
+      course_name: rawCourseName,
+      total_bytes: 0,
+      size_bytes: 0,
+      object_count: 0,
+      snapshot_bytes: 0,
+      media_bytes: 0,
+      activity_count: 0
+    };
+    current.total_bytes += group.total_bytes;
+    current.size_bytes = current.total_bytes;
+    current.object_count += group.object_count;
+    current.snapshot_bytes += group.snapshot_bytes;
+    current.media_bytes += group.media_bytes;
+    current.activity_count += 1;
+    courseUsageMap.set(courseKey, current);
+  }
+
+  const largestCourseGroups = [...courseUsageMap.values()]
+    .map(group => ({
+      ...group,
+      label: group.course_name,
+      key: `${group.activity_count} activities | ${group.object_count} objects`
+    }))
+    .sort((left, right) => right.size_bytes - left.size_bytes)
+    .slice(0, 5);
 
   const usagePercent = quotaBytes > 0 ? Math.min((totalBytes / quotaBytes) * 100, 999) : 0;
   const remainingBytes = Math.max(quotaBytes - totalBytes, 0);
@@ -2064,6 +2236,8 @@ async function buildArchiveStorageSummary(provider = getArchiveProviderInfo()) {
     media_count: mediaCount,
     largest_snapshot_objects: largestSnapshotObjects,
     largest_media_objects: largestMediaObjects,
+    largest_activity_groups: largestActivityGroups,
+    largest_course_groups: largestCourseGroups,
     usage_percent: Math.round(usagePercent * 10) / 10,
     remaining_bytes: remainingBytes,
     warning: buildArchiveStorageWarningSummary(totalBytes, quotaBytes)
