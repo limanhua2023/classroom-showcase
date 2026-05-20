@@ -2096,7 +2096,7 @@
         'Storage critical 9.0 GB'
       ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
     }
-    function renderArchiveRankGroup(title, items, emptyText) {
+    function renderArchiveRankGroup(title, items, emptyText, options = {}) {
       const list = Array.isArray(items) ? items : [];
       if (!list.length) {
         return `
@@ -2116,11 +2116,26 @@
                   <strong>#${index + 1} ${escapeHtml(item.label || item.key || "archive-object")}</strong>
                   <small>${escapeHtml(item.key || "")}</small>
                 </div>
-                <div class="archive-object-size">${escapeHtml(formatBytes(item.size_bytes || item.size || 0))}</div>
+                <div class="archive-object-side">
+                  <div class="archive-object-size">${escapeHtml(formatBytes(item.size_bytes || item.size || 0))}</div>
+                  ${typeof options.renderAction === 'function' ? options.renderAction(item, index) || '' : ''}
+                </div>
               </div>
             `).join("")}
           </div>
         </article>
+      `;
+    }
+
+    function renderTeacherCooldownCandidateAction(item) {
+      const targetActivityId = String(item?.activity_id || '').trim();
+      if (!targetActivityId) return '';
+      if (String(targetActivityId) === String(actId)) {
+        return `<button class="btn btn-secondary btn-sm archive-object-action" type="button" onclick="queueCurrentHotCandidateArchive('${encodeURIComponent(targetActivityId)}')">加入归档</button>`;
+      }
+      return `
+        <button class="btn btn-secondary btn-sm archive-object-action" type="button" disabled title="教师后台只能操作当前活动">仅当前活动</button>
+        <small class="archive-object-action-note">跨活动候选请到超级管理员页处理</small>
       `;
     }
 
@@ -2159,7 +2174,9 @@
         : '<div class="archive-empty-state">Hot storage remains comfortable. Keep recent class assets in Supabase and continue mirrored archive to R2.</div>';
       listEl.innerHTML = [
         suggestionHtml,
-        renderArchiveRankGroup('Move-to-cold candidates Top 5', cooldownCandidates, 'No low-activity hot-tier activities need cooling yet.'),
+        renderArchiveRankGroup('Move-to-cold candidates Top 5', cooldownCandidates, 'No low-activity hot-tier activities need cooling yet.', {
+          renderAction: renderTeacherCooldownCandidateAction
+        }),
         renderArchiveRankGroup('Hottest courses Top 5', largestCourses, 'No course-level hot storage groups are available yet.'),
         renderArchiveRankGroup('Hottest activities Top 5', largestActivities, 'No activity-level hot storage groups are available yet.'),
         renderArchiveRankGroup('Largest hot files Top 5', largestItems, 'No hot-tier media files are available yet.'),
@@ -2211,23 +2228,28 @@
 
       if (!daysInput || !quarantineInput || !deleteToggle || !badge || !hint || !statsBox || !metaBox) return;
 
-      daysInput.value = Number(activity.archive_after_days ?? provider.after_days ?? 30);
+      const hotStrategy = hotStorage.strategy || {};
+      const configuredArchiveDays = Number(activity.archive_after_days ?? provider.after_days ?? 30);
+      const recommendedDays = Number(hotStrategy.recommended_archive_after_days || configuredArchiveDays || 30);
+      const shouldAutoTightenArchiveDays = ['archive', 'accelerate', 'critical'].includes(String(hotStrategy.phase || ''))
+        && Number.isFinite(configuredArchiveDays)
+        && configuredArchiveDays > recommendedDays;
+      const effectiveArchiveDays = shouldAutoTightenArchiveDays ? recommendedDays : configuredArchiveDays;
+      const hotPhaseLabel = resolveHotStorageGaugeLabel(hotStrategy.phase || 'safe');
+
+      daysInput.value = effectiveArchiveDays;
       quarantineInput.value = Number(activity.quarantine_retention_days ?? 3);
       deleteToggle.checked = !!activity.archive_delete_primary_after_success;
 
-      const hotStrategy = hotStorage.strategy || {};
-      const recommendedDays = Number(hotStrategy.recommended_archive_after_days || daysInput.value || 30);
-      const hotPhaseLabel = resolveHotStorageGaugeLabel(hotStrategy.phase || 'safe');
-
       badge.textContent = deleteToggle.checked
-        ? `Cold storage on · archive ${daysInput.value}d / recycle ${quarantineInput.value}d`
-        : `Mirror mode · archive ${daysInput.value}d / recycle ${quarantineInput.value}d · ${hotPhaseLabel}`;
+        ? `Cold storage on · archive ${effectiveArchiveDays}d / recycle ${quarantineInput.value}d`
+        : `Mirror mode · archive ${effectiveArchiveDays}d / recycle ${quarantineInput.value}d · ${hotPhaseLabel}`;
 
       statsBox.innerHTML = [
         ['Hot quota', formatBytes(hotStorage.quota_bytes || storage.quota_bytes || 0)],
         ['Hot used', `${Number(hotStorage.usage_percent || storage.usage_percent || 0).toFixed(1)}%`],
         ['7D growth', formatBytes(hotStorage.recent_upload_bytes_7d || storage.recent_upload_bytes_7d || 0)],
-        ['Suggested archive', `${recommendedDays} d`]
+        ['Suggested archive', `${effectiveArchiveDays} d`]
       ].map(item => `
         <div class="mini-stat">
           <strong>${escapeHtml(item[1])}</strong>
@@ -2240,6 +2262,7 @@
         `Daily growth ${formatBytes(hotStorage.estimated_growth_bytes_per_day || storage.estimated_growth_bytes_per_day || 0)}`,
         hotStrategy.next_phase ? `Next stage ${resolveHotStorageGaugeLabel(hotStrategy.next_phase)}` : '',
         hotStorage.remaining_bytes ? `Hot remaining ${formatBytes(hotStorage.remaining_bytes)}` : '',
+        shouldAutoTightenArchiveDays ? `Suggested ${configuredArchiveDays} d -> ${effectiveArchiveDays} d` : '',
         provider.configured
           ? `Archive ${provider.auth_mode ? `${provider.name}/${provider.auth_mode}` : provider.name}`
           : 'Archive provider offline',
@@ -2255,6 +2278,10 @@
       hint.textContent = provider.configured
         ? `Supabase works as the hot tier and R2 works as the cold tier. The current policy suggestion is to keep archive-after-days around ${recommendedDays}, then tighten it as the hot tier approaches 50%, 70%, and 85% of the free 1 GB quota.`
         : 'Archive provider is not configured yet. You can still save the policy draft, but no real archive job will run until the provider is connected.';
+
+      if (shouldAutoTightenArchiveDays) {
+        hint.textContent += ` Because the hot tier has already crossed the 50% archive phase, the form has auto-lowered the current activity from ${configuredArchiveDays} d to ${effectiveArchiveDays} d. Click Save to apply it.`;
+      }
 
       renderHotStorageGauge(hotStorage);
       renderHotStorageStrategyPanel(hotStorage);
@@ -3978,30 +4005,43 @@
       }
     }
 
-    async function runArchiveQueue() {
+    async function queueCurrentHotCandidateArchive(encodedActivityId) {
+      const activityId = decodeURIComponent(String(encodedActivityId || ''));
+      if (!activityId) return;
+      if (String(activityId) !== String(actId)) {
+        return toast('This teacher page can only queue the current activity. Use the super-admin page for cross-activity archive actions.', 'error');
+      }
+      await runArchiveQueue(activityId, 'Current activity queued for archive. Review the run result after it finishes.');
+    }
+
+    async function runArchiveQueue(targetActivityId = actId, successMessage = '') {
+      const isCurrentActivity = String(targetActivityId || '') === String(actId || '');
       const btn = document.getElementById('runArchiveBtn');
-      if (!btn) return;
-      const originalText = btn.textContent;
-      btn.disabled = true;
-      btn.textContent = '归档处理中...';
+      const originalText = btn ? btn.textContent : '';
+      if (btn && isCurrentActivity) {
+        btn.disabled = true;
+        btn.textContent = 'Archive running...';
+      }
       try {
         const result = await api('/teacher/archive-run', {
           method: 'POST',
-          body: JSON.stringify({ activity_id: actId })
+          body: JSON.stringify({ activity_id: targetActivityId })
         });
         await reloadDashboard();
         if (result.skipped && result.reason === 'provider-not-configured') {
-          toast('尚未配置 Google Drive 或对象存储归档环境变量', 'error');
+          toast('Archive provider is not configured yet.', 'error');
         } else if (result.skipped && result.reason === 'busy') {
-          toast('后台归档队列正在运行中，请稍后再看结果', 'success');
+          toast('Archive queue is already running. Check back in a moment.', 'success');
         } else {
-          toast(`本轮待归档 ${result.queued || 0} 个，实际处理 ${result.processed || 0} 个`, 'success');
+          toast(successMessage || `Queued ${result.queued || 0} item(s), processed ${result.processed || 0} item(s).`, 'success');
         }
       } catch (e) {
-        toast('手动归档失败：' + e.message, 'error');
+        toast('Archive run failed: ' + e.message, 'error');
       } finally {
-        btn.disabled = false;
-        btn.textContent = originalText;
+        if (btn && isCurrentActivity) {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
       }
     }
 

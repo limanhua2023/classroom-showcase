@@ -769,7 +769,7 @@
       ].map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
     }
 
-    function renderArchiveRankGroup(title, items, emptyText) {
+    function renderArchiveRankGroup(title, items, emptyText, options = {}) {
       const list = Array.isArray(items) ? items : [];
       if (!list.length) {
         return `
@@ -789,12 +789,21 @@
                   <strong>#${index + 1} ${escapeHtml(item.label || item.key || 'archive-object')}</strong>
                   <small>${escapeHtml(item.key || '')}</small>
                 </div>
-                <div class="archive-object-size">${escapeHtml(formatBytes(item.size_bytes || item.size || 0))}</div>
+                <div class="archive-object-side">
+                  <div class="archive-object-size">${escapeHtml(formatBytes(item.size_bytes || item.size || 0))}</div>
+                  ${typeof options.renderAction === 'function' ? options.renderAction(item, index) || '' : ''}
+                </div>
               </div>
             `).join('')}
           </div>
         </article>
       `;
+    }
+
+    function renderSuperCooldownCandidateAction(item) {
+      const targetActivityId = String(item?.activity_id || '').trim();
+      if (!targetActivityId) return '';
+      return `<button class="btn btn-secondary btn-sm archive-object-action" type="button" onclick="runSuperAdminArchiveQueue('${encodeURIComponent(targetActivityId)}')">加入归档</button>`;
     }
 
     function renderHotStorageOpsPanel() {
@@ -837,7 +846,9 @@
         : '<div class="archive-empty-state">Hot storage remains comfortable. Keep recent class assets in Supabase and continue mirrored archive to R2.</div>';
       listEl.innerHTML = [
         suggestionHtml,
-        renderArchiveRankGroup('Move-to-cold candidates Top 5', cooldownCandidates, 'No low-activity hot-tier activities need cooling yet.'),
+        renderArchiveRankGroup('Move-to-cold candidates Top 5', cooldownCandidates, 'No low-activity hot-tier activities need cooling yet.', {
+          renderAction: renderSuperCooldownCandidateAction
+        }),
         renderArchiveRankGroup('Hottest courses Top 5', largestCourses, 'No course-level hot storage groups are available yet.'),
         renderArchiveRankGroup('Hottest activities Top 5', largestActivities, 'No activity-level hot storage groups are available yet.'),
         renderArchiveRankGroup('Largest hot files Top 5', largestItems, 'No hot-tier media files are available yet.'),
@@ -1143,6 +1154,28 @@
         return false;
       }
       return true;
+    }
+
+    async function runSuperAdminArchiveQueue(encodedActivityId) {
+      if (!ensureSuperAdminReady()) return;
+      const activityId = decodeURIComponent(String(encodedActivityId || ''));
+      if (!activityId) return toast('Missing candidate activity ID', 'error');
+      try {
+        const result = await api('/super-admin/archive-run', {
+          method: 'POST',
+          body: JSON.stringify({ activity_id: activityId })
+        });
+        await loadOverview();
+        if (result.skipped && result.reason === 'provider-not-configured') {
+          toast('Archive provider is not configured yet.', 'error');
+        } else if (result.skipped && result.reason === 'busy') {
+          toast('Archive queue is already running. Check back in a moment.', 'success');
+        } else {
+          toast(`Candidate activity queued: ${result.queued || 0} item(s) ready, ${result.processed || 0} item(s) processed.`, 'success');
+        }
+      } catch (error) {
+        toast('Queueing archive failed: ' + error.message, 'error');
+      }
     }
 
     function hideRegistryEditor() {

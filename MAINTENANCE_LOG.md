@@ -262,3 +262,10 @@
 - Teacher and super-admin hot-tier operation panels now render `Move-to-cold candidates Top 5` and `Largest hot videos Top 5`, alongside the existing course/activity/file lists.
 - The cooldown ranking favors activities with no uploads in the last 7 days, larger footprints, and low recent course activity, which makes the hot-to-cold recommendations more operationally useful than a pure size sort.
 - Hotfix: corrected cooldown scoring to use the actual Supabase hot-tier byte total (`storageBytes`) instead of an undefined variable, restoring healthy `hot_storage` responses in `/api/health` and both dashboards after deployment.
+
+## 2026-05-20 Hot-Tier Queue Actions and Auto-Tighten Archive Suggestions
+- Added `POST /api/super-admin/archive-run`, allowing the super-admin console to enqueue a specific candidate activity into the archive queue without impersonating a teacher session.
+- Teacher and super-admin cooldown candidate cards now render inline archive actions. Teachers can queue the current activity directly, while cross-activity candidates are explicitly routed to the super-admin console.
+- The teacher archive policy form now auto-tightens the suggested `archive-after-days` input whenever the hot tier has crossed the `archive / accelerate / critical` phases and the saved value is looser than the backend recommendation.
+- The teacher hint/meta chips now explain when the hot-tier policy has auto-lowered the current activity from its configured archive window to the stricter recommended value, so operators can save the new policy intentionally instead of wondering why the input changed.
+- Local validation passed with `node --check server.js` and inline-script parsing for both `public/teacher-dashboard.html` and `public/super-admin.html` after rebuilding the teacher dashboard from the current live production baseline to remove a damaged local encoding state.

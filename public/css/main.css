@@ -2039,3 +2039,20 @@ td img { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; }
   font-weight: 900;
   white-space: nowrap;
 }
+.archive-object-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.archive-object-action {
+  min-width: 108px;
+}
+.archive-object-action-note {
+  margin: 0;
+  color: var(--text-light);
+  font-size: 0.72rem;
+  line-height: 1.35;
+  text-align: right;
+  max-width: 180px;
+}

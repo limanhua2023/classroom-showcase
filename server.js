@@ -5049,6 +5049,22 @@ app.get('/api/super-admin/overview', superAdminAuth, async (_req, res) => {
   }
 });
 
+app.post('/api/super-admin/archive-run', superAdminAuth, async (req, res) => {
+  try {
+    const activity_id = String(req.body?.activity_id ?? req.query?.activity_id ?? '').trim();
+    if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
+    const result = await processArchiveQueue({
+      activityId: activity_id,
+      limit: ARCHIVE_BATCH_SIZE,
+      source: 'manual-super-admin'
+    });
+    invalidateActivityOpsCache(activity_id);
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
 app.post('/api/super-admin/course-registry/save', superAdminAuth, async (req, res) => {
   try {
     const registry = await getCourseRegistry({ forceRefresh: true });
