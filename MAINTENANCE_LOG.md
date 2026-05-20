@@ -255,3 +255,9 @@
 - Super-admin now exposes a matching `SUPABASE HOT TIER` section so portal-level operators can see the same hot-tier pressure, phase labels, and Top-N hot-file pressure without opening an activity dashboard first.
 - Added `cost_projection` to the R2 archive summary. Both dashboards now show a rough storage-only monthly overage estimate plus Cloudflare free-operation reminders, so budget planning stays visible beside the `$1 / $3` alert thresholds.
 - The intended operating model is now explicit in-product: Supabase is the hot tier for recent teaching assets, while R2 is the cold archive tier. Suggested archive pressure steps are `40% prepare -> 50% archive -> 70% accelerate -> 85% critical`.
+
+## 2026-05-20 Hot-Tier Video Top-N and Cooldown Candidate Ranking
+- Extended the Supabase hot-tier summary with `largest_video_items`, so both dashboards can separate generic large files from oversized videos when planning which objects should leave the hot layer first.
+- Added `cooldown_candidates` to the hot-tier payload. Candidates are ranked by storage footprint, recent inactivity, and course-level recent upload activity so operators can see which activities are best suited for early migration into R2.
+- Teacher and super-admin hot-tier operation panels now render `Move-to-cold candidates Top 5` and `Largest hot videos Top 5`, alongside the existing course/activity/file lists.
+- The cooldown ranking favors activities with no uploads in the last 7 days, larger footprints, and low recent course activity, which makes the hot-to-cold recommendations more operationally useful than a pure size sort.

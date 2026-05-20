@@ -1948,6 +1948,7 @@ function buildHotStorageMigrationSuggestions(summary = {}) {
   const largestActivities = Array.isArray(summary.largest_activity_groups) ? summary.largest_activity_groups : [];
   const largestCourses = Array.isArray(summary.largest_course_groups) ? summary.largest_course_groups : [];
   const largestItems = Array.isArray(summary.largest_items) ? summary.largest_items : [];
+  const cooldownCandidates = Array.isArray(summary.cooldown_candidates) ? summary.cooldown_candidates : [];
   const totalBytes = Math.max(0, Number(summary.total_bytes || 0));
   const recentGrowthBytes = Math.max(0, Number(summary.estimated_growth_bytes_per_day || 0));
 
@@ -2006,12 +2007,25 @@ function buildHotStorageMigrationSuggestions(summary = {}) {
     });
   }
 
+  if (cooldownCandidates.length) {
+    suggestions.push({
+      level: strategy.phase === 'safe' ? 'info' : strategy.phase === 'critical' ? 'critical' : 'warning',
+      title: 'Best activities to cool into R2 next',
+      message: cooldownCandidates
+        .slice(0, 3)
+        .map(item => `${item.label} (${formatStorageBytes(item.size_bytes || 0)}, ${item.days_since_latest_upload ?? '?'}d idle)`)
+        .join(' | ')
+    });
+  }
+
   return suggestions;
 }
 
 async function buildHotStorageSummaryFromRows(rows = [], storageFiles = []) {
   const normalizedRows = Array.isArray(rows) ? rows : [];
   const now = Date.now();
+  const sevenDayMs = 7 * 24 * 60 * 60 * 1000;
+  const thirtyDayMs = 30 * 24 * 60 * 60 * 1000;
   const referencedRows = normalizedRows.filter(row => row.storage_path);
   const referencedBytes = referencedRows.reduce((sum, row) => sum + Number(row.media_size || 0), 0);
   const storageBytes = storageFiles.reduce((sum, file) => sum + Number(file.metadata?.size || 0), 0);
@@ -2063,6 +2077,11 @@ async function buildHotStorageSummaryFromRows(rows = [], storageFiles = []) {
     .slice()
     .sort((a, b) => (b.media_size || 0) - (a.media_size || 0))
     .slice(0, 5);
+  const largestVideoItems = referencedRows
+    .filter(row => row.media_type === 'video')
+    .slice()
+    .sort((a, b) => (b.media_size || 0) - (a.media_size || 0))
+    .slice(0, 5);
 
   const activityMetadataMap = await loadArchiveActivityMetadata(
     [...new Set(referencedRows.map(row => String(row.activity_id || '')).filter(Boolean))]
@@ -2082,15 +2101,30 @@ async function buildHotStorageSummaryFromRows(rows = [], storageFiles = []) {
       submission_count: 0,
       image_count: 0,
       video_count: 0,
-      latest_upload_at: null
+      latest_upload_at: null,
+      recent_upload_count_7d: 0,
+      recent_upload_bytes_7d: 0,
+      recent_upload_count_30d: 0,
+      recent_upload_bytes_30d: 0
     };
     currentActivity.total_bytes += mediaSize;
     currentActivity.size_bytes = currentActivity.total_bytes;
     currentActivity.submission_count += 1;
     currentActivity.image_count += mediaType === 'video' ? 0 : 1;
     currentActivity.video_count += mediaType === 'video' ? 1 : 0;
-    if (!currentActivity.latest_upload_at || new Date(row.upload_time || 0).getTime() > new Date(currentActivity.latest_upload_at || 0).getTime()) {
+    const uploadMs = new Date(row.upload_time || 0).getTime();
+    if (!currentActivity.latest_upload_at || uploadMs > new Date(currentActivity.latest_upload_at || 0).getTime()) {
       currentActivity.latest_upload_at = row.upload_time || null;
+    }
+    if (Number.isFinite(uploadMs) && uploadMs > 0) {
+      if ((now - uploadMs) <= sevenDayMs) {
+        currentActivity.recent_upload_count_7d += 1;
+        currentActivity.recent_upload_bytes_7d += mediaSize;
+      }
+      if ((now - uploadMs) <= thirtyDayMs) {
+        currentActivity.recent_upload_count_30d += 1;
+        currentActivity.recent_upload_bytes_30d += mediaSize;
+      }
     }
     activityUsageMap.set(activityId, currentActivity);
 
@@ -2104,7 +2138,12 @@ async function buildHotStorageSummaryFromRows(rows = [], storageFiles = []) {
       activity_count: 0,
       image_count: 0,
       video_count: 0,
-      activity_ids: new Set()
+      activity_ids: new Set(),
+      latest_upload_at: null,
+      recent_upload_count_7d: 0,
+      recent_upload_bytes_7d: 0,
+      recent_upload_count_30d: 0,
+      recent_upload_bytes_30d: 0
     };
     currentCourse.total_bytes += mediaSize;
     currentCourse.size_bytes = currentCourse.total_bytes;
@@ -2113,38 +2152,106 @@ async function buildHotStorageSummaryFromRows(rows = [], storageFiles = []) {
     currentCourse.video_count += mediaType === 'video' ? 1 : 0;
     currentCourse.activity_ids.add(activityId);
     currentCourse.activity_count = currentCourse.activity_ids.size;
+    if (!currentCourse.latest_upload_at || uploadMs > new Date(currentCourse.latest_upload_at || 0).getTime()) {
+      currentCourse.latest_upload_at = row.upload_time || null;
+    }
+    if (Number.isFinite(uploadMs) && uploadMs > 0) {
+      if ((now - uploadMs) <= sevenDayMs) {
+        currentCourse.recent_upload_count_7d += 1;
+        currentCourse.recent_upload_bytes_7d += mediaSize;
+      }
+      if ((now - uploadMs) <= thirtyDayMs) {
+        currentCourse.recent_upload_count_30d += 1;
+        currentCourse.recent_upload_bytes_30d += mediaSize;
+      }
+    }
     courseUsageMap.set(courseKey, currentCourse);
   }
 
-  const largestActivityGroups = [...activityUsageMap.values()]
+  const allActivityGroups = [...activityUsageMap.values()]
     .map(group => {
       const activity = activityMetadataMap.get(String(group.activity_id)) || {};
+      const latestUploadMs = new Date(group.latest_upload_at || 0).getTime();
+      const daysSinceLatestUpload = Number.isFinite(latestUploadMs) && latestUploadMs > 0
+        ? Math.max(0, Math.floor((now - latestUploadMs) / (24 * 60 * 60 * 1000)))
+        : null;
       return {
         ...group,
         course_name: String(activity.course_name || '').trim() || null,
         class_name: String(activity.class_name || '').trim() || null,
         activity_name: String(activity.activity_name || '').trim() || null,
         invite_code: String(activity.invite_code || '').trim() || null,
+        days_since_latest_upload: daysSinceLatestUpload,
         label: String(activity.activity_name || activity.invite_code || group.activity_id || 'activity').trim(),
         key: [
           activity.course_name || '',
           activity.class_name || '',
-          `${group.submission_count} works`
+          `${group.submission_count} works`,
+          daysSinceLatestUpload !== null ? `${daysSinceLatestUpload}d idle` : ''
         ].filter(Boolean).join(' | ')
       };
     })
-    .sort((left, right) => right.size_bytes - left.size_bytes)
+    .sort((left, right) => right.size_bytes - left.size_bytes);
+
+  const allCourseGroups = [...courseUsageMap.values()]
+    .map(group => {
+      const latestUploadMs = new Date(group.latest_upload_at || 0).getTime();
+      const daysSinceLatestUpload = Number.isFinite(latestUploadMs) && latestUploadMs > 0
+        ? Math.max(0, Math.floor((now - latestUploadMs) / (24 * 60 * 60 * 1000)))
+        : null;
+      return {
+        ...group,
+        activity_ids: undefined,
+        days_since_latest_upload: daysSinceLatestUpload,
+        label: group.course_name,
+        key: `${group.activity_count} activities | ${group.submission_count} works`
+      };
+    })
+    .sort((left, right) => right.size_bytes - left.size_bytes);
+
+  const courseSummaryByName = new Map(
+    allCourseGroups.map(group => [normalizePortalCourseName(group.course_name || 'unknown-course'), group])
+  );
+  const cooldownCandidates = allActivityGroups
+    .map(group => {
+      const courseSummary = courseSummaryByName.get(normalizePortalCourseName(group.course_name || 'unknown-course')) || null;
+      const daysIdle = Number.isFinite(Number(group.days_since_latest_upload)) ? Number(group.days_since_latest_upload) : 999;
+      const sizeScore = totalBytes > 0 ? ((Number(group.size_bytes || 0) / totalBytes) * 100) : 0;
+      const staleScore = Math.min(daysIdle, 90) * 1.2;
+      const recencyPenalty = Number(group.recent_upload_count_7d || 0) > 0 ? 45 : Number(group.recent_upload_count_30d || 0) > 0 ? 15 : 0;
+      const dormantCourseBonus = courseSummary
+        ? (Number(courseSummary.recent_upload_count_7d || 0) === 0
+          ? (Number(courseSummary.recent_upload_count_30d || 0) === 0 ? 25 : 10)
+          : 0)
+        : 0;
+      return {
+        ...group,
+        cooldown_score: Math.round((sizeScore + staleScore + dormantCourseBonus - recencyPenalty) * 10) / 10,
+        key: [
+          group.course_name || '',
+          group.class_name || '',
+          daysIdle >= 999 ? '' : `${daysIdle}d idle`,
+          Number(group.recent_upload_count_7d || 0) > 0 ? `${group.recent_upload_count_7d} new / 7d` : '0 new / 7d',
+          courseSummary && Number(courseSummary.recent_upload_count_7d || 0) > 0
+            ? `${courseSummary.recent_upload_count_7d} course new / 7d`
+            : 'course cool'
+        ].filter(Boolean).join(' | ')
+      };
+    })
+    .filter(group => {
+      const daysIdle = Number(group.days_since_latest_upload || 0);
+      return Number(group.size_bytes || 0) > 0
+        && Number(group.recent_upload_count_7d || 0) === 0
+        && (daysIdle >= 7 || Number(group.size_bytes || 0) >= 5 * 1024 * 1024);
+    })
+    .sort((left, right) => {
+      if (right.cooldown_score !== left.cooldown_score) return right.cooldown_score - left.cooldown_score;
+      return Number(right.size_bytes || 0) - Number(left.size_bytes || 0);
+    })
     .slice(0, 5);
 
-  const largestCourseGroups = [...courseUsageMap.values()]
-    .map(group => ({
-      ...group,
-      activity_ids: undefined,
-      label: group.course_name,
-      key: `${group.activity_count} activities | ${group.submission_count} works`
-    }))
-    .sort((left, right) => right.size_bytes - left.size_bytes)
-    .slice(0, 5);
+  const largestActivityGroups = allActivityGroups.slice(0, 5);
+  const largestCourseGroups = allCourseGroups.slice(0, 5);
 
   const strategy = buildHotStorageStrategySummary({
     totalBytes: storageBytes,
@@ -2178,8 +2285,10 @@ async function buildHotStorageSummaryFromRows(rows = [], storageFiles = []) {
     trash_count: trashFiles.length,
     trash_bytes: trashFiles.reduce((sum, file) => sum + Number(file.metadata?.size || 0), 0),
     largest_items: largestItems,
+    largest_video_items: largestVideoItems,
     largest_activity_groups: largestActivityGroups,
     largest_course_groups: largestCourseGroups,
+    cooldown_candidates: cooldownCandidates,
     strategy,
     warning: {
       level: strategy.level,

@@ -2130,11 +2130,21 @@
       const suggestions = Array.isArray(hotStorage.migration_suggestions) ? hotStorage.migration_suggestions : [];
       const largestCourses = Array.isArray(hotStorage.largest_course_groups) ? hotStorage.largest_course_groups : [];
       const largestActivities = Array.isArray(hotStorage.largest_activity_groups) ? hotStorage.largest_activity_groups : [];
+      const cooldownCandidates = Array.isArray(hotStorage.cooldown_candidates) ? hotStorage.cooldown_candidates : [];
       const largestItems = Array.isArray(hotStorage.largest_items) ? hotStorage.largest_items.map(item => ({
         ...item,
         label: item.title || item.storage_path || item.id || 'hot-file',
         key: [
           item.media_type === 'video' ? 'Video' : 'Image',
+          item.upload_time ? `Uploaded ${formatDateTime(item.upload_time) || item.upload_time}` : ''
+        ].filter(Boolean).join(' | '),
+        size_bytes: item.media_size || 0
+      })) : [];
+      const largestVideos = Array.isArray(hotStorage.largest_video_items) ? hotStorage.largest_video_items.map(item => ({
+        ...item,
+        label: item.title || item.storage_path || item.id || 'hot-video',
+        key: [
+          'Video',
           item.upload_time ? `Uploaded ${formatDateTime(item.upload_time) || item.upload_time}` : ''
         ].filter(Boolean).join(' | '),
         size_bytes: item.media_size || 0
@@ -2149,9 +2159,11 @@
         : '<div class="archive-empty-state">Hot storage remains comfortable. Keep recent class assets in Supabase and continue mirrored archive to R2.</div>';
       listEl.innerHTML = [
         suggestionHtml,
+        renderArchiveRankGroup('Move-to-cold candidates Top 5', cooldownCandidates, 'No low-activity hot-tier activities need cooling yet.'),
         renderArchiveRankGroup('Hottest courses Top 5', largestCourses, 'No course-level hot storage groups are available yet.'),
         renderArchiveRankGroup('Hottest activities Top 5', largestActivities, 'No activity-level hot storage groups are available yet.'),
-        renderArchiveRankGroup('Largest hot files Top 5', largestItems, 'No hot-tier media files are available yet.')
+        renderArchiveRankGroup('Largest hot files Top 5', largestItems, 'No hot-tier media files are available yet.'),
+        renderArchiveRankGroup('Largest hot videos Top 5', largestVideos, 'No hot-tier videos are available yet.')
       ].join('');
     }
 
