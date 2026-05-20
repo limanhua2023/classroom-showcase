@@ -119,6 +119,7 @@ const ARCHIVE_STORAGE_HISTORY_MIN_INTERVAL_MS = Math.max(5 * 60 * 1000, Number(p
 const ARCHIVE_STORAGE_HISTORY_MIN_DELTA_BYTES = Math.max(512 * 1024, Number(process.env.ARCHIVE_STORAGE_HISTORY_MIN_DELTA_BYTES || 8 * 1024 * 1024));
 const LOCAL_BACKUP_STATUS_PATH = 'system/local-backup-status.json';
 const PROJECT_BACKUP_STATUS_PATH = 'system/project-backup-status.json';
+const PROJECT_SECRETS_BACKUP_STATUS_PATH = 'system/project-secrets-backup-status.json';
 const STORAGE_SAFE_DELETE = !/^false$/i.test(String(process.env.STORAGE_SAFE_DELETE || 'true'));
 const ARCHIVE_PERMANENT_DELETE = /^true$/i.test(String(process.env.ARCHIVE_PERMANENT_DELETE || 'false'));
 const OPS_SNAPSHOT_LIST_TTL_MS = 60 * 1000;
@@ -1008,6 +1009,8 @@ let localBackupStatusCache = null;
 let localBackupStatusLoadedAt = 0;
 let projectBackupStatusCache = null;
 let projectBackupStatusLoadedAt = 0;
+let projectSecretsBackupStatusCache = null;
+let projectSecretsBackupStatusLoadedAt = 0;
 const missingMediaExportCache = new Map();
 let googleDriveClientPromise = null;
 let googleDriveDestinationInfoPromise = null;
@@ -2590,6 +2593,80 @@ async function getCachedProjectBackupStatus({ forceRefresh = false } = {}) {
   const status = normalizeProjectBackupStatus(await readJsonDocumentFromPrimaryStorage(PROJECT_BACKUP_STATUS_PATH));
   projectBackupStatusCache = status;
   projectBackupStatusLoadedAt = Date.now();
+  return status ? JSON.parse(JSON.stringify(status)) : null;
+}
+
+function normalizeProjectSecretsBackupStatus(raw = {}) {
+  if (!raw || typeof raw !== 'object') return null;
+  const generatedAt = toIsoStringOrNull(raw.generated_at || raw.last_success_at || raw.finished_at) || null;
+  const lastSuccessAt = toIsoStringOrNull(raw.last_success_at || generatedAt) || null;
+  const startedAt = toIsoStringOrNull(raw.started_at) || null;
+  const finishedAt = toIsoStringOrNull(raw.finished_at || generatedAt) || null;
+  const reportAgeMs = generatedAt ? Math.max(0, Date.now() - new Date(generatedAt).getTime()) : null;
+  const local = raw.local && typeof raw.local === 'object' ? raw.local : {};
+  const cloud = raw.cloud && typeof raw.cloud === 'object' ? raw.cloud : {};
+  const warningLevel = !generatedAt
+    ? 'warning'
+    : String(raw.status || '').trim() === 'error'
+      ? 'critical'
+      : cloud.uploaded === false
+        ? 'warning'
+      : reportAgeMs > 72 * 60 * 60 * 1000
+        ? 'warning'
+        : 'healthy';
+  const warningMessage = !generatedAt
+    ? 'Encrypted secrets backup has not reported yet. Run the secrets backup agent once before relying on a disaster recovery drill.'
+    : String(raw.status || '').trim() === 'error'
+      ? `Latest encrypted secrets backup failed: ${String(raw.error || 'Unknown error')}`
+      : cloud.uploaded === false
+        ? 'Encrypted secrets backup exists locally, but the cloud copy is still missing. Check the R2 credentials and rerun the agent.'
+      : reportAgeMs > 72 * 60 * 60 * 1000
+        ? 'Encrypted secrets backup heartbeat is older than 72 hours. Check the scheduled secrets backup task on the maintainer PC.'
+        : 'Encrypted secrets backups are healthy across local disk and cloud archive.';
+  return {
+    schema_version: String(raw.schema_version || 'classshow-project-secrets-backup-status-v1').trim(),
+    agent: String(raw.agent || 'secrets-backup-agent').trim(),
+    status: String(raw.status || 'ok').trim() || 'ok',
+    generated_at: generatedAt,
+    started_at: startedAt,
+    finished_at: finishedAt,
+    last_success_at: lastSuccessAt,
+    host: String(raw.host || '').trim() || null,
+    duration_ms: Math.max(0, Number(raw.duration_ms || 0)),
+    passphrase_hint: String(raw.passphrase_hint || '').trim() || null,
+    local: {
+      backup_root: String(local.backup_root || '').trim() || null,
+      bundle_path: String(local.bundle_path || '').trim() || null,
+      manifest_path: String(local.manifest_path || '').trim() || null,
+      bundle_size_bytes: Math.max(0, Number(local.bundle_size_bytes || 0)),
+      file_count: Math.max(0, Number(local.file_count || 0)),
+      source_files: Array.isArray(local.source_files)
+        ? local.source_files.map(item => String(item || '').trim()).filter(Boolean)
+        : []
+    },
+    cloud: {
+      provider: String(cloud.provider || '').trim() || null,
+      bucket: String(cloud.bucket || '').trim() || null,
+      object_key: String(cloud.object_key || '').trim() || null,
+      manifest_key: String(cloud.manifest_key || '').trim() || null,
+      uploaded: !!cloud.uploaded
+    },
+    warning: {
+      level: warningLevel,
+      message: warningMessage,
+      report_age_ms: reportAgeMs
+    },
+    error: String(raw.error || '').trim() || null
+  };
+}
+
+async function getCachedProjectSecretsBackupStatus({ forceRefresh = false } = {}) {
+  if (!forceRefresh && projectSecretsBackupStatusCache && (Date.now() - projectSecretsBackupStatusLoadedAt) < ARCHIVE_STORAGE_CACHE_TTL_MS) {
+    return JSON.parse(JSON.stringify(projectSecretsBackupStatusCache));
+  }
+  const status = normalizeProjectSecretsBackupStatus(await readJsonDocumentFromPrimaryStorage(PROJECT_SECRETS_BACKUP_STATUS_PATH));
+  projectSecretsBackupStatusCache = status;
+  projectSecretsBackupStatusLoadedAt = Date.now();
   return status ? JSON.parse(JSON.stringify(status)) : null;
 }
 
@@ -5168,6 +5245,11 @@ app.get('/api/health', async (_req, res) => {
     warning: { level: 'critical', message: String(error?.message || error || 'Project backup status unavailable') },
     error: String(error?.message || error || 'Project backup status unavailable')
   }));
+  health.project_secrets_backup_status = await getCachedProjectSecretsBackupStatus().catch(error => ({
+    status: 'error',
+    warning: { level: 'critical', message: String(error?.message || error || 'Project secrets backup status unavailable') },
+    error: String(error?.message || error || 'Project secrets backup status unavailable')
+  }));
 
   if (!healthClient) {
     health.supabase_ok = false;
@@ -6526,6 +6608,7 @@ async function buildSuperAdminOverview() {
     archive_storage: archiveStorage,
     local_backup_status: localBackupStatus,
     project_backup_status: await getCachedProjectBackupStatus().catch(() => null),
+    project_secrets_backup_status: await getCachedProjectSecretsBackupStatus().catch(() => null),
     health: {
       version: process.env.RENDER_GIT_COMMIT || process.env.npm_package_version || 'local',
       environment: process.env.RENDER ? 'render' : (process.env.NODE_ENV || 'development'),
@@ -9192,6 +9275,38 @@ app.get('/api/qrcode', async (req, res) => {
     const url = await QRCode.toDataURL(text, { width: 300, margin: 2, color: { dark: '#1e293b', light: '#ffffff' } });
     res.json({ url });
   } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.use((error, _req, res, next) => {
+  if (!error) return next();
+
+  if (error instanceof multer.MulterError) {
+    const detail = String(error.message || 'Upload request is invalid.');
+    if (error.code === 'LIMIT_FILE_SIZE') {
+      return res.status(400).json({
+        error: 'Uploaded file is too large.',
+        detail
+      });
+    }
+    return res.status(400).json({
+      error: 'Upload request is invalid.',
+      detail
+    });
+  }
+
+  if (error?.type === 'entity.parse.failed') {
+    return res.status(400).json({
+      error: 'Invalid JSON request body.',
+      detail: 'Check for missing quotes, trailing commas, or malformed JSON before retrying.'
+    });
+  }
+
+  const status = Number(error?.status || error?.statusCode || 500);
+  const detail = String(error?.message || error?.detail || 'Unexpected server error.');
+  return res.status(status >= 400 && status < 600 ? status : 500).json({
+    error: status >= 500 ? 'Unexpected server error.' : 'Request failed.',
+    detail
+  });
 });
 
 app.listen(PORT, '0.0.0.0', () => console.log(`ClassShow running on port ${PORT}`));

@@ -3167,7 +3167,7 @@
           body: fd
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || res.statusText);
+        if (!res.ok) throw new Error(data.error || data.detail || data.message || res.statusText);
         await reloadDashboard();
         toast(
           pendingRepairSubmissionContext === 'quarantine'
@@ -3763,7 +3763,7 @@
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
-          throw new Error(data.error || res.statusText);
+          throw new Error(data.error || data.detail || data.message || res.statusText);
         }
         const blob = await res.blob();
         const contentDisposition = res.headers.get('content-disposition') || '';
@@ -3798,7 +3798,7 @@
         });
         if (!res.ok) {
           const data = await res.json().catch(() => ({}));
-          throw new Error(data.error || res.statusText);
+          throw new Error(data.error || data.detail || data.message || res.statusText);
         }
         const blob = await res.blob();
         const contentDisposition = res.headers.get('content-disposition') || '';
@@ -4147,7 +4147,7 @@
           body: fd
         });
         const data = await res.json().catch(() => ({}));
-        if (!res.ok) throw new Error(data.error || res.statusText);
+        if (!res.ok) throw new Error(data.error || data.detail || data.message || res.statusText);
         input.value = '';
         await reloadDashboard();
         toast(`名单上传成功：${data.imported || 0} 人`, 'success');

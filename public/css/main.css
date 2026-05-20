@@ -2095,3 +2095,44 @@ td img { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; }
   line-height: 1.45;
   word-break: break-all;
 }
+.archive-command-block {
+  margin: 0;
+  padding: 16px 18px;
+  border-radius: 16px;
+  background: rgba(15, 23, 42, 0.92);
+  color: #e2e8f0;
+  font-size: 0.84rem;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.recovery-checklist {
+  display: grid;
+  gap: 12px;
+}
+.recovery-checklist-item {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  padding: 14px 16px;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.82);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+}
+.recovery-checklist-item input {
+  margin-top: 2px;
+  width: 18px;
+  height: 18px;
+}
+.recovery-checklist-item strong {
+  display: block;
+  font-size: 0.92rem;
+}
+.recovery-checklist-item small {
+  display: block;
+  margin-top: 5px;
+  color: var(--text-light);
+  font-size: 0.78rem;
+  line-height: 1.5;
+}

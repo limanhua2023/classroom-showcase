@@ -193,6 +193,19 @@
           <div id="superProjectBackupNote" class="archive-gauge-note">Waiting for the latest code/config snapshot heartbeat...</div>
           <div id="superProjectBackupDetails" class="backup-detail-list"></div>
         </div>
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>Encrypted secrets backup</strong>
+            <div class="archive-group-actions">
+              <span class="storage-meta-chip" id="superProjectSecretsBackupStatusChip">Loading</span>
+              <button class="btn btn-secondary btn-sm" type="button" onclick="openProjectBackupRecoveryGuide()">恢复演练说明</button>
+            </div>
+          </div>
+          <div class="mini-stat-grid" id="superProjectSecretsBackupStats"></div>
+          <div class="storage-meta-row" id="superProjectSecretsBackupMeta"></div>
+          <div id="superProjectSecretsBackupNote" class="archive-gauge-note">Waiting for the latest encrypted secrets heartbeat...</div>
+          <div id="superProjectSecretsBackupDetails" class="backup-detail-list"></div>
+        </div>
       </div>
     </section>
 
@@ -478,6 +491,7 @@
       renderArchiveOpsPanel();
       renderLocalBackupStatusPanel();
       renderProjectBackupStatusPanel();
+      renderProjectSecretsBackupStatusPanel();
       renderCourses();
       renderRegistry();
       renderRecentActivities();
@@ -1062,6 +1076,70 @@
       ].join('');
     }
 
+    function renderProjectSecretsBackupStatusPanel() {
+      const status = overview?.project_secrets_backup_status || null;
+      const chipEl = document.getElementById('superProjectSecretsBackupStatusChip');
+      const statsEl = document.getElementById('superProjectSecretsBackupStats');
+      const metaEl = document.getElementById('superProjectSecretsBackupMeta');
+      const noteEl = document.getElementById('superProjectSecretsBackupNote');
+      const detailsEl = document.getElementById('superProjectSecretsBackupDetails');
+      if (!chipEl || !statsEl || !metaEl || !noteEl || !detailsEl) return;
+
+      const warning = status?.warning || {};
+      const warningLevel = warning.level || 'warning';
+      chipEl.textContent = status ? (warningLevel === 'healthy' ? 'Healthy' : warningLevel === 'critical' ? 'Critical' : 'Warning') : 'Missing';
+      chipEl.style.color = warningLevel === 'critical' ? '#ef4444' : warningLevel === 'warning' ? '#f59e0b' : '#10b981';
+
+      if (!status) {
+        statsEl.innerHTML = '';
+        metaEl.innerHTML = '<span class="storage-meta-chip">system/project-secrets-backup-status.json not found yet</span>';
+        noteEl.className = 'archive-gauge-note warning-warning';
+        noteEl.textContent = 'Run the encrypted secrets backup agent once, then this card will show the latest recovery heartbeat.';
+        detailsEl.innerHTML = '';
+        return;
+      }
+
+      const local = status.local || {};
+      const cloud = status.cloud || {};
+      const bundleName = basenameFromAnyPath(local.bundle_path);
+      const manifestName = basenameFromAnyPath(local.manifest_path || cloud.manifest_key);
+      const objectName = basenameFromAnyPath(cloud.object_key);
+      const sourceFiles = Array.isArray(local.source_files) ? local.source_files : [];
+      statsEl.innerHTML = [
+        ['Files', local.file_count || sourceFiles.length || 0],
+        ['Bundle size', formatBytes(local.bundle_size_bytes || 0)],
+        ['Uploaded', cloud.uploaded ? 'Yes' : 'No'],
+        ['Hint', status.passphrase_hint ? 'Set' : 'Missing']
+      ].map(item => `
+        <div class="mini-stat">
+          <strong>${escapeHtml(item[1])}</strong>
+          <span>${escapeHtml(item[0])}</span>
+        </div>
+      `).join('');
+
+      metaEl.innerHTML = [
+        status.host ? `Host ${status.host}` : '',
+        status.generated_at ? `Heartbeat ${formatDateTime(status.generated_at, { withSeconds: true }) || status.generated_at}` : '',
+        status.last_success_at ? `Last success ${formatDateTime(status.last_success_at, { withSeconds: true }) || status.last_success_at}` : '',
+        cloud.bucket ? `Bucket ${cloud.bucket}` : '',
+        status.passphrase_hint ? `Hint ${status.passphrase_hint}` : 'Hint not set'
+      ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+
+      noteEl.className = `archive-gauge-note warning-${warningLevel}`;
+      noteEl.textContent = warning.message || 'Encrypted secrets backups are healthy across local disk and cloud archive.';
+      detailsEl.innerHTML = [
+        formatBackupDetailRow('Latest bundle', bundleName, { displayValue: local.bundle_path, copyValue: local.bundle_path, copyable: !!local.bundle_path }),
+        formatBackupDetailRow('Local manifest', manifestName, { displayValue: local.manifest_path || cloud.manifest_key, copyValue: local.manifest_path || cloud.manifest_key, copyable: !!(local.manifest_path || cloud.manifest_key) }),
+        formatBackupDetailRow('Cloud object path', objectName, { displayValue: cloud.object_key, copyValue: cloud.object_key, copyable: !!cloud.object_key }),
+        formatBackupDetailRow('Cloud manifest path', manifestName, { displayValue: cloud.manifest_key, copyValue: cloud.manifest_key, copyable: !!cloud.manifest_key }),
+        formatBackupDetailRow('Source files', sourceFiles.length ? `${sourceFiles.length} file(s)` : 'No source files reported', {
+          displayValue: sourceFiles.join(' | '),
+          copyValue: sourceFiles.join('\n'),
+          copyable: sourceFiles.length > 0
+        })
+      ].join('');
+    }
+
     function renderOverviewSummary() {
       const summary = overview?.summary || {};
       document.getElementById('sumCourses').textContent = Number(summary.course_count || 0);
@@ -1072,11 +1150,12 @@
       const health = overview?.health || {};
       const localBackup = overview?.local_backup_status || {};
       const projectBackup = overview?.project_backup_status || {};
+      const projectSecretsBackup = overview?.project_secrets_backup_status || {};
       const hotStorage = overview?.hot_storage || {};
       const registryBackend = superStatus?.registry_backend || '-';
       const registryPath = superStatus?.registry_storage_path || '-';
       document.getElementById('healthLine').textContent =
-        `Version ${health.version || '-'} | Storage ${health.storage_maintenance_mode || '-'} | App key ${health.supabase_app_key_type || '-'} | Maint key ${health.supabase_maintenance_key_type || '-'} | Hot tier ${hotStorage.strategy?.phase || hotStorage.warning?.level || 'unknown'} | Registry ${registryBackend} ${registryPath} | Local backup ${localBackup.warning?.level || localBackup.status || 'missing'} | Project backup ${projectBackup.warning?.level || projectBackup.status || 'missing'}`;
+        `Version ${health.version || '-'} | Storage ${health.storage_maintenance_mode || '-'} | App key ${health.supabase_app_key_type || '-'} | Maint key ${health.supabase_maintenance_key_type || '-'} | Hot tier ${hotStorage.strategy?.phase || hotStorage.warning?.level || 'unknown'} | Registry ${registryBackend} ${registryPath} | Local backup ${localBackup.warning?.level || localBackup.status || 'missing'} | Project backup ${projectBackup.warning?.level || projectBackup.status || 'missing'} | Secrets backup ${projectSecretsBackup.warning?.level || projectSecretsBackup.status || 'missing'}`;
 
       document.getElementById('registryMeta').textContent =
         `版本 ${Number(overview?.registry?.version || 0)} | 最近更新 ${formatDateTime(overview?.registry?.updated_at, { withSeconds: true }) || '-'} | 已停用 ${Number(summary.disabled_course_count || 0)} | 动态骨架 ${Number(summary.scaffold_course_count || 0)}`;

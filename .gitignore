@@ -7,8 +7,13 @@ dist
 .env.local-backup.local
 .env.project-backup
 .env.project-backup.local
+.env.secrets-backup
+.env.secrets-backup.local
+.env.render-backup.local
 local_backup/
 project_backup/
+secrets_backup/
+recovered_secrets/
 ClassShowBackup/
 
 # Generated local/ops reports and temporary diagnostics

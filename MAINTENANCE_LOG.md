@@ -285,3 +285,18 @@
 - Added reusable backup-detail row styles in `public/css/main.css` so backup metadata stays readable without embedding ad-hoc inline layout logic.
 - Extended `PROJECT_BACKUP_AGENT.md` with a `Critical config recovery checklist`, documenting the secrets and environment groups that remain outside the ZIP backup by design (`PROJECT_BACKUP_INCLUDE_SECRETS=false`).
 - Verified the new recovery page and the updated super-admin dashboard scripts via inline-script parsing, and kept backend compatibility unchanged so the existing healthy `project_backup_status` payload can drive both views without a schema migration.
+
+## 2026-05-21 Encrypted Secrets Backup and Recovery Drill Checklist
+- Added an encrypted secrets backup agent using AES-256-GCM and PBKDF2-SHA256. The agent backs up selected local secret files into `secrets_backup/`, uploads encrypted bundles to Cloudflare R2, and reports heartbeat state to `submissions/system/project-secrets-backup-status.json`.
+- Added `scripts/restore-secrets-backup.mjs` so operators can decrypt a secrets bundle into a clean recovery folder during a disaster-recovery drill without placing plaintext secrets in the code ZIP.
+- Added `scripts/install-secrets-backup-task.ps1`, `.env.secrets-backup.example`, and `SECRETS_BACKUP_AGENT.md` to make the encrypted secrets backup repeatable on the maintainer PC.
+- Extended `/api/health` and `/api/super-admin/overview` with `project_secrets_backup_status`, including local bundle path, cloud object path, source files, passphrase hint, freshness warning, and upload status.
+- Rebuilt `public/project-backup-recovery.html` as a combined recovery console for code ZIP snapshots and encrypted secrets bundles, including a browser-persisted recovery drill checklist and copyable restore command.
+- Extended the super-admin console with an `Encrypted secrets backup` status card so code backup health, secrets backup health, local disk backup health, R2 archive health, and Supabase hot-tier pressure can be reviewed from one operations surface.
+
+## 2026-05-21 API Error Normalization and Backup/Security Production Hardening
+- Normalized frontend API error parsing in `public/js/api.js` so responses exposing `detail`, `message`, `hint`, or plain text are surfaced to teachers and admins instead of collapsing into a generic `Bad Request`.
+- Updated teacher-dashboard direct upload/import/export flows to read structured backend error payloads, removing the old blind fallback to `res.statusText`.
+- Added a global Express error middleware in `server.js` to return stable JSON payloads for malformed JSON requests, Multer upload failures, and uncaught request-time exceptions, with `error` plus human-readable `detail`.
+- This closes the recurrent `{\"detail\":\"Bad Request\"}` symptom reported in production by turning opaque 400s into actionable diagnostics and by preserving upstream request context during maintenance operations.
+- Local validation completed with `node --check server.js`, inline-script parsing for `public/teacher-dashboard.html`, `public/super-admin.html`, and `public/project-backup-recovery.html`, plus end-to-end local execution of the project backup agent and scheduled-task installers.

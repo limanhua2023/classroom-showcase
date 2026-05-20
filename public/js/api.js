@@ -1,6 +1,27 @@
 const API = '/api';
 const APP_TIME_ZONE = 'Asia/Bangkok';
 
+async function readApiErrorMessage(res, fallback = '') {
+  const contentType = String(res.headers.get('content-type') || '').toLowerCase();
+  if (contentType.includes('application/json')) {
+    const payload = await res.json().catch(() => ({}));
+    const message =
+      payload?.error
+      || payload?.detail
+      || payload?.message
+      || payload?.hint
+      || fallback
+      || res.statusText
+      || 'Request failed';
+    if (payload?.error && payload?.detail && payload.detail !== payload.error) {
+      return `${payload.error}: ${payload.detail}`;
+    }
+    return message;
+  }
+  const text = await res.text().catch(() => '');
+  return text || fallback || res.statusText || 'Request failed';
+}
+
 async function api(path, opts = {}) {
   const headers = { 'Content-Type': 'application/json', ...opts.headers };
   const teacherToken = sessionStorage.getItem('teacherToken');
@@ -18,8 +39,7 @@ async function api(path, opts = {}) {
 
   const res = await fetch(API + path, { ...opts, headers });
   if (!res.ok) {
-    const error = await res.json().catch(() => ({}));
-    throw new Error(error.error || res.statusText);
+    throw new Error(await readApiErrorMessage(res));
   }
   if (res.headers.get('content-type')?.includes('text/csv')) return res.blob();
   return res.json();
@@ -40,8 +60,7 @@ async function uploadMedia(file) {
 
   const res = await fetch(API + '/upload', { method: 'POST', body: fd, headers });
   if (!res.ok) {
-    const error = await res.json().catch(() => ({}));
-    throw new Error(error.error || '上传失败');
+    throw new Error(await readApiErrorMessage(res, '上传失败'));
   }
   return res.json();
 }

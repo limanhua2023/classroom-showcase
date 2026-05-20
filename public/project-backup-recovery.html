@@ -10,34 +10,35 @@
   <header class="topbar">
     <a class="topbar-logo" href="index.html">Class<span>Show</span></a>
     <div class="topbar-right">
-      <button class="btn btn-secondary btn-sm" onclick="location.href='super-admin.html'">返回统一课程管理页</button>
-      <button class="btn btn-secondary btn-sm" onclick="location.href='index.html'">总门户</button>
+      <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='super-admin.html'">返回统一课程管理页</button>
+      <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='index.html'">总门户</button>
     </div>
   </header>
 
   <main class="container">
     <section class="course-hero">
       <div class="course-hero-copy">
-        <div class="brand-kicker">PROJECT BACKUP RECOVERY</div>
+        <div class="brand-kicker">RECOVERY DRILL</div>
         <h1>项目备份恢复演练</h1>
-        <p>这里统一查看最近一次代码/配置快照、本地与云端对象路径，以及真正发生系统崩溃、电脑损坏或病毒破坏时的恢复步骤。</p>
+        <p>这里统一查看最近一次代码 ZIP、加密 secrets bundle、本地路径、云端对象路径和恢复清单。目标不是“看起来有备份”，而是确保系统崩溃、电脑损坏或病毒破坏后可以按步骤恢复。</p>
         <div class="course-hero-actions">
-          <button class="btn btn-primary" type="button" onclick="loadRecoveryStatus(true)">刷新状态</button>
-          <button class="btn btn-secondary" type="button" onclick="copyCloudObjectPath()">复制云端 ZIP 路径</button>
+          <button class="btn btn-primary" type="button" onclick="loadRecoveryOverview(true)">刷新状态</button>
+          <button class="btn btn-secondary" type="button" onclick="copyLatestCodeCloudPath()">复制代码云端路径</button>
+          <button class="btn btn-secondary" type="button" onclick="copyLatestSecretsCloudPath()">复制 secrets 云端路径</button>
         </div>
       </div>
       <div class="course-scoreboard" aria-label="恢复摘要">
-        <div><strong id="recoveryStatusValue">-</strong><span>状态</span></div>
-        <div><strong id="recoveryZipSize">0 B</strong><span>ZIP 大小</span></div>
-        <div><strong id="recoveryFileCount">0</strong><span>文件数</span></div>
-        <div><strong id="recoveryUploaded">-</strong><span>云端上传</span></div>
+        <div><strong id="recoveryCodeStatusValue">-</strong><span>代码备份</span></div>
+        <div><strong id="recoveryCodeZipSize">0 B</strong><span>代码 ZIP</span></div>
+        <div><strong id="recoverySecretsStatusValue">-</strong><span>Secrets 备份</span></div>
+        <div><strong id="recoverySecretsBundleSize">0 B</strong><span>Secrets bundle</span></div>
       </div>
     </section>
 
     <section class="course-entry-panel" id="recoveryGatePanel">
       <div>
         <strong>需要超级管理员登录态</strong>
-        <span id="recoveryGateHint">正在检查当前登录状态...</span>
+        <span id="recoveryGateHint">正在检查当前超级管理员登录状态...</span>
       </div>
       <div class="course-entry-actions">
         <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='super-admin.html'">前往统一课程管理页登录</button>
@@ -46,37 +47,45 @@
 
     <section class="course-control-strip">
       <div>
-        <strong>最近一次快照</strong>
-        <span id="recoveryHeadline">等待读取 project backup heartbeat...</span>
+        <strong>最近一次恢复演练基线</strong>
+        <span id="recoveryHeadline">等待读取项目级与 secrets 级 heartbeat...</span>
       </div>
       <div class="course-card-actions">
-        <button class="btn btn-secondary btn-sm" type="button" onclick="copyLocalZipPath()">复制本地 ZIP 路径</button>
-        <button class="btn btn-secondary btn-sm" type="button" onclick="copyManifestPath()">复制 manifest 路径</button>
+        <button class="btn btn-secondary btn-sm" type="button" onclick="copyLatestCodeLocalPath()">复制本地代码 ZIP</button>
+        <button class="btn btn-secondary btn-sm" type="button" onclick="copyLatestSecretsLocalPath()">复制本地 secrets bundle</button>
+        <button class="btn btn-secondary btn-sm" type="button" onclick="copyRestoreCommand()">复制恢复命令</button>
+        <button class="btn btn-secondary btn-sm" type="button" onclick="resetRecoveryChecklist()">重置验收清单</button>
       </div>
     </section>
 
     <section class="course-portal">
       <div class="course-portal-head">
         <div>
-          <div class="brand-kicker course-kicker">SNAPSHOT PATHS</div>
-          <h2>最新备份文件与云端对象</h2>
-          <p>先确认“本地 ZIP + 云端 ZIP + 云端 manifest”都存在，再做恢复演练。这样真正出问题时不会临时翻找路径。</p>
+          <div class="brand-kicker course-kicker">LATEST SNAPSHOTS</div>
+          <h2>最新本地与云端对象</h2>
+          <p>先确认“本地对象 + 云端对象 + manifest”都在，再做恢复。代码 ZIP 和 secrets bundle 缺一项，都不能算真正可恢复。</p>
         </div>
       </div>
       <div class="archive-ops-grid">
         <div class="archive-ops-card">
           <div class="archive-ops-head">
-            <strong>本地快照</strong>
-            <span class="storage-meta-chip" id="recoveryLocalHostChip">Host -</span>
+            <strong>项目代码备份</strong>
+            <span class="storage-meta-chip" id="recoveryCodeHostChip">Host -</span>
           </div>
-          <div id="recoveryLocalDetails" class="backup-detail-list"></div>
+          <div class="mini-stat-grid" id="recoveryCodeStats"></div>
+          <div class="storage-meta-row" id="recoveryCodeMeta"></div>
+          <div id="recoveryCodeNote" class="archive-gauge-note">等待代码备份 heartbeat...</div>
+          <div id="recoveryCodeDetails" class="backup-detail-list"></div>
         </div>
         <div class="archive-ops-card">
           <div class="archive-ops-head">
-            <strong>云端归档</strong>
-            <span class="storage-meta-chip" id="recoveryCloudBucketChip">Bucket -</span>
+            <strong>加密 secrets 备份</strong>
+            <span class="storage-meta-chip" id="recoverySecretsHostChip">Host -</span>
           </div>
-          <div id="recoveryCloudDetails" class="backup-detail-list"></div>
+          <div class="mini-stat-grid" id="recoverySecretsStats"></div>
+          <div class="storage-meta-row" id="recoverySecretsMeta"></div>
+          <div id="recoverySecretsNote" class="archive-gauge-note">等待 secrets 备份 heartbeat...</div>
+          <div id="recoverySecretsDetails" class="backup-detail-list"></div>
         </div>
       </div>
     </section>
@@ -84,28 +93,29 @@
     <section class="course-portal">
       <div class="course-portal-head">
         <div>
-          <div class="brand-kicker course-kicker">RECOVERY DRILL</div>
-          <h2>标准恢复步骤</h2>
-          <p>按这个顺序恢复，可以把“代码仓库、运行配置、云端对象存储、备份代理”四条链路重新连起来。</p>
+          <div class="brand-kicker course-kicker">RESTORE COMMAND</div>
+          <h2>推荐恢复命令</h2>
+          <p>这条命令只负责把加密 bundle 恢复成配置文件，不会自动泄露 secrets。你需要自己提供 passphrase。</p>
         </div>
       </div>
-      <div class="course-grid">
-        <article class="course-card">
-          <h3>1. 取回代码 ZIP</h3>
-          <p>优先使用本机 <code>project_backup</code> 中最近的 ZIP；如果电脑损坏，则从 R2 的 <code>classshow-system-backups/codebase/...</code> 取回同名 ZIP 和 manifest。</p>
-        </article>
-        <article class="course-card">
-          <h3>2. 恢复到干净目录</h3>
-          <p>在新电脑或干净目录解压 ZIP，不直接覆盖未知环境。恢复后先检查 <code>server.js</code>、<code>public/</code>、<code>scripts/</code>、<code>data/</code> 是否齐全。</p>
-        </article>
-        <article class="course-card">
-          <h3>3. 单独恢复关键配置</h3>
-          <p>默认项目快照不会打包 secret 文件，所以需要手动补回 Render 环境变量、Supabase Secret key、Cloudflare R2 Access Key，以及本地两个备份代理的 <code>.env</code> 文件。</p>
-        </article>
-        <article class="course-card">
-          <h3>4. 重新部署并验收</h3>
-          <p>执行 <code>npm install</code> 后重新部署 Render，检查 <code>/api/health</code>、教师后台、超级管理员页、R2 归档、Supabase 热层和本地备份代理状态是否都恢复健康。</p>
-        </article>
+      <div class="archive-ops-card">
+        <pre class="archive-command-block" id="recoveryRestoreCommand">等待生成恢复命令...</pre>
+        <div class="course-card-actions" style="margin-top: 12px;">
+          <button class="btn btn-secondary btn-sm" type="button" onclick="copyRestoreCommand()">复制恢复命令</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">DRILL CHECKLIST</div>
+          <h2>恢复演练一键验收清单</h2>
+          <p>建议至少每学期做一次完整恢复演练。勾选状态会保存在当前浏览器，方便你分阶段验收。</p>
+        </div>
+      </div>
+      <div class="archive-ops-card">
+        <div id="recoveryChecklist" class="recovery-checklist"></div>
       </div>
     </section>
 
@@ -113,26 +123,26 @@
       <div class="course-portal-head">
         <div>
           <div class="brand-kicker course-kicker">CRITICAL CONFIG</div>
-          <h2>关键配置单独恢复说明</h2>
-          <p>这些内容默认不放进 ZIP，必须单独保管；项目代码恢复成功，不代表密钥和环境变量会自动恢复。</p>
+          <h2>关键配置与恢复说明</h2>
+          <p>代码 ZIP 默认不包含 secrets，secrets bundle 也需要 passphrase 才能恢复。因此要把“恢复路径”说清楚，而不是假设它自动回来。</p>
         </div>
       </div>
-      <div class="archive-suggestion-list">
+      <div class="archive-suggestion-list" id="recoveryConfigPanels">
         <article class="archive-suggestion-card level-warning">
           <strong>Render 生产环境变量</strong>
-          <p>至少恢复：<code>APP_SECRET</code>、<code>SUPER_ADMIN_PASSWORD</code>、<code>SUPABASE_URL</code>、<code>SUPABASE_ANON_KEY</code>、<code>SUPABASE_SERVICE_ROLE_KEY</code>、归档/R2 相关变量、视频转码变量。</p>
+          <p>至少恢复：<code>APP_SECRET</code>、<code>SUPER_ADMIN_PASSWORD</code>、<code>SUPABASE_URL</code>、<code>SUPABASE_ANON_KEY</code>、<code>SUPABASE_SERVICE_ROLE_KEY</code>、R2 归档变量、视频转码变量。</p>
         </article>
         <article class="archive-suggestion-card level-warning">
           <strong>Supabase 高权限密钥</strong>
-          <p>使用 <code>sb_secret_...</code> 作为后端高权限 key；不要把 <code>sb_publishable_...</code> 当成恢复用密钥。若怀疑泄露，应先旋转再回填。</p>
+          <p>恢复时使用 <code>sb_secret_...</code> 作为后端高权限 key，不要把 <code>sb_publishable_...</code> 当成恢复密钥。怀疑泄露时先旋转再回填。</p>
         </article>
         <article class="archive-suggestion-card level-warning">
           <strong>Cloudflare R2 S3 凭证</strong>
-          <p>恢复时需要：bucket 名、endpoint、Access Key ID、Secret Access Key。不要把通用 API token 文本误当成 S3 Access Key 使用。</p>
+          <p>恢复时需要：bucket 名称、endpoint、Access Key ID、Secret Access Key。不要把通用 API token 当成 S3 Access Key 使用。</p>
         </article>
         <article class="archive-suggestion-card level-info">
           <strong>本地备份代理配置</strong>
-          <p>恢复本机后，重新检查 <code>.env.local-backup.local</code> 与 <code>.env.project-backup.local</code>，并重新安装计划任务，确保本地镜像和项目级快照会继续自动运行。</p>
+          <p>恢复新电脑后，重新检查 <code>.env.local-backup.local</code>、<code>.env.project-backup.local</code>、<code>.env.secrets-backup.local</code>，并重新安装 Windows 计划任务。</p>
         </article>
       </div>
     </section>
@@ -140,6 +150,50 @@
 
   <script src="js/api.js"></script>
   <script>
+    const RECOVERY_CHECKLIST_STORAGE_KEY = 'classshow_project_recovery_checklist_v2';
+    const RECOVERY_CHECKLIST_ITEMS = [
+      {
+        id: 'verify-code-zip',
+        title: '确认最新代码 ZIP 存在',
+        description: '检查本地 ZIP 或 R2 云端 ZIP 至少有一份可用，并确认文件名与最近 heartbeat 一致。'
+      },
+      {
+        id: 'verify-secrets-bundle',
+        title: '确认加密 secrets bundle 存在',
+        description: '检查本地 bundle、manifest 和 R2 对象路径是否都能找到，避免恢复时临时找不到 secrets 备份。'
+      },
+      {
+        id: 'prepare-clean-folder',
+        title: '准备干净恢复目录',
+        description: '不要直接覆盖旧仓库；先在新目录或新电脑里恢复 ZIP，再做安装和配置回填。'
+      },
+      {
+        id: 'restore-code',
+        title: '恢复代码 ZIP',
+        description: '解压代码 ZIP，检查 server.js、public/、scripts/、data/、package.json 是否齐全。'
+      },
+      {
+        id: 'restore-secrets',
+        title: '恢复加密 secrets bundle',
+        description: '执行 restore-secrets-backup.mjs，并用你自己保管的 passphrase 把 env 文件恢复到本地。'
+      },
+      {
+        id: 'restore-render-env',
+        title: '回填 Render / Supabase / R2 关键凭证',
+        description: '确认 APP_SECRET、SUPER_ADMIN_PASSWORD、SUPABASE_URL、sb_secret、R2 Access Key 等已恢复。'
+      },
+      {
+        id: 'reinstall-agents',
+        title: '重装三个备份代理',
+        description: '重装 local backup、project backup、secrets backup 的 Windows 计划任务，恢复持续备份。'
+      },
+      {
+        id: 'verify-system',
+        title: '完成系统验收',
+        description: '检查 /api/health、教师后台、超级管理员页、R2 归档、Supabase 热层和本地备份状态全部恢复正常。'
+      }
+    ];
+
     let recoveryOverview = null;
 
     init();
@@ -151,20 +205,60 @@
         return;
       }
       document.getElementById('recoveryGatePanel').style.display = 'none';
-      await loadRecoveryStatus(false);
+      renderRecoveryChecklist();
+      await loadRecoveryOverview(false);
     }
 
-    async function loadRecoveryStatus(forceRefresh) {
+    async function loadRecoveryOverview(forceRefresh) {
       try {
         recoveryOverview = await api('/super-admin/overview');
         document.getElementById('recoveryGatePanel').style.display = 'none';
         renderRecoveryStatus();
-        if (forceRefresh) toast('已刷新项目备份恢复状态', 'success');
+        if (forceRefresh) toast('已刷新恢复演练状态', 'success');
       } catch (error) {
         document.getElementById('recoveryGatePanel').style.display = '';
         document.getElementById('recoveryGateHint').textContent = `读取失败：${error.message}`;
         toast(`读取恢复状态失败：${error.message}`, 'error');
       }
+    }
+
+    function getChecklistState() {
+      try {
+        return JSON.parse(localStorage.getItem(RECOVERY_CHECKLIST_STORAGE_KEY) || '{}');
+      } catch {
+        return {};
+      }
+    }
+
+    function setChecklistState(state) {
+      localStorage.setItem(RECOVERY_CHECKLIST_STORAGE_KEY, JSON.stringify(state));
+    }
+
+    function resetRecoveryChecklist() {
+      localStorage.removeItem(RECOVERY_CHECKLIST_STORAGE_KEY);
+      renderRecoveryChecklist();
+      toast('已重置恢复演练清单', 'success');
+    }
+
+    function renderRecoveryChecklist() {
+      const root = document.getElementById('recoveryChecklist');
+      if (!root) return;
+      const state = getChecklistState();
+      root.innerHTML = RECOVERY_CHECKLIST_ITEMS.map(item => `
+        <label class="recovery-checklist-item">
+          <input type="checkbox" ${state[item.id] ? 'checked' : ''} onchange="toggleRecoveryChecklistItem('${item.id}', this.checked)">
+          <div>
+            <strong>${escapeHtml(item.title)}</strong>
+            <small>${escapeHtml(item.description)}</small>
+          </div>
+        </label>
+      `).join('');
+    }
+
+    function toggleRecoveryChecklistItem(itemId, checked) {
+      const state = getChecklistState();
+      state[itemId] = !!checked;
+      setChecklistState(state);
     }
 
     function basenameFromAnyPath(value) {
@@ -175,93 +269,178 @@
       return parts.length ? parts[parts.length - 1] : normalized;
     }
 
-    function formatDetailRow(label, value, copyValue) {
-      const source = String(value || '').trim();
-      if (!source) {
-        return `
-          <div class="backup-detail-row">
-            <div>
-              <strong>${escapeHtml(label)}</strong>
-              <small>未记录</small>
-            </div>
-          </div>
-        `;
-      }
+    function formatBackupDetailRow(label, titleValue, options = {}) {
+      const displayValue = String(options.displayValue || '').trim();
+      const copyValue = String(options.copyValue || displayValue).trim();
+      const copyable = !!options.copyable;
+      const titleText = titleValue ? escapeHtml(String(titleValue)) : '未记录';
+      const subtitleText = displayValue ? escapeHtml(displayValue) : '未记录';
       return `
         <div class="backup-detail-row">
           <div>
             <strong>${escapeHtml(label)}</strong>
-            <small>${escapeHtml(source)}</small>
+            <small>${titleText}</small>
+            <small>${subtitleText}</small>
           </div>
-          <button class="btn btn-secondary btn-sm archive-object-action" type="button" onclick="copyValueText('${encodeURIComponent(copyValue || source)}')">复制</button>
+          ${copyable ? `<button class="btn btn-secondary btn-sm archive-object-action" type="button" onclick="copyValueText('${encodeURIComponent(copyValue)}')">复制</button>` : ''}
         </div>
       `;
     }
 
     function copyValueText(encodedValue) {
       const value = decodeURIComponent(String(encodedValue || ''));
+      if (!value) return toast('当前没有可复制的值', 'error');
       navigator.clipboard.writeText(value)
         .then(() => toast('已复制', 'success'))
         .catch(() => toast('复制失败，请手动复制', 'error'));
     }
 
-    function copyLocalZipPath() {
-      const value = recoveryOverview?.project_backup_status?.local?.zip_path || '';
-      if (!value) return toast('当前没有本地 ZIP 路径', 'error');
+    function getCodeStatus() {
+      return recoveryOverview?.project_backup_status || null;
+    }
+
+    function getSecretsStatus() {
+      return recoveryOverview?.project_secrets_backup_status || null;
+    }
+
+    function copyLatestCodeLocalPath() {
+      const value = getCodeStatus()?.local?.zip_path || '';
+      if (!value) return toast('当前没有本地代码 ZIP 路径', 'error');
       copyValueText(encodeURIComponent(value));
     }
 
-    function copyManifestPath() {
-      const value = recoveryOverview?.project_backup_status?.cloud?.manifest_key
-        || recoveryOverview?.project_backup_status?.local?.manifest_path
-        || '';
-      if (!value) return toast('当前没有 manifest 路径', 'error');
+    function copyLatestCodeCloudPath() {
+      const value = getCodeStatus()?.cloud?.object_key || '';
+      if (!value) return toast('当前没有代码云端路径', 'error');
       copyValueText(encodeURIComponent(value));
     }
 
-    function copyCloudObjectPath() {
-      const value = recoveryOverview?.project_backup_status?.cloud?.object_key || '';
-      if (!value) return toast('当前没有云端 ZIP 路径', 'error');
+    function copyLatestSecretsLocalPath() {
+      const value = getSecretsStatus()?.local?.bundle_path || '';
+      if (!value) return toast('当前没有本地 secrets bundle 路径', 'error');
       copyValueText(encodeURIComponent(value));
+    }
+
+    function copyLatestSecretsCloudPath() {
+      const value = getSecretsStatus()?.cloud?.object_key || '';
+      if (!value) return toast('当前没有 secrets 云端路径', 'error');
+      copyValueText(encodeURIComponent(value));
+    }
+
+    function buildRestoreCommand() {
+      const secretsStatus = getSecretsStatus();
+      const localBundle = secretsStatus?.local?.bundle_path || 'secrets_backup\\snapshots\\<timestamp>\\classshow_secrets_backup_<timestamp>.bundle.json';
+      return `node scripts/restore-secrets-backup.mjs --input "${localBundle}" --output ".\\\\recovered_secrets" --passphrase "<your-passphrase>"`;
+    }
+
+    function copyRestoreCommand() {
+      copyValueText(encodeURIComponent(buildRestoreCommand()));
+    }
+
+    function renderStatusChipText(status) {
+      if (!status) return 'Missing';
+      const level = status.warning?.level || status.status || 'warning';
+      if (level === 'healthy' || level === 'ok') return 'Healthy';
+      if (level === 'critical' || level === 'error') return 'Critical';
+      return 'Warning';
     }
 
     function renderRecoveryStatus() {
-      const status = recoveryOverview?.project_backup_status || null;
-      const local = status?.local || {};
-      const cloud = status?.cloud || {};
-      const warning = status?.warning || {};
-      const statusLabel = !status
-        ? 'Missing'
-        : warning.level === 'critical'
-          ? 'Critical'
-          : warning.level === 'warning'
-            ? 'Warning'
-            : 'Healthy';
+      const codeStatus = getCodeStatus();
+      const secretsStatus = getSecretsStatus();
 
-      document.getElementById('recoveryStatusValue').textContent = statusLabel;
-      document.getElementById('recoveryZipSize').textContent = formatBytes(local.zip_size_bytes || 0);
-      document.getElementById('recoveryFileCount').textContent = Number(local.file_count || 0);
-      document.getElementById('recoveryUploaded').textContent = cloud.uploaded ? 'Yes' : 'No';
-      document.getElementById('recoveryHeadline').textContent = status
-        ? `最近快照 ${basenameFromAnyPath(local.zip_path || cloud.object_key)} | ${formatDateTime(status.generated_at, { withSeconds: true }) || status.generated_at}`
-        : '还没有可用的项目级备份心跳，请先运行本地 project backup agent。';
+      const codeLocal = codeStatus?.local || {};
+      const codeCloud = codeStatus?.cloud || {};
+      const codeWarning = codeStatus?.warning || {};
+      const codeWarningLevel = codeWarning.level || 'warning';
+      const codeLabel = renderStatusChipText(codeStatus);
 
-      document.getElementById('recoveryLocalHostChip').textContent = `Host ${status?.host || '-'}`;
-      document.getElementById('recoveryCloudBucketChip').textContent = `Bucket ${cloud.bucket || '-'}`;
+      const secretsLocal = secretsStatus?.local || {};
+      const secretsCloud = secretsStatus?.cloud || {};
+      const secretsWarning = secretsStatus?.warning || {};
+      const secretsWarningLevel = secretsWarning.level || 'warning';
+      const secretsLabel = renderStatusChipText(secretsStatus);
+      const sourceFiles = Array.isArray(secretsLocal.source_files) ? secretsLocal.source_files : [];
 
-      document.getElementById('recoveryLocalDetails').innerHTML = [
-        formatDetailRow('本地 ZIP 文件', local.zip_path, local.zip_path),
-        formatDetailRow('本地 manifest', local.manifest_path, local.manifest_path),
-        formatDetailRow('本地备份目录', local.backup_root, local.backup_root),
-        formatDetailRow('最近一次 commit', `${status?.git_branch || '-'} @ ${status?.git_commit || '-'}`, status?.git_commit || '')
+      document.getElementById('recoveryCodeStatusValue').textContent = codeLabel;
+      document.getElementById('recoveryCodeZipSize').textContent = formatBytes(codeLocal.zip_size_bytes || 0);
+      document.getElementById('recoverySecretsStatusValue').textContent = secretsLabel;
+      document.getElementById('recoverySecretsBundleSize').textContent = formatBytes(secretsLocal.bundle_size_bytes || 0);
+
+      const codeName = basenameFromAnyPath(codeLocal.zip_path || codeCloud.object_key);
+      const secretsName = basenameFromAnyPath(secretsLocal.bundle_path || secretsCloud.object_key);
+      document.getElementById('recoveryHeadline').textContent =
+        `代码 ${codeName || '未记录'} | secrets ${secretsName || '未记录'} | 最近刷新 ${formatDateTime(new Date(), { withSeconds: true })}`;
+
+      document.getElementById('recoveryCodeHostChip').textContent = `Host ${codeStatus?.host || '-'}`;
+      document.getElementById('recoverySecretsHostChip').textContent = `Host ${secretsStatus?.host || '-'}`;
+
+      document.getElementById('recoveryCodeStats').innerHTML = [
+        ['Files', Number(codeLocal.file_count || 0)],
+        ['ZIP size', formatBytes(codeLocal.zip_size_bytes || 0)],
+        ['Cloud upload', codeCloud.uploaded ? 'Yes' : 'No'],
+        ['Branch', codeStatus?.git_branch || '-']
+      ].map(item => `
+        <div class="mini-stat">
+          <strong>${escapeHtml(item[1])}</strong>
+          <span>${escapeHtml(item[0])}</span>
+        </div>
+      `).join('');
+
+      document.getElementById('recoverySecretsStats').innerHTML = [
+        ['Files', Number(secretsLocal.file_count || sourceFiles.length || 0)],
+        ['Bundle size', formatBytes(secretsLocal.bundle_size_bytes || 0)],
+        ['Cloud upload', secretsCloud.uploaded ? 'Yes' : 'No'],
+        ['Hint', secretsStatus?.passphrase_hint ? 'Set' : 'Missing']
+      ].map(item => `
+        <div class="mini-stat">
+          <strong>${escapeHtml(item[1])}</strong>
+          <span>${escapeHtml(item[0])}</span>
+        </div>
+      `).join('');
+
+      document.getElementById('recoveryCodeMeta').innerHTML = [
+        codeStatus?.generated_at ? `Heartbeat ${formatDateTime(codeStatus.generated_at, { withSeconds: true }) || codeStatus.generated_at}` : '',
+        codeStatus?.last_success_at ? `Last success ${formatDateTime(codeStatus.last_success_at, { withSeconds: true }) || codeStatus.last_success_at}` : '',
+        codeStatus?.git_commit ? `Commit ${String(codeStatus.git_commit).slice(0, 10)}` : '',
+        codeCloud.bucket ? `Bucket ${codeCloud.bucket}` : ''
+      ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+
+      document.getElementById('recoverySecretsMeta').innerHTML = [
+        secretsStatus?.generated_at ? `Heartbeat ${formatDateTime(secretsStatus.generated_at, { withSeconds: true }) || secretsStatus.generated_at}` : '',
+        secretsStatus?.last_success_at ? `Last success ${formatDateTime(secretsStatus.last_success_at, { withSeconds: true }) || secretsStatus.last_success_at}` : '',
+        secretsCloud.bucket ? `Bucket ${secretsCloud.bucket}` : '',
+        secretsStatus?.passphrase_hint ? `Hint ${secretsStatus.passphrase_hint}` : 'Hint not set'
+      ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+
+      const codeNoteEl = document.getElementById('recoveryCodeNote');
+      codeNoteEl.className = `archive-gauge-note warning-${codeWarningLevel}`;
+      codeNoteEl.textContent = codeWarning.message || '代码备份链路健康，可用于恢复演练。';
+
+      const secretsNoteEl = document.getElementById('recoverySecretsNote');
+      secretsNoteEl.className = `archive-gauge-note warning-${secretsWarningLevel}`;
+      secretsNoteEl.textContent = secretsWarning.message || '加密 secrets 备份链路健康，可用于恢复演练。';
+
+      document.getElementById('recoveryCodeDetails').innerHTML = [
+        formatBackupDetailRow('最新代码 ZIP', basenameFromAnyPath(codeLocal.zip_path), { displayValue: codeLocal.zip_path, copyValue: codeLocal.zip_path, copyable: !!codeLocal.zip_path }),
+        formatBackupDetailRow('本地 manifest', basenameFromAnyPath(codeLocal.manifest_path || codeCloud.manifest_key), { displayValue: codeLocal.manifest_path || codeCloud.manifest_key, copyValue: codeLocal.manifest_path || codeCloud.manifest_key, copyable: !!(codeLocal.manifest_path || codeCloud.manifest_key) }),
+        formatBackupDetailRow('云端 ZIP 对象', basenameFromAnyPath(codeCloud.object_key), { displayValue: codeCloud.object_key, copyValue: codeCloud.object_key, copyable: !!codeCloud.object_key }),
+        formatBackupDetailRow('云端 manifest 对象', basenameFromAnyPath(codeCloud.manifest_key), { displayValue: codeCloud.manifest_key, copyValue: codeCloud.manifest_key, copyable: !!codeCloud.manifest_key })
       ].join('');
 
-      document.getElementById('recoveryCloudDetails').innerHTML = [
-        formatDetailRow('云端 ZIP 对象', cloud.object_key, cloud.object_key),
-        formatDetailRow('云端 manifest 对象', cloud.manifest_key, cloud.manifest_key),
-        formatDetailRow('云端 bucket', cloud.bucket, cloud.bucket),
-        formatDetailRow('上传状态', cloud.uploaded ? 'uploaded' : 'missing', cloud.uploaded ? 'uploaded' : 'missing')
+      document.getElementById('recoverySecretsDetails').innerHTML = [
+        formatBackupDetailRow('最新 bundle', basenameFromAnyPath(secretsLocal.bundle_path), { displayValue: secretsLocal.bundle_path, copyValue: secretsLocal.bundle_path, copyable: !!secretsLocal.bundle_path }),
+        formatBackupDetailRow('本地 manifest', basenameFromAnyPath(secretsLocal.manifest_path || secretsCloud.manifest_key), { displayValue: secretsLocal.manifest_path || secretsCloud.manifest_key, copyValue: secretsLocal.manifest_path || secretsCloud.manifest_key, copyable: !!(secretsLocal.manifest_path || secretsCloud.manifest_key) }),
+        formatBackupDetailRow('云端 bundle 对象', basenameFromAnyPath(secretsCloud.object_key), { displayValue: secretsCloud.object_key, copyValue: secretsCloud.object_key, copyable: !!secretsCloud.object_key }),
+        formatBackupDetailRow('云端 manifest 对象', basenameFromAnyPath(secretsCloud.manifest_key), { displayValue: secretsCloud.manifest_key, copyValue: secretsCloud.manifest_key, copyable: !!secretsCloud.manifest_key }),
+        formatBackupDetailRow('来源文件', sourceFiles.length ? `${sourceFiles.length} file(s)` : '未上报', {
+          displayValue: sourceFiles.join(' | '),
+          copyValue: sourceFiles.join('\n'),
+          copyable: sourceFiles.length > 0
+        })
       ].join('');
+
+      document.getElementById('recoveryRestoreCommand').textContent = buildRestoreCommand();
     }
   </script>
 </body>

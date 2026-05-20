@@ -74,8 +74,13 @@ Health heartbeat:
 
 1. Download the latest ZIP from local disk or R2.
 2. Restore the repository snapshot to a clean folder.
-3. Restore `.env` / secret files if they were intentionally included.
+3. Restore `.env` / secret files if they were intentionally included, or restore them from the encrypted secrets bundle.
 4. Redeploy Render and reconnect local backup agents if needed.
+
+For the combined drill workflow, use:
+
+- `public/project-backup-recovery.html`
+- `SECRETS_BACKUP_AGENT.md`
 
 ## Critical config recovery checklist
 
