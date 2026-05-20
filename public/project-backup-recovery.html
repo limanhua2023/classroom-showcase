@@ -287,6 +287,23 @@
       `;
     }
 
+    function summarizeSecretsCoverage(status) {
+      const coverage = status?.coverage || {};
+      const configuredSourceFiles = Array.isArray(coverage.configured_source_files) ? coverage.configured_source_files : [];
+      const foundSourceFiles = Array.isArray(coverage.found_source_files) ? coverage.found_source_files : [];
+      const missingSourceFiles = Array.isArray(coverage.missing_source_files) ? coverage.missing_source_files : [];
+      const sourceFileDetails = Array.isArray(coverage.source_file_details) ? coverage.source_file_details : [];
+      const incompleteSourceFiles = sourceFileDetails.filter(item =>
+        Number(item?.empty_assignment_count || 0) > 0 || Number(item?.placeholder_assignment_count || 0) > 0
+      );
+      return {
+        configuredSourceFiles,
+        foundSourceFiles,
+        missingSourceFiles,
+        incompleteSourceFiles
+      };
+    }
+
     function copyValueText(encodedValue) {
       const value = decodeURIComponent(String(encodedValue || ''));
       if (!value) return toast('当前没有可复制的值', 'error');
@@ -361,6 +378,7 @@
       const secretsWarningLevel = secretsWarning.level || 'warning';
       const secretsLabel = renderStatusChipText(secretsStatus);
       const sourceFiles = Array.isArray(secretsLocal.source_files) ? secretsLocal.source_files : [];
+      const secretsCoverage = summarizeSecretsCoverage(secretsStatus);
 
       document.getElementById('recoveryCodeStatusValue').textContent = codeLabel;
       document.getElementById('recoveryCodeZipSize').textContent = formatBytes(codeLocal.zip_size_bytes || 0);
@@ -433,13 +451,31 @@
         formatBackupDetailRow('本地 manifest', basenameFromAnyPath(secretsLocal.manifest_path || secretsCloud.manifest_key), { displayValue: secretsLocal.manifest_path || secretsCloud.manifest_key, copyValue: secretsLocal.manifest_path || secretsCloud.manifest_key, copyable: !!(secretsLocal.manifest_path || secretsCloud.manifest_key) }),
         formatBackupDetailRow('云端 bundle 对象', basenameFromAnyPath(secretsCloud.object_key), { displayValue: secretsCloud.object_key, copyValue: secretsCloud.object_key, copyable: !!secretsCloud.object_key }),
         formatBackupDetailRow('云端 manifest 对象', basenameFromAnyPath(secretsCloud.manifest_key), { displayValue: secretsCloud.manifest_key, copyValue: secretsCloud.manifest_key, copyable: !!secretsCloud.manifest_key }),
-        formatBackupDetailRow('来源文件', sourceFiles.length ? `${sourceFiles.length} file(s)` : '未上报', {
+        formatBackupDetailRow('来源文件', sourceFiles.length ? `${sourceFiles.length} 个文件` : '未上报', {
           displayValue: sourceFiles.join(' | '),
           copyValue: sourceFiles.join('\n'),
           copyable: sourceFiles.length > 0
+        }),
+        formatBackupDetailRow('覆盖率', `${secretsCoverage.foundSourceFiles.length}/${secretsCoverage.configuredSourceFiles.length || secretsCoverage.foundSourceFiles.length} 个文件`, {
+          displayValue: secretsCoverage.configuredSourceFiles.length
+            ? `已找到 ${secretsCoverage.foundSourceFiles.length} / 已配置 ${secretsCoverage.configuredSourceFiles.length}`
+            : `已找到 ${secretsCoverage.foundSourceFiles.length}`,
+          copyValue: secretsCoverage.configuredSourceFiles.join('\n') || secretsCoverage.foundSourceFiles.join('\n'),
+          copyable: secretsCoverage.configuredSourceFiles.length > 0 || secretsCoverage.foundSourceFiles.length > 0
+        }),
+        formatBackupDetailRow('缺失来源文件', secretsCoverage.missingSourceFiles.length ? `${secretsCoverage.missingSourceFiles.length} 个文件` : '无', {
+          displayValue: secretsCoverage.missingSourceFiles.join(' | ') || '无',
+          copyValue: secretsCoverage.missingSourceFiles.join('\n'),
+          copyable: secretsCoverage.missingSourceFiles.length > 0
+        }),
+        formatBackupDetailRow('未补全来源文件', secretsCoverage.incompleteSourceFiles.length ? `${secretsCoverage.incompleteSourceFiles.length} 个文件` : '无', {
+          displayValue: secretsCoverage.incompleteSourceFiles.map(item => item.relative_path).join(' | ') || '无',
+          copyValue: secretsCoverage.incompleteSourceFiles.map(item =>
+            `${item.relative_path}: empty=${Number(item.empty_assignment_count || 0)}, placeholder=${Number(item.placeholder_assignment_count || 0)}`
+          ).join('\n'),
+          copyable: secretsCoverage.incompleteSourceFiles.length > 0
         })
       ].join('');
-
       document.getElementById('recoveryRestoreCommand').textContent = buildRestoreCommand();
     }
   </script>

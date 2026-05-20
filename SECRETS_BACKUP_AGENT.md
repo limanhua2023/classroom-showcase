@@ -6,9 +6,17 @@ This agent creates an **encrypted** backup bundle for the most important local s
 
 Default source files:
 
+- `.env`
 - `.env.local-backup.local`
 - `.env.project-backup.local`
 - `.env.render-backup.local`
+
+Recommended coverage target:
+
+- `.env`: local application secrets such as `APP_SECRET` and the current `SUPABASE_ANON_KEY`
+- `.env.local-backup.local`: local hot-storage / USB backup agent settings
+- `.env.project-backup.local`: code backup + cloud project snapshot settings
+- `.env.render-backup.local`: production Render secret snapshot for fast rebuilds
 
 You can override the list with:
 
@@ -42,13 +50,22 @@ Copy-Item .env.secrets-backup.example .env.secrets-backup.local
 - `SECRETS_BACKUP_S3_ACCESS_KEY_ID`
 - `SECRETS_BACKUP_S3_SECRET_ACCESS_KEY`
 
-3. Run once:
+3. If `.env.local-backup.local` or `.env.render-backup.local` do not exist yet:
+
+```powershell
+Copy-Item .env.local-backup.example .env.local-backup.local
+Copy-Item .env.render-backup.example .env.render-backup.local
+```
+
+Then fill the real values before relying on full disaster recovery. The secrets backup heartbeat will warn when configured source files are missing, or when a source file still contains empty / placeholder values.
+
+4. Run once:
 
 ```powershell
 npm run backup:secrets
 ```
 
-4. Install the daily scheduled task:
+5. Install the daily scheduled task:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/install-secrets-backup-task.ps1

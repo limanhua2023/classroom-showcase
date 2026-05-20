@@ -23,7 +23,7 @@ const STATUS_BUCKET = 'submissions';
 const DEFAULT_STATUS_PATH = String(process.env.SECRETS_BACKUP_STATUS_PATH || 'system/project-secrets-backup-status.json').trim();
 const DEFAULT_CLOUD_PREFIX = String(process.env.SECRETS_BACKUP_CLOUD_PREFIX || 'classshow-system-backups/secrets').trim().replace(/^\/+|\/+$/g, '');
 const DEFAULT_RETENTION = 20;
-const DEFAULT_SOURCE_FILES = String(process.env.SECRETS_BACKUP_SOURCE_FILES || '.env.local-backup.local,.env.project-backup.local,.env.render-backup.local')
+const DEFAULT_SOURCE_FILES = String(process.env.SECRETS_BACKUP_SOURCE_FILES || '.env,.env.local-backup.local,.env.project-backup.local,.env.render-backup.local')
   .split(',')
   .map(item => String(item || '').trim())
   .filter(Boolean);
@@ -266,15 +266,63 @@ function resolveSourceFiles(config) {
       const absolutePath = path.resolve(projectRoot, clean);
       if (!clean || !fs.existsSync(absolutePath) || !fs.statSync(absolutePath).isFile()) return null;
       const stat = fs.statSync(absolutePath);
+      const content = fs.readFileSync(absolutePath, 'utf8');
       return {
         relativePath: clean.replace(/\\/g, '/'),
         absolutePath,
         size: stat.size,
         modifiedAt: stat.mtime.toISOString(),
-        content: fs.readFileSync(absolutePath, 'utf8')
+        content,
+        envSummary: summarizeEnvAssignments(content)
       };
     })
     .filter(Boolean);
+}
+
+function summarizeEnvAssignments(content) {
+  const summary = {
+    assignment_count: 0,
+    filled_assignment_count: 0,
+    empty_assignment_count: 0,
+    placeholder_assignment_count: 0
+  };
+  const lines = String(content || '').split(/\r?\n/);
+  for (const rawLine of lines) {
+    const line = String(rawLine || '').trim();
+    if (!line || line.startsWith('#')) continue;
+    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (!match) continue;
+    summary.assignment_count += 1;
+    const value = String(match[2] || '').trim();
+    if (!value) {
+      summary.empty_assignment_count += 1;
+      continue;
+    }
+    if (/(replace_me|your[-_]|changeme|fill[-_]?me|todo|example|manual_fill_required|<.+>)/i.test(value)) {
+      summary.placeholder_assignment_count += 1;
+      continue;
+    }
+    summary.filled_assignment_count += 1;
+  }
+  return summary;
+}
+
+function buildCoverageSummary(config, sourceFiles) {
+  const foundPaths = sourceFiles.map(file => file.relativePath);
+  const expectedPaths = config.sourceFiles.map(item => String(item || '').trim().replace(/\\/g, '/')).filter(Boolean);
+  const foundSet = new Set(foundPaths);
+  const missingPaths = expectedPaths.filter(item => !foundSet.has(item));
+  return {
+    configured_source_files: expectedPaths,
+    found_source_files: foundPaths,
+    missing_source_files: missingPaths,
+    source_file_details: sourceFiles.map(file => ({
+      relative_path: file.relativePath,
+      size_bytes: file.size,
+      modified_at: file.modifiedAt,
+      ...file.envSummary
+    }))
+  };
 }
 
 function buildPayloadDocument(config, sourceFiles) {
@@ -328,7 +376,8 @@ function createManifest(sourceFiles, bundlePath, payloadBuffer) {
       relative_path: file.relativePath,
       size_bytes: file.size,
       modified_at: file.modifiedAt,
-      sha256: sha256Buffer(Buffer.from(file.content, 'utf8'))
+      sha256: sha256Buffer(Buffer.from(file.content, 'utf8')),
+      ...file.envSummary
     }))
   };
 }
@@ -347,6 +396,12 @@ function buildStatusPayload(config, snapshot = {}, patch = {}) {
     passphrase_hint: patch.passphrase_hint || snapshot.passphrase_hint || config.passphraseHint || null,
     local: patch.local || snapshot.local || {},
     cloud: patch.cloud || snapshot.cloud || {},
+    coverage: patch.coverage || snapshot.coverage || {
+      configured_source_files: config.sourceFiles,
+      found_source_files: [],
+      missing_source_files: config.sourceFiles,
+      source_file_details: []
+    },
     error: patch.error || snapshot.error || null
   };
 }
@@ -379,6 +434,7 @@ async function runSecretsBackupOnce(config) {
     if (!sourceFiles.length) {
       throw new Error('No source secret files were found. Check SECRETS_BACKUP_SOURCE_FILES before running the agent.');
     }
+    const coverage = buildCoverageSummary(config, sourceFiles);
     const payload = buildPayloadDocument(config, sourceFiles);
     const payloadBuffer = Buffer.from(JSON.stringify(payload), 'utf8');
     const bundle = encryptPayload(payloadBuffer, config.passphrase);
@@ -423,6 +479,7 @@ async function runSecretsBackupOnce(config) {
         source_files: sourceFiles.map(file => file.relativePath)
       },
       cloud,
+      coverage,
       bundle_sha256: sha256File(bundlePath),
       manifest_sha256: sha256File(manifestPath),
       note: cloud.uploaded
@@ -467,6 +524,12 @@ async function runSecretsBackupOnce(config) {
         object_key: null,
         manifest_key: null,
         uploaded: false
+      },
+      coverage: {
+        configured_source_files: config.sourceFiles,
+        found_source_files: [],
+        missing_source_files: config.sourceFiles,
+        source_file_details: []
       },
       error: error.message || String(error)
     });

@@ -301,3 +301,13 @@
 - This closes the recurrent `{\"detail\":\"Bad Request\"}` symptom reported in production by turning opaque 400s into actionable diagnostics and by preserving upstream request context during maintenance operations.
 - Hardened the encrypted-secrets backup status endpoint so missing heartbeat documents now return a structured `missing` status instead of `null`, making `/api/health`, the super-admin console, and the recovery page explicitly show that the first secrets-backup run is still pending.
 - Local validation completed with `node --check server.js`, inline-script parsing for `public/teacher-dashboard.html`, `public/super-admin.html`, and `public/project-backup-recovery.html`, plus end-to-end local execution of the project backup agent and scheduled-task installers.
+
+## 2026-05-21 Secrets Coverage Diagnostics and Recovery Drill Support
+- Extended the encrypted secrets backup agent with source coverage diagnostics, including configured source files, found source files, missing source files, and per-file assignment completeness counters.
+- The normalized health payload now downgrades secrets-backup warning level to `warning` when configured source files are missing or when a source file still contains empty / placeholder values, instead of reporting a false-green backup.
+- Added `.env.render-backup.example` as the canonical Render production snapshot template, complementing the existing local-backup and project-backup examples.
+- Updated the secrets backup documentation so operators can explicitly build all three source snapshots before trusting the disaster recovery chain.
+- Expanded the default encrypted secrets coverage to include `.env` so the current `APP_SECRET` and `SUPABASE_ANON_KEY` are preserved even before the Render snapshot is fully curated.
+- Built `.env.local-backup.local` and `.env.render-backup.local` on the maintainer PC from the existing local backup sources, then reran `npm run backup:secrets` to raise the source coverage from `1` file to `4` files with zero missing sources.
+- Executed two restore drills with `scripts/restore-secrets-backup.mjs` into clean `recovered_secrets/drill_*` folders and verified SHA-256 parity for `.env`, `.env.local-backup.local`, `.env.project-backup.local`, and `.env.render-backup.local`.
+- Remaining manual follow-up is now reduced to one true operator-only secret: `SUPER_ADMIN_PASSWORD` in `.env.render-backup.local`.

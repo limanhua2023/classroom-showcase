@@ -2624,6 +2624,12 @@ function normalizeProjectSecretsBackupStatus(raw = null) {
         manifest_key: null,
         uploaded: false
       },
+      coverage: {
+        configured_source_files: [],
+        found_source_files: [],
+        missing_source_files: [],
+        source_file_details: []
+      },
       warning: {
         level: 'warning',
         message: 'Encrypted secrets backup has not reported yet. Run the secrets backup agent once before relying on a disaster recovery drill.',
@@ -2639,6 +2645,28 @@ function normalizeProjectSecretsBackupStatus(raw = null) {
   const reportAgeMs = generatedAt ? Math.max(0, Date.now() - new Date(generatedAt).getTime()) : null;
   const local = raw.local && typeof raw.local === 'object' ? raw.local : {};
   const cloud = raw.cloud && typeof raw.cloud === 'object' ? raw.cloud : {};
+  const coverage = raw.coverage && typeof raw.coverage === 'object' ? raw.coverage : {};
+  const configuredSourceFiles = Array.isArray(coverage.configured_source_files)
+    ? coverage.configured_source_files.map(item => String(item || '').trim()).filter(Boolean)
+    : [];
+  const foundSourceFiles = Array.isArray(coverage.found_source_files)
+    ? coverage.found_source_files.map(item => String(item || '').trim()).filter(Boolean)
+    : [];
+  const missingSourceFiles = Array.isArray(coverage.missing_source_files)
+    ? coverage.missing_source_files.map(item => String(item || '').trim()).filter(Boolean)
+    : configuredSourceFiles.filter(item => !foundSourceFiles.includes(item));
+  const sourceFileDetails = Array.isArray(coverage.source_file_details)
+    ? coverage.source_file_details.map(item => ({
+      relative_path: String(item?.relative_path || '').trim() || null,
+      size_bytes: Math.max(0, Number(item?.size_bytes || 0)),
+      modified_at: toIsoStringOrNull(item?.modified_at) || null,
+      assignment_count: Math.max(0, Number(item?.assignment_count || 0)),
+      filled_assignment_count: Math.max(0, Number(item?.filled_assignment_count || 0)),
+      empty_assignment_count: Math.max(0, Number(item?.empty_assignment_count || 0)),
+      placeholder_assignment_count: Math.max(0, Number(item?.placeholder_assignment_count || 0))
+    })).filter(item => item.relative_path)
+    : [];
+  const hasIncompleteSourceFile = sourceFileDetails.some(item => item.empty_assignment_count > 0 || item.placeholder_assignment_count > 0);
   const warningLevel = !generatedAt
     ? 'warning'
     : String(raw.status || '').trim() === 'error'
@@ -2646,6 +2674,8 @@ function normalizeProjectSecretsBackupStatus(raw = null) {
       : cloud.uploaded === false
         ? 'warning'
       : reportAgeMs > 72 * 60 * 60 * 1000
+        ? 'warning'
+      : missingSourceFiles.length > 0 || hasIncompleteSourceFile
         ? 'warning'
         : 'healthy';
   const warningMessage = !generatedAt
@@ -2656,6 +2686,10 @@ function normalizeProjectSecretsBackupStatus(raw = null) {
         ? 'Encrypted secrets backup exists locally, but the cloud copy is still missing. Check the R2 credentials and rerun the agent.'
       : reportAgeMs > 72 * 60 * 60 * 1000
         ? 'Encrypted secrets backup heartbeat is older than 72 hours. Check the scheduled secrets backup task on the maintainer PC.'
+      : missingSourceFiles.length > 0
+        ? `Encrypted secrets backup succeeded, but ${missingSourceFiles.length} configured source file(s) are still missing: ${missingSourceFiles.join(', ')}`
+      : hasIncompleteSourceFile
+        ? 'Encrypted secrets backup succeeded, but at least one source file still contains empty or placeholder values. Complete the Render/local snapshot before relying on full disaster recovery.'
         : 'Encrypted secrets backups are healthy across local disk and cloud archive.';
   return {
     schema_version: String(raw.schema_version || 'classshow-project-secrets-backup-status-v1').trim(),
@@ -2684,6 +2718,12 @@ function normalizeProjectSecretsBackupStatus(raw = null) {
       object_key: String(cloud.object_key || '').trim() || null,
       manifest_key: String(cloud.manifest_key || '').trim() || null,
       uploaded: !!cloud.uploaded
+    },
+    coverage: {
+      configured_source_files: configuredSourceFiles,
+      found_source_files: foundSourceFiles,
+      missing_source_files: missingSourceFiles,
+      source_file_details: sourceFileDetails
     },
     warning: {
       level: warningLevel,

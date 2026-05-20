@@ -1006,6 +1006,23 @@
       `;
     }
 
+    function summarizeSecretsCoverage(status) {
+      const coverage = status?.coverage || {};
+      const configuredSourceFiles = Array.isArray(coverage.configured_source_files) ? coverage.configured_source_files : [];
+      const foundSourceFiles = Array.isArray(coverage.found_source_files) ? coverage.found_source_files : [];
+      const missingSourceFiles = Array.isArray(coverage.missing_source_files) ? coverage.missing_source_files : [];
+      const sourceFileDetails = Array.isArray(coverage.source_file_details) ? coverage.source_file_details : [];
+      const incompleteSourceFiles = sourceFileDetails.filter(item =>
+        Number(item?.empty_assignment_count || 0) > 0 || Number(item?.placeholder_assignment_count || 0) > 0
+      );
+      return {
+        configuredSourceFiles,
+        foundSourceFiles,
+        missingSourceFiles,
+        incompleteSourceFiles
+      };
+    }
+
     function copyProjectBackupValue(encodedValue) {
       const value = decodeURIComponent(String(encodedValue || ''));
       navigator.clipboard.writeText(value)
@@ -1105,11 +1122,12 @@
       const manifestName = basenameFromAnyPath(local.manifest_path || cloud.manifest_key);
       const objectName = basenameFromAnyPath(cloud.object_key);
       const sourceFiles = Array.isArray(local.source_files) ? local.source_files : [];
+      const coverage = summarizeSecretsCoverage(status);
       statsEl.innerHTML = [
         ['Files', local.file_count || sourceFiles.length || 0],
         ['Bundle size', formatBytes(local.bundle_size_bytes || 0)],
-        ['Uploaded', cloud.uploaded ? 'Yes' : 'No'],
-        ['Hint', status.passphrase_hint ? 'Set' : 'Missing']
+        ['已上传', cloud.uploaded ? '是' : '否'],
+        ['口令提示', status.passphrase_hint ? '已设置' : '缺失']
       ].map(item => `
         <div class="mini-stat">
           <strong>${escapeHtml(item[1])}</strong>
@@ -1118,24 +1136,43 @@
       `).join('');
 
       metaEl.innerHTML = [
-        status.host ? `Host ${status.host}` : '',
-        status.generated_at ? `Heartbeat ${formatDateTime(status.generated_at, { withSeconds: true }) || status.generated_at}` : '',
-        status.last_success_at ? `Last success ${formatDateTime(status.last_success_at, { withSeconds: true }) || status.last_success_at}` : '',
+        status.host ? `主机 ${status.host}` : '',
+        status.generated_at ? `心跳 ${formatDateTime(status.generated_at, { withSeconds: true }) || status.generated_at}` : '',
+        status.last_success_at ? `最近成功 ${formatDateTime(status.last_success_at, { withSeconds: true }) || status.last_success_at}` : '',
         cloud.bucket ? `Bucket ${cloud.bucket}` : '',
-        status.passphrase_hint ? `Hint ${status.passphrase_hint}` : 'Hint not set'
+        status.passphrase_hint ? `口令提示 ${status.passphrase_hint}` : '口令提示未设置'
       ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
 
       noteEl.className = `archive-gauge-note warning-${warningLevel}`;
-      noteEl.textContent = warning.message || 'Encrypted secrets backups are healthy across local disk and cloud archive.';
+      noteEl.textContent = warning.message || '加密 secrets 备份已在本地和云端保持健康。';
       detailsEl.innerHTML = [
-        formatBackupDetailRow('Latest bundle', bundleName, { displayValue: local.bundle_path, copyValue: local.bundle_path, copyable: !!local.bundle_path }),
-        formatBackupDetailRow('Local manifest', manifestName, { displayValue: local.manifest_path || cloud.manifest_key, copyValue: local.manifest_path || cloud.manifest_key, copyable: !!(local.manifest_path || cloud.manifest_key) }),
-        formatBackupDetailRow('Cloud object path', objectName, { displayValue: cloud.object_key, copyValue: cloud.object_key, copyable: !!cloud.object_key }),
-        formatBackupDetailRow('Cloud manifest path', manifestName, { displayValue: cloud.manifest_key, copyValue: cloud.manifest_key, copyable: !!cloud.manifest_key }),
-        formatBackupDetailRow('Source files', sourceFiles.length ? `${sourceFiles.length} file(s)` : 'No source files reported', {
+        formatBackupDetailRow('最新 bundle', bundleName, { displayValue: local.bundle_path, copyValue: local.bundle_path, copyable: !!local.bundle_path }),
+        formatBackupDetailRow('本地 manifest', manifestName, { displayValue: local.manifest_path || cloud.manifest_key, copyValue: local.manifest_path || cloud.manifest_key, copyable: !!(local.manifest_path || cloud.manifest_key) }),
+        formatBackupDetailRow('云端对象路径', objectName, { displayValue: cloud.object_key, copyValue: cloud.object_key, copyable: !!cloud.object_key }),
+        formatBackupDetailRow('云端 manifest 路径', manifestName, { displayValue: cloud.manifest_key, copyValue: cloud.manifest_key, copyable: !!cloud.manifest_key }),
+        formatBackupDetailRow('来源文件', sourceFiles.length ? `${sourceFiles.length} 个文件` : '未上报', {
           displayValue: sourceFiles.join(' | '),
           copyValue: sourceFiles.join('\n'),
           copyable: sourceFiles.length > 0
+        }),
+        formatBackupDetailRow('覆盖率', `${coverage.foundSourceFiles.length}/${coverage.configuredSourceFiles.length || coverage.foundSourceFiles.length} 个文件`, {
+          displayValue: coverage.configuredSourceFiles.length
+            ? `已找到 ${coverage.foundSourceFiles.length} / 已配置 ${coverage.configuredSourceFiles.length}`
+            : `已找到 ${coverage.foundSourceFiles.length}`,
+          copyValue: coverage.configuredSourceFiles.join('\n') || coverage.foundSourceFiles.join('\n'),
+          copyable: coverage.configuredSourceFiles.length > 0 || coverage.foundSourceFiles.length > 0
+        }),
+        formatBackupDetailRow('缺失来源文件', coverage.missingSourceFiles.length ? `${coverage.missingSourceFiles.length} 个文件` : '无', {
+          displayValue: coverage.missingSourceFiles.join(' | ') || '无',
+          copyValue: coverage.missingSourceFiles.join('\n'),
+          copyable: coverage.missingSourceFiles.length > 0
+        }),
+        formatBackupDetailRow('未补全来源文件', coverage.incompleteSourceFiles.length ? `${coverage.incompleteSourceFiles.length} 个文件` : '无', {
+          displayValue: coverage.incompleteSourceFiles.map(item => item.relative_path).join(' | ') || '无',
+          copyValue: coverage.incompleteSourceFiles.map(item =>
+            `${item.relative_path}: empty=${Number(item.empty_assignment_count || 0)}, placeholder=${Number(item.placeholder_assignment_count || 0)}`
+          ).join('\n'),
+          copyable: coverage.incompleteSourceFiles.length > 0
         })
       ].join('');
     }
