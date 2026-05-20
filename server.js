@@ -2596,8 +2596,42 @@ async function getCachedProjectBackupStatus({ forceRefresh = false } = {}) {
   return status ? JSON.parse(JSON.stringify(status)) : null;
 }
 
-function normalizeProjectSecretsBackupStatus(raw = {}) {
-  if (!raw || typeof raw !== 'object') return null;
+function normalizeProjectSecretsBackupStatus(raw = null) {
+  if (!raw || typeof raw !== 'object') {
+    return {
+      schema_version: 'classshow-project-secrets-backup-status-v1',
+      agent: 'secrets-backup-agent',
+      status: 'missing',
+      generated_at: null,
+      started_at: null,
+      finished_at: null,
+      last_success_at: null,
+      host: null,
+      duration_ms: 0,
+      passphrase_hint: null,
+      local: {
+        backup_root: null,
+        bundle_path: null,
+        manifest_path: null,
+        bundle_size_bytes: 0,
+        file_count: 0,
+        source_files: []
+      },
+      cloud: {
+        provider: null,
+        bucket: null,
+        object_key: null,
+        manifest_key: null,
+        uploaded: false
+      },
+      warning: {
+        level: 'warning',
+        message: 'Encrypted secrets backup has not reported yet. Run the secrets backup agent once before relying on a disaster recovery drill.',
+        report_age_ms: null
+      },
+      error: null
+    };
+  }
   const generatedAt = toIsoStringOrNull(raw.generated_at || raw.last_success_at || raw.finished_at) || null;
   const lastSuccessAt = toIsoStringOrNull(raw.last_success_at || generatedAt) || null;
   const startedAt = toIsoStringOrNull(raw.started_at) || null;
@@ -2667,7 +2701,7 @@ async function getCachedProjectSecretsBackupStatus({ forceRefresh = false } = {}
   const status = normalizeProjectSecretsBackupStatus(await readJsonDocumentFromPrimaryStorage(PROJECT_SECRETS_BACKUP_STATUS_PATH));
   projectSecretsBackupStatusCache = status;
   projectSecretsBackupStatusLoadedAt = Date.now();
-  return status ? JSON.parse(JSON.stringify(status)) : null;
+  return JSON.parse(JSON.stringify(status));
 }
 
 function buildArchiveStorageCleanupSuggestions(summary = {}, historySummary = {}) {

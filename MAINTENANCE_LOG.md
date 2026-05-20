@@ -299,4 +299,5 @@
 - Updated teacher-dashboard direct upload/import/export flows to read structured backend error payloads, removing the old blind fallback to `res.statusText`.
 - Added a global Express error middleware in `server.js` to return stable JSON payloads for malformed JSON requests, Multer upload failures, and uncaught request-time exceptions, with `error` plus human-readable `detail`.
 - This closes the recurrent `{\"detail\":\"Bad Request\"}` symptom reported in production by turning opaque 400s into actionable diagnostics and by preserving upstream request context during maintenance operations.
+- Hardened the encrypted-secrets backup status endpoint so missing heartbeat documents now return a structured `missing` status instead of `null`, making `/api/health`, the super-admin console, and the recovery page explicitly show that the first secrets-backup run is still pending.
 - Local validation completed with `node --check server.js`, inline-script parsing for `public/teacher-dashboard.html`, `public/super-admin.html`, and `public/project-backup-recovery.html`, plus end-to-end local execution of the project backup agent and scheduled-task installers.
