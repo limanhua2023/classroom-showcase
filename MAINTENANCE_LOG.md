@@ -261,3 +261,4 @@
 - Added `cooldown_candidates` to the hot-tier payload. Candidates are ranked by storage footprint, recent inactivity, and course-level recent upload activity so operators can see which activities are best suited for early migration into R2.
 - Teacher and super-admin hot-tier operation panels now render `Move-to-cold candidates Top 5` and `Largest hot videos Top 5`, alongside the existing course/activity/file lists.
 - The cooldown ranking favors activities with no uploads in the last 7 days, larger footprints, and low recent course activity, which makes the hot-to-cold recommendations more operationally useful than a pure size sort.
+- Hotfix: corrected cooldown scoring to use the actual Supabase hot-tier byte total (`storageBytes`) instead of an undefined variable, restoring healthy `hot_storage` responses in `/api/health` and both dashboards after deployment.
