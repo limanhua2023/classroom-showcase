@@ -76,3 +76,28 @@ Health heartbeat:
 2. Restore the repository snapshot to a clean folder.
 3. Restore `.env` / secret files if they were intentionally included.
 4. Redeploy Render and reconnect local backup agents if needed.
+
+## Critical config recovery checklist
+
+The ZIP snapshot restores the codebase, but the following secrets and environment settings must still be restored separately:
+
+- Render production env vars:
+  - `APP_SECRET`
+  - `SUPER_ADMIN_PASSWORD`
+  - `SUPABASE_URL`
+  - `SUPABASE_ANON_KEY`
+  - `SUPABASE_SERVICE_ROLE_KEY`
+  - archive / R2 env vars
+  - video transcode env vars
+- Supabase privileged secret key (`sb_secret_...`)
+- Cloudflare R2:
+  - bucket name
+  - endpoint
+  - access key ID
+  - secret access key
+- Local backup agents:
+  - `.env.local-backup.local`
+  - `.env.project-backup.local`
+  - Windows scheduled tasks for both agents
+
+Because `PROJECT_BACKUP_INCLUDE_SECRETS=false` is the recommended default, assume secret files are **not** inside the ZIP unless you explicitly changed that setting.

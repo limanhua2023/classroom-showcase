@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>项目备份恢复演练 - ClassShow</title>
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body class="course-page">
+  <header class="topbar">
+    <a class="topbar-logo" href="index.html">Class<span>Show</span></a>
+    <div class="topbar-right">
+      <button class="btn btn-secondary btn-sm" onclick="location.href='super-admin.html'">返回统一课程管理页</button>
+      <button class="btn btn-secondary btn-sm" onclick="location.href='index.html'">总门户</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="course-hero">
+      <div class="course-hero-copy">
+        <div class="brand-kicker">PROJECT BACKUP RECOVERY</div>
+        <h1>项目备份恢复演练</h1>
+        <p>这里统一查看最近一次代码/配置快照、本地与云端对象路径，以及真正发生系统崩溃、电脑损坏或病毒破坏时的恢复步骤。</p>
+        <div class="course-hero-actions">
+          <button class="btn btn-primary" type="button" onclick="loadRecoveryStatus(true)">刷新状态</button>
+          <button class="btn btn-secondary" type="button" onclick="copyCloudObjectPath()">复制云端 ZIP 路径</button>
+        </div>
+      </div>
+      <div class="course-scoreboard" aria-label="恢复摘要">
+        <div><strong id="recoveryStatusValue">-</strong><span>状态</span></div>
+        <div><strong id="recoveryZipSize">0 B</strong><span>ZIP 大小</span></div>
+        <div><strong id="recoveryFileCount">0</strong><span>文件数</span></div>
+        <div><strong id="recoveryUploaded">-</strong><span>云端上传</span></div>
+      </div>
+    </section>
+
+    <section class="course-entry-panel" id="recoveryGatePanel">
+      <div>
+        <strong>需要超级管理员登录态</strong>
+        <span id="recoveryGateHint">正在检查当前登录状态...</span>
+      </div>
+      <div class="course-entry-actions">
+        <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='super-admin.html'">前往统一课程管理页登录</button>
+      </div>
+    </section>
+
+    <section class="course-control-strip">
+      <div>
+        <strong>最近一次快照</strong>
+        <span id="recoveryHeadline">等待读取 project backup heartbeat...</span>
+      </div>
+      <div class="course-card-actions">
+        <button class="btn btn-secondary btn-sm" type="button" onclick="copyLocalZipPath()">复制本地 ZIP 路径</button>
+        <button class="btn btn-secondary btn-sm" type="button" onclick="copyManifestPath()">复制 manifest 路径</button>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">SNAPSHOT PATHS</div>
+          <h2>最新备份文件与云端对象</h2>
+          <p>先确认“本地 ZIP + 云端 ZIP + 云端 manifest”都存在，再做恢复演练。这样真正出问题时不会临时翻找路径。</p>
+        </div>
+      </div>
+      <div class="archive-ops-grid">
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>本地快照</strong>
+            <span class="storage-meta-chip" id="recoveryLocalHostChip">Host -</span>
+          </div>
+          <div id="recoveryLocalDetails" class="backup-detail-list"></div>
+        </div>
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>云端归档</strong>
+            <span class="storage-meta-chip" id="recoveryCloudBucketChip">Bucket -</span>
+          </div>
+          <div id="recoveryCloudDetails" class="backup-detail-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">RECOVERY DRILL</div>
+          <h2>标准恢复步骤</h2>
+          <p>按这个顺序恢复，可以把“代码仓库、运行配置、云端对象存储、备份代理”四条链路重新连起来。</p>
+        </div>
+      </div>
+      <div class="course-grid">
+        <article class="course-card">
+          <h3>1. 取回代码 ZIP</h3>
+          <p>优先使用本机 <code>project_backup</code> 中最近的 ZIP；如果电脑损坏，则从 R2 的 <code>classshow-system-backups/codebase/...</code> 取回同名 ZIP 和 manifest。</p>
+        </article>
+        <article class="course-card">
+          <h3>2. 恢复到干净目录</h3>
+          <p>在新电脑或干净目录解压 ZIP，不直接覆盖未知环境。恢复后先检查 <code>server.js</code>、<code>public/</code>、<code>scripts/</code>、<code>data/</code> 是否齐全。</p>
+        </article>
+        <article class="course-card">
+          <h3>3. 单独恢复关键配置</h3>
+          <p>默认项目快照不会打包 secret 文件，所以需要手动补回 Render 环境变量、Supabase Secret key、Cloudflare R2 Access Key，以及本地两个备份代理的 <code>.env</code> 文件。</p>
+        </article>
+        <article class="course-card">
+          <h3>4. 重新部署并验收</h3>
+          <p>执行 <code>npm install</code> 后重新部署 Render，检查 <code>/api/health</code>、教师后台、超级管理员页、R2 归档、Supabase 热层和本地备份代理状态是否都恢复健康。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">CRITICAL CONFIG</div>
+          <h2>关键配置单独恢复说明</h2>
+          <p>这些内容默认不放进 ZIP，必须单独保管；项目代码恢复成功，不代表密钥和环境变量会自动恢复。</p>
+        </div>
+      </div>
+      <div class="archive-suggestion-list">
+        <article class="archive-suggestion-card level-warning">
+          <strong>Render 生产环境变量</strong>
+          <p>至少恢复：<code>APP_SECRET</code>、<code>SUPER_ADMIN_PASSWORD</code>、<code>SUPABASE_URL</code>、<code>SUPABASE_ANON_KEY</code>、<code>SUPABASE_SERVICE_ROLE_KEY</code>、归档/R2 相关变量、视频转码变量。</p>
+        </article>
+        <article class="archive-suggestion-card level-warning">
+          <strong>Supabase 高权限密钥</strong>
+          <p>使用 <code>sb_secret_...</code> 作为后端高权限 key；不要把 <code>sb_publishable_...</code> 当成恢复用密钥。若怀疑泄露，应先旋转再回填。</p>
+        </article>
+        <article class="archive-suggestion-card level-warning">
+          <strong>Cloudflare R2 S3 凭证</strong>
+          <p>恢复时需要：bucket 名、endpoint、Access Key ID、Secret Access Key。不要把通用 API token 文本误当成 S3 Access Key 使用。</p>
+        </article>
+        <article class="archive-suggestion-card level-info">
+          <strong>本地备份代理配置</strong>
+          <p>恢复本机后，重新检查 <code>.env.local-backup.local</code> 与 <code>.env.project-backup.local</code>，并重新安装计划任务，确保本地镜像和项目级快照会继续自动运行。</p>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <script src="js/api.js"></script>
+  <script>
+    let recoveryOverview = null;
+
+    init();
+
+    async function init() {
+      const token = sessionStorage.getItem('superAdminToken');
+      if (!token) {
+        document.getElementById('recoveryGateHint').textContent = '尚未检测到超级管理员登录态，请先回统一课程管理页登录。';
+        return;
+      }
+      document.getElementById('recoveryGatePanel').style.display = 'none';
+      await loadRecoveryStatus(false);
+    }
+
+    async function loadRecoveryStatus(forceRefresh) {
+      try {
+        recoveryOverview = await api('/super-admin/overview');
+        document.getElementById('recoveryGatePanel').style.display = 'none';
+        renderRecoveryStatus();
+        if (forceRefresh) toast('已刷新项目备份恢复状态', 'success');
+      } catch (error) {
+        document.getElementById('recoveryGatePanel').style.display = '';
+        document.getElementById('recoveryGateHint').textContent = `读取失败：${error.message}`;
+        toast(`读取恢复状态失败：${error.message}`, 'error');
+      }
+    }
+
+    function basenameFromAnyPath(value) {
+      const source = String(value || '').trim();
+      if (!source) return '';
+      const normalized = source.replace(/\\/g, '/');
+      const parts = normalized.split('/').filter(Boolean);
+      return parts.length ? parts[parts.length - 1] : normalized;
+    }
+
+    function formatDetailRow(label, value, copyValue) {
+      const source = String(value || '').trim();
+      if (!source) {
+        return `
+          <div class="backup-detail-row">
+            <div>
+              <strong>${escapeHtml(label)}</strong>
+              <small>未记录</small>
+            </div>
+          </div>
+        `;
+      }
+      return `
+        <div class="backup-detail-row">
+          <div>
+            <strong>${escapeHtml(label)}</strong>
+            <small>${escapeHtml(source)}</small>
+          </div>
+          <button class="btn btn-secondary btn-sm archive-object-action" type="button" onclick="copyValueText('${encodeURIComponent(copyValue || source)}')">复制</button>
+        </div>
+      `;
+    }
+
+    function copyValueText(encodedValue) {
+      const value = decodeURIComponent(String(encodedValue || ''));
+      navigator.clipboard.writeText(value)
+        .then(() => toast('已复制', 'success'))
+        .catch(() => toast('复制失败，请手动复制', 'error'));
+    }
+
+    function copyLocalZipPath() {
+      const value = recoveryOverview?.project_backup_status?.local?.zip_path || '';
+      if (!value) return toast('当前没有本地 ZIP 路径', 'error');
+      copyValueText(encodeURIComponent(value));
+    }
+
+    function copyManifestPath() {
+      const value = recoveryOverview?.project_backup_status?.cloud?.manifest_key
+        || recoveryOverview?.project_backup_status?.local?.manifest_path
+        || '';
+      if (!value) return toast('当前没有 manifest 路径', 'error');
+      copyValueText(encodeURIComponent(value));
+    }
+
+    function copyCloudObjectPath() {
+      const value = recoveryOverview?.project_backup_status?.cloud?.object_key || '';
+      if (!value) return toast('当前没有云端 ZIP 路径', 'error');
+      copyValueText(encodeURIComponent(value));
+    }
+
+    function renderRecoveryStatus() {
+      const status = recoveryOverview?.project_backup_status || null;
+      const local = status?.local || {};
+      const cloud = status?.cloud || {};
+      const warning = status?.warning || {};
+      const statusLabel = !status
+        ? 'Missing'
+        : warning.level === 'critical'
+          ? 'Critical'
+          : warning.level === 'warning'
+            ? 'Warning'
+            : 'Healthy';
+
+      document.getElementById('recoveryStatusValue').textContent = statusLabel;
+      document.getElementById('recoveryZipSize').textContent = formatBytes(local.zip_size_bytes || 0);
+      document.getElementById('recoveryFileCount').textContent = Number(local.file_count || 0);
+      document.getElementById('recoveryUploaded').textContent = cloud.uploaded ? 'Yes' : 'No';
+      document.getElementById('recoveryHeadline').textContent = status
+        ? `最近快照 ${basenameFromAnyPath(local.zip_path || cloud.object_key)} | ${formatDateTime(status.generated_at, { withSeconds: true }) || status.generated_at}`
+        : '还没有可用的项目级备份心跳，请先运行本地 project backup agent。';
+
+      document.getElementById('recoveryLocalHostChip').textContent = `Host ${status?.host || '-'}`;
+      document.getElementById('recoveryCloudBucketChip').textContent = `Bucket ${cloud.bucket || '-'}`;
+
+      document.getElementById('recoveryLocalDetails').innerHTML = [
+        formatDetailRow('本地 ZIP 文件', local.zip_path, local.zip_path),
+        formatDetailRow('本地 manifest', local.manifest_path, local.manifest_path),
+        formatDetailRow('本地备份目录', local.backup_root, local.backup_root),
+        formatDetailRow('最近一次 commit', `${status?.git_branch || '-'} @ ${status?.git_commit || '-'}`, status?.git_commit || '')
+      ].join('');
+
+      document.getElementById('recoveryCloudDetails').innerHTML = [
+        formatDetailRow('云端 ZIP 对象', cloud.object_key, cloud.object_key),
+        formatDetailRow('云端 manifest 对象', cloud.manifest_key, cloud.manifest_key),
+        formatDetailRow('云端 bucket', cloud.bucket, cloud.bucket),
+        formatDetailRow('上传状态', cloud.uploaded ? 'uploaded' : 'missing', cloud.uploaded ? 'uploaded' : 'missing')
+      ].join('');
+    }
+  </script>
+</body>
+</html>

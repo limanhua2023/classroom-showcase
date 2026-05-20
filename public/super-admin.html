@@ -183,11 +183,15 @@
         <div class="archive-ops-card">
           <div class="archive-ops-head">
             <strong>Project backup agent</strong>
-            <span class="storage-meta-chip" id="superProjectBackupStatusChip">Loading</span>
+            <div class="archive-group-actions">
+              <span class="storage-meta-chip" id="superProjectBackupStatusChip">Loading</span>
+              <button class="btn btn-secondary btn-sm" type="button" onclick="openProjectBackupRecoveryGuide()">恢复演练说明</button>
+            </div>
           </div>
           <div class="mini-stat-grid" id="superProjectBackupStats"></div>
           <div class="storage-meta-row" id="superProjectBackupMeta"></div>
           <div id="superProjectBackupNote" class="archive-gauge-note">Waiting for the latest code/config snapshot heartbeat...</div>
+          <div id="superProjectBackupDetails" class="backup-detail-list"></div>
         </div>
       </div>
     </section>
@@ -961,13 +965,52 @@
       noteEl.textContent = warning.message || 'Local backup agent heartbeat is healthy.';
     }
 
+    function basenameFromAnyPath(value) {
+      const source = String(value || '').trim();
+      if (!source) return '';
+      const normalized = source.replace(/\\/g, '/');
+      const segments = normalized.split('/').filter(Boolean);
+      return segments.length ? segments[segments.length - 1] : normalized;
+    }
+
+    function formatBackupDetailRow(label, value, options = {}) {
+      const safeValue = String(value || '').trim();
+      if (!safeValue) return '';
+      const displayValue = options.displayValue || safeValue;
+      const copyValue = options.copyValue || safeValue;
+      const actionHtml = options.copyable
+        ? `<button class="btn btn-secondary btn-sm archive-object-action" type="button" onclick="copyProjectBackupValue('${encodeURIComponent(copyValue)}')">复制</button>`
+        : '';
+      return `
+        <div class="backup-detail-row">
+          <div>
+            <strong>${escapeHtml(label)}</strong>
+            <small>${escapeHtml(displayValue)}</small>
+          </div>
+          ${actionHtml}
+        </div>
+      `;
+    }
+
+    function copyProjectBackupValue(encodedValue) {
+      const value = decodeURIComponent(String(encodedValue || ''));
+      navigator.clipboard.writeText(value)
+        .then(() => toast('已复制备份路径', 'success'))
+        .catch(() => toast('复制失败，请手动复制', 'error'));
+    }
+
+    function openProjectBackupRecoveryGuide() {
+      location.href = 'project-backup-recovery.html';
+    }
+
     function renderProjectBackupStatusPanel() {
       const status = overview?.project_backup_status || null;
       const chipEl = document.getElementById('superProjectBackupStatusChip');
       const statsEl = document.getElementById('superProjectBackupStats');
       const metaEl = document.getElementById('superProjectBackupMeta');
       const noteEl = document.getElementById('superProjectBackupNote');
-      if (!chipEl || !statsEl || !metaEl || !noteEl) return;
+      const detailsEl = document.getElementById('superProjectBackupDetails');
+      if (!chipEl || !statsEl || !metaEl || !noteEl || !detailsEl) return;
 
       const warning = status?.warning || {};
       const warningLevel = warning.level || 'warning';
@@ -979,11 +1022,15 @@
         metaEl.innerHTML = '<span class="storage-meta-chip">system/project-backup-status.json not found yet</span>';
         noteEl.className = 'archive-gauge-note warning-warning';
         noteEl.textContent = 'Run the project backup agent once, then this card will show the latest code/config snapshot heartbeat.';
+        detailsEl.innerHTML = '';
         return;
       }
 
       const local = status.local || {};
       const cloud = status.cloud || {};
+      const zipName = basenameFromAnyPath(local.zip_path);
+      const manifestName = basenameFromAnyPath(local.manifest_path || cloud.manifest_key);
+      const objectName = basenameFromAnyPath(cloud.object_key);
       statsEl.innerHTML = [
         ['Files', local.file_count || 0],
         ['Zip size', formatBytes(local.zip_size_bytes || 0)],
@@ -1007,6 +1054,12 @@
 
       noteEl.className = `archive-gauge-note warning-${warningLevel}`;
       noteEl.textContent = warning.message || 'Project backup snapshots are healthy across local disk and cloud archive.';
+      detailsEl.innerHTML = [
+        formatBackupDetailRow('Latest ZIP file', zipName, { displayValue: local.zip_path, copyValue: local.zip_path, copyable: !!local.zip_path }),
+        formatBackupDetailRow('Local manifest', manifestName, { displayValue: local.manifest_path || cloud.manifest_key, copyValue: local.manifest_path || cloud.manifest_key, copyable: !!(local.manifest_path || cloud.manifest_key) }),
+        formatBackupDetailRow('Cloud object path', objectName, { displayValue: cloud.object_key, copyValue: cloud.object_key, copyable: !!cloud.object_key }),
+        formatBackupDetailRow('Cloud manifest path', manifestName, { displayValue: cloud.manifest_key, copyValue: cloud.manifest_key, copyable: !!cloud.manifest_key })
+      ].join('');
     }
 
     function renderOverviewSummary() {

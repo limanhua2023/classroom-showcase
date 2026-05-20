@@ -278,3 +278,10 @@
 - Added companion files: `.env.project-backup.example`, `PROJECT_BACKUP_AGENT.md`, `scripts/install-project-backup-task.ps1`, and the npm entrypoint `npm run backup:project`.
 - The super-admin console now shows a dedicated `Project backup agent` status card and includes the project-backup state in the top operations summary line, so operators can see whether code/config recovery snapshots are fresh and whether cloud upload is missing.
 - Local validation completed with `node --check server.js`, `node --check scripts/project-backup-agent.mjs`, inline-script parsing for both dashboards, and `npm run backup:project -- --skip-cloud`, which produced a local code snapshot (`files=50`, ZIP about `614 KB`) without syntax/runtime failures.
+
+## 2026-05-20 Project Backup Recovery Drill and Config Restore Notes
+- Added `public/project-backup-recovery.html`, a dedicated recovery-drill page for super admins covering the latest project snapshot, cloud object path, manifest path, and a step-by-step restore workflow.
+- Extended the super-admin `Project backup agent` card with a direct `恢复演练说明` entry point plus detail rows for the latest ZIP filename, local manifest, cloud object path, and cloud manifest path.
+- Added reusable backup-detail row styles in `public/css/main.css` so backup metadata stays readable without embedding ad-hoc inline layout logic.
+- Extended `PROJECT_BACKUP_AGENT.md` with a `Critical config recovery checklist`, documenting the secrets and environment groups that remain outside the ZIP backup by design (`PROJECT_BACKUP_INCLUDE_SECRETS=false`).
+- Verified the new recovery page and the updated super-admin dashboard scripts via inline-script parsing, and kept backend compatibility unchanged so the existing healthy `project_backup_status` payload can drive both views without a schema migration.
