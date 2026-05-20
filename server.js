@@ -118,6 +118,7 @@ const ARCHIVE_STORAGE_TREND_WINDOWS_DAYS = [7, 30];
 const ARCHIVE_STORAGE_HISTORY_MIN_INTERVAL_MS = Math.max(5 * 60 * 1000, Number(process.env.ARCHIVE_STORAGE_HISTORY_MIN_INTERVAL_MS || 60 * 60 * 1000));
 const ARCHIVE_STORAGE_HISTORY_MIN_DELTA_BYTES = Math.max(512 * 1024, Number(process.env.ARCHIVE_STORAGE_HISTORY_MIN_DELTA_BYTES || 8 * 1024 * 1024));
 const LOCAL_BACKUP_STATUS_PATH = 'system/local-backup-status.json';
+const PROJECT_BACKUP_STATUS_PATH = 'system/project-backup-status.json';
 const STORAGE_SAFE_DELETE = !/^false$/i.test(String(process.env.STORAGE_SAFE_DELETE || 'true'));
 const ARCHIVE_PERMANENT_DELETE = /^true$/i.test(String(process.env.ARCHIVE_PERMANENT_DELETE || 'false'));
 const OPS_SNAPSHOT_LIST_TTL_MS = 60 * 1000;
@@ -1005,6 +1006,8 @@ let archiveStorageHistoryCache = null;
 let archiveStorageHistoryLoadedAt = 0;
 let localBackupStatusCache = null;
 let localBackupStatusLoadedAt = 0;
+let projectBackupStatusCache = null;
+let projectBackupStatusLoadedAt = 0;
 const missingMediaExportCache = new Map();
 let googleDriveClientPromise = null;
 let googleDriveDestinationInfoPromise = null;
@@ -1949,6 +1952,7 @@ function buildHotStorageMigrationSuggestions(summary = {}) {
   const largestCourses = Array.isArray(summary.largest_course_groups) ? summary.largest_course_groups : [];
   const largestItems = Array.isArray(summary.largest_items) ? summary.largest_items : [];
   const cooldownCandidates = Array.isArray(summary.cooldown_candidates) ? summary.cooldown_candidates : [];
+  const cooldownCourseGroups = Array.isArray(summary.cooldown_course_groups) ? summary.cooldown_course_groups : [];
   const totalBytes = Math.max(0, Number(summary.total_bytes || 0));
   const recentGrowthBytes = Math.max(0, Number(summary.estimated_growth_bytes_per_day || 0));
 
@@ -2016,6 +2020,43 @@ function buildHotStorageMigrationSuggestions(summary = {}) {
         .map(item => `${item.label} (${formatStorageBytes(item.size_bytes || 0)}, ${item.days_since_latest_upload ?? '?'}d idle)`)
         .join(' | ')
     });
+  }
+
+  if (cooldownCourseGroups.length) {
+    const phase = String(strategy.phase || 'safe');
+    const level = phase === 'critical' ? 'critical' : phase === 'safe' ? 'info' : 'warning';
+    const topCourses = cooldownCourseGroups.slice(0, 3);
+    const courseMessage = topCourses.map(item => {
+      const activityCount = Math.max(0, Number(item.activity_count || 0));
+      const avgIdleDays = Number.isFinite(Number(item.avg_idle_days)) ? Number(item.avg_idle_days).toFixed(1) : '?';
+      return `${item.course_name} (${formatStorageBytes(item.size_bytes || 0)}, ${activityCount} activities, avg ${avgIdleDays}d idle)`;
+    }).join(' | ');
+
+    if (phase === 'prepare') {
+      suggestions.push({
+        level,
+        title: 'Course-level archive batches to prepare',
+        message: `${courseMessage}. Keep the current week hot, but line up these courses for batch archive once the hot tier crosses 50%.`
+      });
+    } else if (phase === 'archive') {
+      suggestions.push({
+        level,
+        title: 'Start batch archive by course now',
+        message: `${courseMessage}. Queue these courses first so the hot tier can fall back below the halfway mark.`
+      });
+    } else if (phase === 'accelerate') {
+      suggestions.push({
+        level,
+        title: 'Run course batches aggressively',
+        message: `${courseMessage}. Move these course groups to R2 before adding more long-form videos into Supabase.`
+      });
+    } else if (phase === 'critical') {
+      suggestions.push({
+        level,
+        title: 'Drain these courses out of the hot tier first',
+        message: `${courseMessage}. Batch-archive every idle activity here, then validate restore + local project backup before deleting any primary copies.`
+      });
+    }
   }
 
   return suggestions;
@@ -2250,6 +2291,55 @@ async function buildHotStorageSummaryFromRows(rows = [], storageFiles = []) {
     })
     .slice(0, 5);
 
+  const cooldownCourseGroups = [...cooldownCandidates.reduce((map, candidate) => {
+    const courseKey = normalizePortalCourseName(candidate.course_name || 'unknown-course');
+    const current = map.get(courseKey) || {
+      course_name: String(candidate.course_name || 'Unknown course').trim() || 'Unknown course',
+      size_bytes: 0,
+      total_bytes: 0,
+      activity_count: 0,
+      submission_count: 0,
+      video_count: 0,
+      image_count: 0,
+      avg_idle_days: 0,
+      max_idle_days: 0,
+      cooldown_score: 0,
+      activity_ids: [],
+      activity_labels: []
+    };
+    const daysIdle = Math.max(0, Number(candidate.days_since_latest_upload || 0));
+    current.size_bytes += Math.max(0, Number(candidate.size_bytes || 0));
+    current.total_bytes = current.size_bytes;
+    current.activity_count += 1;
+    current.submission_count += Math.max(0, Number(candidate.submission_count || 0));
+    current.video_count += Math.max(0, Number(candidate.video_count || 0));
+    current.image_count += Math.max(0, Number(candidate.image_count || 0));
+    current.avg_idle_days += daysIdle;
+    current.max_idle_days = Math.max(current.max_idle_days, daysIdle);
+    current.cooldown_score += Math.max(0, Number(candidate.cooldown_score || 0));
+    current.activity_ids.push(String(candidate.activity_id || '').trim());
+    current.activity_labels.push(String(candidate.label || candidate.activity_name || candidate.activity_id || 'activity').trim());
+    map.set(courseKey, current);
+    return map;
+  }, new Map()).values()]
+    .map(group => ({
+      ...group,
+      avg_idle_days: group.activity_count > 0
+        ? Math.round((group.avg_idle_days / group.activity_count) * 10) / 10
+        : 0,
+      label: group.course_name,
+      key: [
+        `${group.activity_count} activities`,
+        `${Math.round(group.avg_idle_days)}d avg idle`,
+        `${group.video_count} videos`
+      ].join(' | ')
+    }))
+    .sort((left, right) => {
+      if (right.cooldown_score !== left.cooldown_score) return right.cooldown_score - left.cooldown_score;
+      return Number(right.size_bytes || 0) - Number(left.size_bytes || 0);
+    })
+    .slice(0, 5);
+
   const largestActivityGroups = allActivityGroups.slice(0, 5);
   const largestCourseGroups = allCourseGroups.slice(0, 5);
 
@@ -2289,6 +2379,7 @@ async function buildHotStorageSummaryFromRows(rows = [], storageFiles = []) {
     largest_activity_groups: largestActivityGroups,
     largest_course_groups: largestCourseGroups,
     cooldown_candidates: cooldownCandidates,
+    cooldown_course_groups: cooldownCourseGroups,
     strategy,
     warning: {
       level: strategy.level,
@@ -2426,6 +2517,79 @@ async function getCachedLocalBackupStatus({ forceRefresh = false } = {}) {
   const status = normalizeLocalBackupStatus(await readJsonDocumentFromPrimaryStorage(LOCAL_BACKUP_STATUS_PATH));
   localBackupStatusCache = status;
   localBackupStatusLoadedAt = Date.now();
+  return status ? JSON.parse(JSON.stringify(status)) : null;
+}
+
+function normalizeProjectBackupStatus(raw = {}) {
+  if (!raw || typeof raw !== 'object') return null;
+  const generatedAt = toIsoStringOrNull(raw.generated_at || raw.last_success_at || raw.finished_at) || null;
+  const lastSuccessAt = toIsoStringOrNull(raw.last_success_at || generatedAt) || null;
+  const startedAt = toIsoStringOrNull(raw.started_at) || null;
+  const finishedAt = toIsoStringOrNull(raw.finished_at || generatedAt) || null;
+  const reportAgeMs = generatedAt ? Math.max(0, Date.now() - new Date(generatedAt).getTime()) : null;
+  const local = raw.local && typeof raw.local === 'object' ? raw.local : {};
+  const cloud = raw.cloud && typeof raw.cloud === 'object' ? raw.cloud : {};
+  const warningLevel = !generatedAt
+    ? 'warning'
+    : String(raw.status || '').trim() === 'error'
+      ? 'critical'
+      : cloud.uploaded === false
+        ? 'warning'
+      : reportAgeMs > 72 * 60 * 60 * 1000
+        ? 'warning'
+        : 'healthy';
+  const warningMessage = !generatedAt
+    ? 'Project backup agent has not reported yet. Run a local code/config snapshot first.'
+    : String(raw.status || '').trim() === 'error'
+      ? `Latest project backup failed: ${String(raw.error || 'Unknown error')}`
+      : cloud.uploaded === false
+        ? 'Project backup heartbeat is fresh, but the cloud archive upload is still missing. Check the R2 credentials on the maintainer PC.'
+      : reportAgeMs > 72 * 60 * 60 * 1000
+        ? 'Project backup heartbeat is older than 72 hours. Check the scheduled code backup task on the maintainer PC.'
+        : 'Project backup snapshots are healthy across local disk and cloud archive.';
+  return {
+    schema_version: String(raw.schema_version || 'classshow-project-backup-status-v1').trim(),
+    agent: String(raw.agent || 'project-backup-agent').trim(),
+    status: String(raw.status || 'ok').trim() || 'ok',
+    generated_at: generatedAt,
+    started_at: startedAt,
+    finished_at: finishedAt,
+    last_success_at: lastSuccessAt,
+    host: String(raw.host || '').trim() || null,
+    git_commit: String(raw.git_commit || '').trim() || null,
+    git_branch: String(raw.git_branch || '').trim() || null,
+    duration_ms: Math.max(0, Number(raw.duration_ms || 0)),
+    local: {
+      backup_root: String(local.backup_root || '').trim() || null,
+      zip_path: String(local.zip_path || '').trim() || null,
+      manifest_path: String(local.manifest_path || '').trim() || null,
+      zip_size_bytes: Math.max(0, Number(local.zip_size_bytes || 0)),
+      file_count: Math.max(0, Number(local.file_count || 0)),
+      include_secrets: !!local.include_secrets
+    },
+    cloud: {
+      provider: String(cloud.provider || '').trim() || null,
+      bucket: String(cloud.bucket || '').trim() || null,
+      object_key: String(cloud.object_key || '').trim() || null,
+      manifest_key: String(cloud.manifest_key || '').trim() || null,
+      uploaded: !!cloud.uploaded
+    },
+    warning: {
+      level: warningLevel,
+      message: warningMessage,
+      report_age_ms: reportAgeMs
+    },
+    error: String(raw.error || '').trim() || null
+  };
+}
+
+async function getCachedProjectBackupStatus({ forceRefresh = false } = {}) {
+  if (!forceRefresh && projectBackupStatusCache && (Date.now() - projectBackupStatusLoadedAt) < ARCHIVE_STORAGE_CACHE_TTL_MS) {
+    return JSON.parse(JSON.stringify(projectBackupStatusCache));
+  }
+  const status = normalizeProjectBackupStatus(await readJsonDocumentFromPrimaryStorage(PROJECT_BACKUP_STATUS_PATH));
+  projectBackupStatusCache = status;
+  projectBackupStatusLoadedAt = Date.now();
   return status ? JSON.parse(JSON.stringify(status)) : null;
 }
 
@@ -4261,6 +4425,40 @@ async function processArchiveQueue({ activityId = null, limit = ARCHIVE_BATCH_SI
   }
 }
 
+async function processArchiveQueueBatch({ activityIds = [], source = 'manual-batch', limitPerActivity = ARCHIVE_BATCH_SIZE } = {}) {
+  const uniqueActivityIds = [...new Set((Array.isArray(activityIds) ? activityIds : []).map(value => String(value || '').trim()).filter(Boolean))];
+  const results = [];
+  let processed = 0;
+  let queued = 0;
+  let skipped = 0;
+
+  for (const activityId of uniqueActivityIds) {
+    const result = await processArchiveQueue({
+      activityId,
+      limit: limitPerActivity,
+      source
+    });
+    results.push({
+      activity_id: activityId,
+      processed: Math.max(0, Number(result.processed || 0)),
+      queued: Math.max(0, Number(result.queued || 0)),
+      skipped: !!result.skipped,
+      reason: result.reason || null
+    });
+    processed += Math.max(0, Number(result.processed || 0));
+    queued += Math.max(0, Number(result.queued || 0));
+    skipped += result.skipped ? 1 : 0;
+  }
+
+  return {
+    activity_count: uniqueActivityIds.length,
+    processed,
+    queued,
+    skipped,
+    results
+  };
+}
+
 function startArchiveLoop() {
   const provider = getArchiveProviderInfo();
   if (!provider.configured) return;
@@ -4965,6 +5163,11 @@ app.get('/api/health', async (_req, res) => {
     warning: { level: 'critical', message: String(error?.message || error || 'Local backup status unavailable') },
     error: String(error?.message || error || 'Local backup status unavailable')
   }));
+  health.project_backup_status = await getCachedProjectBackupStatus().catch(error => ({
+    status: 'error',
+    warning: { level: 'critical', message: String(error?.message || error || 'Project backup status unavailable') },
+    error: String(error?.message || error || 'Project backup status unavailable')
+  }));
 
   if (!healthClient) {
     health.supabase_ok = false;
@@ -5059,6 +5262,23 @@ app.post('/api/super-admin/archive-run', superAdminAuth, async (req, res) => {
       source: 'manual-super-admin'
     });
     invalidateActivityOpsCache(activity_id);
+    res.json({ ok: true, ...result });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
+app.post('/api/super-admin/archive-run-batch', superAdminAuth, async (req, res) => {
+  try {
+    const activityIds = Array.isArray(req.body?.activity_ids) ? req.body.activity_ids : [];
+    const normalizedActivityIds = [...new Set(activityIds.map(value => String(value || '').trim()).filter(Boolean))];
+    if (!normalizedActivityIds.length) return res.status(400).json({ error: 'Missing activity_ids' });
+    const result = await processArchiveQueueBatch({
+      activityIds: normalizedActivityIds,
+      source: 'manual-super-admin-batch',
+      limitPerActivity: ARCHIVE_BATCH_SIZE
+    });
+    normalizedActivityIds.forEach(invalidateActivityOpsCache);
     res.json({ ok: true, ...result });
   } catch (e) {
     res.status(e.status || 500).json({ error: e.message });
@@ -6305,6 +6525,7 @@ async function buildSuperAdminOverview() {
     hot_storage: hotStorage,
     archive_storage: archiveStorage,
     local_backup_status: localBackupStatus,
+    project_backup_status: await getCachedProjectBackupStatus().catch(() => null),
     health: {
       version: process.env.RENDER_GIT_COMMIT || process.env.npm_package_version || 'local',
       environment: process.env.RENDER ? 'render' : (process.env.NODE_ENV || 'development'),

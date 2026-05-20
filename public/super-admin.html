@@ -180,6 +180,15 @@
           <div class="storage-meta-row" id="superLocalBackupMeta"></div>
           <div id="superLocalBackupNote" class="archive-gauge-note">Waiting for the latest hard-disk backup heartbeat...</div>
         </div>
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>Project backup agent</strong>
+            <span class="storage-meta-chip" id="superProjectBackupStatusChip">Loading</span>
+          </div>
+          <div class="mini-stat-grid" id="superProjectBackupStats"></div>
+          <div class="storage-meta-row" id="superProjectBackupMeta"></div>
+          <div id="superProjectBackupNote" class="archive-gauge-note">Waiting for the latest code/config snapshot heartbeat...</div>
+        </div>
       </div>
     </section>
 
@@ -464,6 +473,7 @@
       renderArchiveStorageTrend();
       renderArchiveOpsPanel();
       renderLocalBackupStatusPanel();
+      renderProjectBackupStatusPanel();
       renderCourses();
       renderRegistry();
       renderRecentActivities();
@@ -774,14 +784,20 @@
       if (!list.length) {
         return `
           <article class="archive-suggestion-card level-info">
-            <strong>${escapeHtml(title)}</strong>
+            <div class="archive-group-header">
+              <strong>${escapeHtml(title)}</strong>
+              ${options.groupAction ? `<div class="archive-group-actions">${options.groupAction}</div>` : ''}
+            </div>
             <p>${escapeHtml(emptyText)}</p>
           </article>
         `;
       }
       return `
         <article class="archive-suggestion-card level-info">
-          <strong>${escapeHtml(title)}</strong>
+          <div class="archive-group-header">
+            <strong>${escapeHtml(title)}</strong>
+            ${options.groupAction ? `<div class="archive-group-actions">${options.groupAction}</div>` : ''}
+          </div>
           <div class="archive-object-rank">
             ${list.map((item, index) => `
               <div class="archive-object-row">
@@ -806,6 +822,12 @@
       return `<button class="btn btn-secondary btn-sm archive-object-action" type="button" onclick="runSuperAdminArchiveQueue('${encodeURIComponent(targetActivityId)}')">加入归档</button>`;
     }
 
+    function renderSuperCourseBatchAction(item) {
+      const activityIds = Array.isArray(item?.activity_ids) ? item.activity_ids.map(value => String(value || '').trim()).filter(Boolean) : [];
+      if (!activityIds.length) return '';
+      return `<button class="btn btn-secondary btn-sm archive-object-action" type="button" onclick="runSuperAdminArchiveBatch('${encodeURIComponent(JSON.stringify(activityIds))}', '${encodeURIComponent(item.course_name || item.label || 'course')}')">批量归档</button>`;
+    }
+
     function renderHotStorageOpsPanel() {
       const hotStorage = overview?.hot_storage || {};
       const listEl = document.getElementById('superHotStorageStrategyList');
@@ -814,6 +836,8 @@
       const largestCourses = Array.isArray(hotStorage.largest_course_groups) ? hotStorage.largest_course_groups : [];
       const largestActivities = Array.isArray(hotStorage.largest_activity_groups) ? hotStorage.largest_activity_groups : [];
       const cooldownCandidates = Array.isArray(hotStorage.cooldown_candidates) ? hotStorage.cooldown_candidates : [];
+      const cooldownCourseGroups = Array.isArray(hotStorage.cooldown_course_groups) ? hotStorage.cooldown_course_groups : [];
+      const visibleCandidateIds = [...new Set(cooldownCandidates.map(item => String(item?.activity_id || '').trim()).filter(Boolean))];
       const largestItems = Array.isArray(hotStorage.largest_items)
         ? hotStorage.largest_items.map(item => ({
           ...item,
@@ -847,7 +871,13 @@
       listEl.innerHTML = [
         suggestionHtml,
         renderArchiveRankGroup('Move-to-cold candidates Top 5', cooldownCandidates, 'No low-activity hot-tier activities need cooling yet.', {
-          renderAction: renderSuperCooldownCandidateAction
+          renderAction: renderSuperCooldownCandidateAction,
+          groupAction: visibleCandidateIds.length
+            ? `<button class="btn btn-secondary btn-sm" type="button" onclick="runSuperAdminArchiveBatch('${encodeURIComponent(JSON.stringify(visibleCandidateIds))}', '${encodeURIComponent('Top 5 cooldown candidates')}')">批量加入归档</button>`
+            : ''
+        }),
+        renderArchiveRankGroup('Course batch archive Top 5', cooldownCourseGroups, 'No course-level archive batches are ready yet.', {
+          renderAction: renderSuperCourseBatchAction
         }),
         renderArchiveRankGroup('Hottest courses Top 5', largestCourses, 'No course-level hot storage groups are available yet.'),
         renderArchiveRankGroup('Hottest activities Top 5', largestActivities, 'No activity-level hot storage groups are available yet.'),
@@ -931,6 +961,54 @@
       noteEl.textContent = warning.message || 'Local backup agent heartbeat is healthy.';
     }
 
+    function renderProjectBackupStatusPanel() {
+      const status = overview?.project_backup_status || null;
+      const chipEl = document.getElementById('superProjectBackupStatusChip');
+      const statsEl = document.getElementById('superProjectBackupStats');
+      const metaEl = document.getElementById('superProjectBackupMeta');
+      const noteEl = document.getElementById('superProjectBackupNote');
+      if (!chipEl || !statsEl || !metaEl || !noteEl) return;
+
+      const warning = status?.warning || {};
+      const warningLevel = warning.level || 'warning';
+      chipEl.textContent = status ? (warningLevel === 'healthy' ? 'Healthy' : warningLevel === 'critical' ? 'Critical' : 'Warning') : 'Missing';
+      chipEl.style.color = warningLevel === 'critical' ? '#ef4444' : warningLevel === 'warning' ? '#f59e0b' : '#10b981';
+
+      if (!status) {
+        statsEl.innerHTML = '';
+        metaEl.innerHTML = '<span class="storage-meta-chip">system/project-backup-status.json not found yet</span>';
+        noteEl.className = 'archive-gauge-note warning-warning';
+        noteEl.textContent = 'Run the project backup agent once, then this card will show the latest code/config snapshot heartbeat.';
+        return;
+      }
+
+      const local = status.local || {};
+      const cloud = status.cloud || {};
+      statsEl.innerHTML = [
+        ['Files', local.file_count || 0],
+        ['Zip size', formatBytes(local.zip_size_bytes || 0)],
+        ['Uploaded', cloud.uploaded ? 'Yes' : 'No'],
+        ['Secrets', local.include_secrets ? 'Included' : 'Skipped']
+      ].map(item => `
+        <div class="mini-stat">
+          <strong>${escapeHtml(item[1])}</strong>
+          <span>${escapeHtml(item[0])}</span>
+        </div>
+      `).join('');
+
+      metaEl.innerHTML = [
+        status.host ? `Host ${status.host}` : '',
+        status.generated_at ? `Heartbeat ${formatDateTime(status.generated_at, { withSeconds: true }) || status.generated_at}` : '',
+        status.last_success_at ? `Last success ${formatDateTime(status.last_success_at, { withSeconds: true }) || status.last_success_at}` : '',
+        status.git_branch ? `Branch ${status.git_branch}` : '',
+        status.git_commit ? `Commit ${String(status.git_commit).slice(0, 10)}` : '',
+        cloud.bucket ? `Bucket ${cloud.bucket}` : ''
+      ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+
+      noteEl.className = `archive-gauge-note warning-${warningLevel}`;
+      noteEl.textContent = warning.message || 'Project backup snapshots are healthy across local disk and cloud archive.';
+    }
+
     function renderOverviewSummary() {
       const summary = overview?.summary || {};
       document.getElementById('sumCourses').textContent = Number(summary.course_count || 0);
@@ -940,11 +1018,12 @@
 
       const health = overview?.health || {};
       const localBackup = overview?.local_backup_status || {};
+      const projectBackup = overview?.project_backup_status || {};
       const hotStorage = overview?.hot_storage || {};
       const registryBackend = superStatus?.registry_backend || '-';
       const registryPath = superStatus?.registry_storage_path || '-';
       document.getElementById('healthLine').textContent =
-        `Version ${health.version || '-'} | Storage ${health.storage_maintenance_mode || '-'} | App key ${health.supabase_app_key_type || '-'} | Maint key ${health.supabase_maintenance_key_type || '-'} | Hot tier ${hotStorage.strategy?.phase || hotStorage.warning?.level || 'unknown'} | Registry ${registryBackend} ${registryPath} | Local backup ${localBackup.warning?.level || localBackup.status || 'missing'}`;
+        `Version ${health.version || '-'} | Storage ${health.storage_maintenance_mode || '-'} | App key ${health.supabase_app_key_type || '-'} | Maint key ${health.supabase_maintenance_key_type || '-'} | Hot tier ${hotStorage.strategy?.phase || hotStorage.warning?.level || 'unknown'} | Registry ${registryBackend} ${registryPath} | Local backup ${localBackup.warning?.level || localBackup.status || 'missing'} | Project backup ${projectBackup.warning?.level || projectBackup.status || 'missing'}`;
 
       document.getElementById('registryMeta').textContent =
         `版本 ${Number(overview?.registry?.version || 0)} | 最近更新 ${formatDateTime(overview?.registry?.updated_at, { withSeconds: true }) || '-'} | 已停用 ${Number(summary.disabled_course_count || 0)} | 动态骨架 ${Number(summary.scaffold_course_count || 0)}`;
@@ -1348,6 +1427,31 @@
         showRegistryEditor();
       } catch (error) {
         toast(error.message, 'error');
+      }
+    }
+
+    async function runSuperAdminArchiveBatch(encodedActivityIds, encodedLabel = '') {
+      if (!ensureSuperAdminReady()) return;
+      let activityIds = [];
+      try {
+        activityIds = JSON.parse(decodeURIComponent(String(encodedActivityIds || '')));
+      } catch {
+        activityIds = [];
+      }
+      activityIds = Array.isArray(activityIds)
+        ? [...new Set(activityIds.map(value => String(value || '').trim()).filter(Boolean))]
+        : [];
+      const label = decodeURIComponent(String(encodedLabel || '')) || 'selected activities';
+      if (!activityIds.length) return toast('Missing candidate activity IDs', 'error');
+      try {
+        const result = await api('/super-admin/archive-run-batch', {
+          method: 'POST',
+          body: JSON.stringify({ activity_ids: activityIds })
+        });
+        await loadOverview();
+        toast(`Batch archive queued for ${label}: ${result.queued || 0} ready, ${result.processed || 0} processed across ${result.activity_count || activityIds.length} activities.`, 'success');
+      } catch (error) {
+        toast('Batch archive queue failed: ' + error.message, 'error');
       }
     }
 

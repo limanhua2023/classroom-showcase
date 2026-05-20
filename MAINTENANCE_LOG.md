@@ -269,3 +269,12 @@
 - The teacher archive policy form now auto-tightens the suggested `archive-after-days` input whenever the hot tier has crossed the `archive / accelerate / critical` phases and the saved value is looser than the backend recommendation.
 - The teacher hint/meta chips now explain when the hot-tier policy has auto-lowered the current activity from its configured archive window to the stricter recommended value, so operators can save the new policy intentionally instead of wondering why the input changed.
 - Local validation passed with `node --check server.js` and inline-script parsing for both `public/teacher-dashboard.html` and `public/super-admin.html` after rebuilding the teacher dashboard from the current live production baseline to remove a damaged local encoding state.
+
+## 2026-05-20 Course Batch Archive Actions and Project Backup Agent
+- Added `POST /api/super-admin/archive-run-batch`, so the super-admin console can enqueue multiple low-activity hot-tier activities in one batch instead of clicking them one by one.
+- Hot-tier strategy payloads now expose `cooldown_course_groups`, grouping low-activity candidates by course and carrying the activity-id set needed for batch archive actions.
+- Teacher and super-admin dashboards now render `Course batch archive Top 5`, and the super-admin panel can batch-queue either the visible cooldown candidates or an entire low-activity course cluster.
+- Added a new `project-backup-agent` that creates local ZIP snapshots of important code/config files, writes manifests, and can upload the same package to Cloudflare R2 while reporting heartbeat state to `system/project-backup-status.json`.
+- Added companion files: `.env.project-backup.example`, `PROJECT_BACKUP_AGENT.md`, `scripts/install-project-backup-task.ps1`, and the npm entrypoint `npm run backup:project`.
+- The super-admin console now shows a dedicated `Project backup agent` status card and includes the project-backup state in the top operations summary line, so operators can see whether code/config recovery snapshots are fresh and whether cloud upload is missing.
+- Local validation completed with `node --check server.js`, `node --check scripts/project-backup-agent.mjs`, inline-script parsing for both dashboards, and `npm run backup:project -- --skip-cloud`, which produced a local code snapshot (`files=50`, ZIP about `614 KB`) without syntax/runtime failures.

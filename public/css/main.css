@@ -2013,6 +2013,18 @@ td img { width: 48px; height: 48px; border-radius: 6px; object-fit: cover; }
   gap: 10px;
   margin-top: 10px;
 }
+.archive-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.archive-group-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
 .archive-object-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;

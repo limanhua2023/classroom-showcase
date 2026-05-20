@@ -9,7 +9,8 @@
     "google-drive:oauth": "node scripts/google-drive-oauth-token.mjs",
     "ops:pressure": "node scripts/ops-pressure-test.mjs",
     "backup:local": "node scripts/local-backup-agent.mjs --once",
-    "backup:local:watch": "node scripts/local-backup-agent.mjs --watch"
+    "backup:local:watch": "node scripts/local-backup-agent.mjs --watch",
+    "backup:project": "node scripts/project-backup-agent.mjs --once"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1042.0",

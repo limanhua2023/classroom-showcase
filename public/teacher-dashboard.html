@@ -2139,6 +2139,67 @@
       `;
     }
 
+    function renderArchiveRankGroup(title, items, emptyText, options = {}) {
+      const list = Array.isArray(items) ? items : [];
+      if (!list.length) {
+        return `
+          <article class="archive-suggestion-card level-info">
+            <div class="archive-group-header">
+              <strong>${escapeHtml(title)}</strong>
+              ${options.groupAction ? `<div class="archive-group-actions">${options.groupAction}</div>` : ''}
+            </div>
+            <p>${escapeHtml(emptyText)}</p>
+          </article>
+        `;
+      }
+      return `
+        <article class="archive-suggestion-card level-info">
+          <div class="archive-group-header">
+            <strong>${escapeHtml(title)}</strong>
+            ${options.groupAction ? `<div class="archive-group-actions">${options.groupAction}</div>` : ''}
+          </div>
+          <div class="archive-object-rank">
+            ${list.map((item, index) => `
+              <div class="archive-object-row">
+                <div>
+                  <strong>#${index + 1} ${escapeHtml(item.label || item.key || 'archive-object')}</strong>
+                  <small>${escapeHtml(item.key || '')}</small>
+                </div>
+                <div class="archive-object-side">
+                  <div class="archive-object-size">${escapeHtml(formatBytes(item.size_bytes || item.size || 0))}</div>
+                  ${typeof options.renderAction === 'function' ? options.renderAction(item, index) || '' : ''}
+                </div>
+              </div>
+            `).join('')}
+          </div>
+        </article>
+      `;
+    }
+
+    function renderTeacherCooldownCandidateAction(item) {
+      const targetActivityId = String(item?.activity_id || '').trim();
+      if (!targetActivityId) return '';
+      if (String(targetActivityId) === String(actId)) {
+        return `<button class="btn btn-secondary btn-sm archive-object-action" type="button" onclick="queueCurrentHotCandidateArchive('${encodeURIComponent(targetActivityId)}')">加入归档</button>`;
+      }
+      return `
+        <button class="btn btn-secondary btn-sm archive-object-action" type="button" disabled title="Teacher dashboard can only queue the current activity">Only current</button>
+        <small class="archive-object-action-note">Use the super-admin page for cross-activity archive actions.</small>
+      `;
+    }
+
+    function renderTeacherCourseBatchAction(item) {
+      const activityIds = Array.isArray(item?.activity_ids) ? item.activity_ids.map(value => String(value || '').trim()).filter(Boolean) : [];
+      const includesCurrent = activityIds.includes(String(actId));
+      if (includesCurrent && activityIds.length === 1) {
+        return `<button class="btn btn-secondary btn-sm archive-object-action" type="button" onclick="queueCurrentHotCandidateArchive('${encodeURIComponent(String(actId))}')">加入归档</button>`;
+      }
+      return `
+        <button class="btn btn-secondary btn-sm archive-object-action" type="button" disabled title="Teacher dashboard does not run course-level batch archive">批量仅超管</button>
+        <small class="archive-object-action-note">课程级批量归档请到超级管理员页执行。</small>
+      `;
+    }
+
     function renderHotStorageStrategyPanel(hotStorage = {}) {
       const listEl = document.getElementById('hotStorageStrategyList');
       if (!listEl) return;
@@ -2146,6 +2207,7 @@
       const largestCourses = Array.isArray(hotStorage.largest_course_groups) ? hotStorage.largest_course_groups : [];
       const largestActivities = Array.isArray(hotStorage.largest_activity_groups) ? hotStorage.largest_activity_groups : [];
       const cooldownCandidates = Array.isArray(hotStorage.cooldown_candidates) ? hotStorage.cooldown_candidates : [];
+      const cooldownCourseGroups = Array.isArray(hotStorage.cooldown_course_groups) ? hotStorage.cooldown_course_groups : [];
       const largestItems = Array.isArray(hotStorage.largest_items) ? hotStorage.largest_items.map(item => ({
         ...item,
         label: item.title || item.storage_path || item.id || 'hot-file',
@@ -2176,6 +2238,9 @@
         suggestionHtml,
         renderArchiveRankGroup('Move-to-cold candidates Top 5', cooldownCandidates, 'No low-activity hot-tier activities need cooling yet.', {
           renderAction: renderTeacherCooldownCandidateAction
+        }),
+        renderArchiveRankGroup('Course batch archive Top 5', cooldownCourseGroups, 'No course-level archive batches are ready yet.', {
+          renderAction: renderTeacherCourseBatchAction
         }),
         renderArchiveRankGroup('Hottest courses Top 5', largestCourses, 'No course-level hot storage groups are available yet.'),
         renderArchiveRankGroup('Hottest activities Top 5', largestActivities, 'No activity-level hot storage groups are available yet.'),
