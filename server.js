@@ -2216,7 +2216,7 @@ async function buildHotStorageSummaryFromRows(rows = [], storageFiles = []) {
     .map(group => {
       const courseSummary = courseSummaryByName.get(normalizePortalCourseName(group.course_name || 'unknown-course')) || null;
       const daysIdle = Number.isFinite(Number(group.days_since_latest_upload)) ? Number(group.days_since_latest_upload) : 999;
-      const sizeScore = totalBytes > 0 ? ((Number(group.size_bytes || 0) / totalBytes) * 100) : 0;
+      const sizeScore = storageBytes > 0 ? ((Number(group.size_bytes || 0) / storageBytes) * 100) : 0;
       const staleScore = Math.min(daysIdle, 90) * 1.2;
       const recencyPenalty = Number(group.recent_upload_count_7d || 0) > 0 ? 45 : Number(group.recent_upload_count_30d || 0) > 0 ? 15 : 0;
       const dormantCourseBonus = courseSummary
