@@ -380,6 +380,96 @@
       align-items: center;
       margin-top: 14px;
     }
+    .teacher-backup-guide-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 14px;
+      margin-top: 14px;
+    }
+    .teacher-backup-guide-card {
+      padding: 16px;
+      border-radius: 22px;
+      background: linear-gradient(135deg, rgba(15, 23, 42, 0.03), rgba(37, 99, 235, 0.06));
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      min-height: 200px;
+    }
+    .teacher-backup-guide-card.level-warning {
+      background: linear-gradient(135deg, rgba(245, 158, 11, 0.10), rgba(255, 255, 255, 0.92));
+      border-color: rgba(245, 158, 11, 0.16);
+    }
+    .teacher-backup-guide-card.level-critical {
+      background: linear-gradient(135deg, rgba(239, 68, 68, 0.11), rgba(255, 255, 255, 0.94));
+      border-color: rgba(239, 68, 68, 0.18);
+    }
+    .teacher-backup-guide-head {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .teacher-backup-guide-title {
+      font-size: 1rem;
+      font-weight: 900;
+      color: var(--text-main);
+    }
+    .teacher-backup-guide-subtitle {
+      margin-top: 6px;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      line-height: 1.65;
+    }
+    .teacher-backup-guide-chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 78px;
+      padding: 7px 12px;
+      border-radius: 999px;
+      border: 1px solid transparent;
+      font-size: 0.76rem;
+      font-weight: 900;
+      line-height: 1;
+      flex: 0 0 auto;
+    }
+    .teacher-backup-guide-chip.level-healthy {
+      background: rgba(34, 197, 94, 0.13);
+      border-color: rgba(34, 197, 94, 0.18);
+      color: #166534;
+    }
+    .teacher-backup-guide-chip.level-warning {
+      background: rgba(245, 158, 11, 0.13);
+      border-color: rgba(245, 158, 11, 0.18);
+      color: #92400e;
+    }
+    .teacher-backup-guide-chip.level-critical {
+      background: rgba(239, 68, 68, 0.13);
+      border-color: rgba(239, 68, 68, 0.18);
+      color: #b91c1c;
+    }
+    .teacher-backup-guide-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .teacher-backup-guide-note {
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(255, 255, 255, 0.7);
+      border: 1px solid rgba(15, 23, 42, 0.07);
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      line-height: 1.65;
+      min-height: 72px;
+    }
+    .teacher-backup-guide-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: auto;
+    }
     .snapshot-hint {
       margin-top: 10px;
       color: var(--text-muted);
@@ -743,6 +833,9 @@
         grid-template-columns: 1fr;
       }
       .archive-gauge-layout {
+        grid-template-columns: 1fr;
+      }
+      .teacher-backup-guide-grid {
         grid-template-columns: 1fr;
       }
       .missing-media-item {
@@ -1291,6 +1384,8 @@
     if (!actId) location.href = 'index.html';
 
     let dashboardSummary = null;
+    let teacherBackupHealthOverview = null;
+    let lastTeacherBackupHealthError = '';
     let lastStorageDiagnostics = null;
     let lastTrashPurgeResult = null;
     let pendingRepairSubmissionId = null;
@@ -1326,6 +1421,7 @@
     let quarantineGroupFilter = readQuarantinePreference('group', '').trim();
     let dashboardBaseTitle = '教师后台 - ClassShow';
     let lastQuarantineExpiryReminderKey = '';
+    let lastLocalBackupAlertKey = '';
     let pendingQuarantinePurgePreview = null;
 
     const toggleMeta = {
@@ -3755,8 +3851,60 @@
       location.href = 'disaster-recovery-10min.html';
     }
 
+    function openProjectBackupRecoveryPage() {
+      location.href = 'project-backup-recovery.html';
+    }
+
     function openKeyRotationAcceptanceGuide() {
       location.href = 'key-rotation-backup-acceptance.html';
+    }
+
+    function scrollToTeacherBackupGuideCards() {
+      ensureTeacherBackupGuideCards();
+      const panel = document.getElementById('teacherBackupGuideGrid');
+      panel?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function normalizeBackupHealthLevel(status) {
+      const level = status?.warning?.level || status?.status || 'warning';
+      if (level === 'healthy' || level === 'ok') return 'healthy';
+      if (level === 'critical' || level === 'error') return 'critical';
+      return 'warning';
+    }
+
+    function backupHealthLabel(level) {
+      if (level === 'healthy') return '健康';
+      if (level === 'critical') return '严重';
+      return '提醒';
+    }
+
+    function formatTeacherBackupHeartbeat(...values) {
+      const candidate = values.find(Boolean);
+      return candidate ? (formatDateTime(candidate, { withSeconds: true }) || String(candidate)) : '未记录';
+    }
+
+    async function fetchTeacherBackupHealthOverview(forceRefresh = false) {
+      const url = forceRefresh ? `/api/health?_=${Date.now()}` : '/api/health';
+      const res = await fetch(url, {
+        headers: { 'cache-control': 'no-cache' }
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        throw new Error(data.error || data.detail || data.message || res.statusText || '无法读取健康状态');
+      }
+      return data;
+    }
+
+    async function refreshTeacherBackupHealthOverview(forceRefresh = false) {
+      try {
+        teacherBackupHealthOverview = await fetchTeacherBackupHealthOverview(forceRefresh);
+        lastTeacherBackupHealthError = '';
+      } catch (error) {
+        teacherBackupHealthOverview = null;
+        lastTeacherBackupHealthError = error.message || '无法读取健康状态';
+      }
+      renderTeacherBackupGuideCards();
+      renderTeacherLocalBackupAlert();
     }
 
     function injectTeacherBackupGuideButtons() {
@@ -3779,6 +3927,182 @@
         rotationBtn.textContent = '密钥轮换重验收';
         rotationBtn.addEventListener('click', openKeyRotationAcceptanceGuide);
         actionRow.appendChild(rotationBtn);
+      }
+    }
+
+    function ensureTeacherBackupGuideCards() {
+      const anchor = document.getElementById('snapshotMetaRow');
+      if (!anchor || document.getElementById('teacherBackupGuideGrid')) return;
+      const grid = document.createElement('div');
+      grid.id = 'teacherBackupGuideGrid';
+      grid.className = 'teacher-backup-guide-grid';
+      grid.innerHTML = `
+        <article class="teacher-backup-guide-card" id="teacherRecoveryGuideCard">
+          <div class="teacher-backup-guide-head">
+            <div>
+              <div class="teacher-backup-guide-title">10 分钟恢复手册</div>
+              <div class="teacher-backup-guide-subtitle">系统崩溃、误删、归档异常或页面报错时，先按止损与恢复步骤处理，再恢复课堂使用。</div>
+            </div>
+            <span class="teacher-backup-guide-chip level-warning" id="teacherRecoveryGuideChip">检查中</span>
+          </div>
+          <div class="teacher-backup-guide-meta" id="teacherRecoveryGuideMeta"></div>
+          <div class="teacher-backup-guide-note" id="teacherRecoveryGuideNote">正在读取备份与恢复状态...</div>
+          <div class="teacher-backup-guide-actions">
+            <button class="btn btn-secondary btn-sm" type="button" onclick="openDisasterRecoveryHandbook()">打开手册</button>
+            <button class="btn btn-secondary btn-sm" type="button" onclick="openProjectBackupRecoveryPage()">恢复演练详情</button>
+          </div>
+        </article>
+        <article class="teacher-backup-guide-card" id="teacherKeyRotationGuideCard">
+          <div class="teacher-backup-guide-head">
+            <div>
+              <div class="teacher-backup-guide-title">密钥轮换重验收</div>
+              <div class="teacher-backup-guide-subtitle">更换 Supabase、R2、Render 或 Google 相关密钥后，按固定验收流程确认备份链路和恢复链路仍然可用。</div>
+            </div>
+            <span class="teacher-backup-guide-chip level-warning" id="teacherKeyRotationGuideChip">检查中</span>
+          </div>
+          <div class="teacher-backup-guide-meta" id="teacherKeyRotationGuideMeta"></div>
+          <div class="teacher-backup-guide-note" id="teacherKeyRotationGuideNote">正在读取维护链路状态...</div>
+          <div class="teacher-backup-guide-actions">
+            <button class="btn btn-secondary btn-sm" type="button" onclick="openKeyRotationAcceptanceGuide()">打开验收</button>
+            <button class="btn btn-secondary btn-sm" type="button" onclick="openProjectBackupRecoveryPage()">查看备份状态</button>
+          </div>
+        </article>
+      `;
+      anchor.insertAdjacentElement('afterend', grid);
+    }
+
+    function renderTeacherBackupGuideCards() {
+      ensureTeacherBackupGuideCards();
+      const recoveryCard = document.getElementById('teacherRecoveryGuideCard');
+      const recoveryChip = document.getElementById('teacherRecoveryGuideChip');
+      const recoveryMeta = document.getElementById('teacherRecoveryGuideMeta');
+      const recoveryNote = document.getElementById('teacherRecoveryGuideNote');
+      const rotationCard = document.getElementById('teacherKeyRotationGuideCard');
+      const rotationChip = document.getElementById('teacherKeyRotationGuideChip');
+      const rotationMeta = document.getElementById('teacherKeyRotationGuideMeta');
+      const rotationNote = document.getElementById('teacherKeyRotationGuideNote');
+      if (!recoveryCard || !recoveryChip || !recoveryMeta || !recoveryNote || !rotationCard || !rotationChip || !rotationMeta || !rotationNote) return;
+
+      const health = teacherBackupHealthOverview || null;
+      if (!health) {
+        recoveryCard.className = 'teacher-backup-guide-card level-warning';
+        recoveryChip.className = 'teacher-backup-guide-chip level-warning';
+        recoveryChip.textContent = '待检查';
+        recoveryMeta.innerHTML = '<span class="storage-meta-chip">无法读取 /api/health</span>';
+        recoveryNote.textContent = lastTeacherBackupHealthError || '暂时无法读取备份状态，请稍后刷新。';
+
+        rotationCard.className = 'teacher-backup-guide-card level-warning';
+        rotationChip.className = 'teacher-backup-guide-chip level-warning';
+        rotationChip.textContent = '待检查';
+        rotationMeta.innerHTML = '<span class="storage-meta-chip">维护链路未读取</span>';
+        rotationNote.textContent = '请稍后刷新教师后台，确认维护密钥、备份链路和恢复链路状态。';
+        return;
+      }
+
+      const localStatus = health.local_backup_status || null;
+      const projectStatus = health.project_backup_status || null;
+      const secretsStatus = health.project_secrets_backup_status || null;
+      const localLevel = normalizeBackupHealthLevel(localStatus);
+      const projectLevel = normalizeBackupHealthLevel(projectStatus);
+      const secretsLevel = normalizeBackupHealthLevel(secretsStatus);
+      const recoveryLevel = [localLevel, projectLevel, secretsLevel].includes('critical')
+        ? 'critical'
+        : [localLevel, projectLevel, secretsLevel].every(level => level === 'healthy')
+          ? 'healthy'
+          : 'warning';
+      const coverage = secretsStatus?.coverage || {};
+      const configuredSources = Array.isArray(coverage.configured_source_files) ? coverage.configured_source_files.length : 0;
+      const foundSources = Array.isArray(coverage.found_source_files) ? coverage.found_source_files.length : 0;
+      const missingSources = Array.isArray(coverage.missing_source_files) ? coverage.missing_source_files.length : 0;
+      const recoveryMessage = localLevel !== 'healthy'
+        ? (localStatus?.warning?.message || '本地备份超过安全时限，请先检查电脑备份代理。')
+        : recoveryLevel === 'healthy'
+          ? '恢复链路健康：本地备份、项目快照、加密 secrets 备份均已通过最近一次验收。'
+          : '恢复链路可用，但仍有待复核项，请先打开恢复演练详情逐项确认。';
+
+      recoveryCard.className = `teacher-backup-guide-card level-${recoveryLevel}`;
+      recoveryChip.className = `teacher-backup-guide-chip level-${recoveryLevel}`;
+      recoveryChip.textContent = recoveryLevel === 'healthy' ? '已就绪' : recoveryLevel === 'critical' ? '需立刻处理' : '待复核';
+      recoveryMeta.innerHTML = [
+        `本地备份 ${backupHealthLabel(localLevel)}`,
+        `项目快照 ${backupHealthLabel(projectLevel)}`,
+        `Secrets ${backupHealthLabel(secretsLevel)}`,
+        `覆盖率 ${configuredSources ? `${foundSources}/${configuredSources}` : '0/0'}`,
+        localStatus?.last_success_at ? `本地最近成功 ${formatTeacherBackupHeartbeat(localStatus.last_success_at)}` : '',
+        projectStatus?.last_success_at ? `快照最近成功 ${formatTeacherBackupHeartbeat(projectStatus.last_success_at)}` : ''
+      ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+      recoveryNote.textContent = missingSources > 0
+        ? `${recoveryMessage} 当前仍缺 ${missingSources} 个 secrets 来源文件，请先补齐后再做恢复演练。`
+        : recoveryMessage;
+
+      const maintenanceReady = health.supabase_maintenance_key_type === 'service_role'
+        && health.storage_maintenance_mode === 'service_role';
+      const archiveReady = !!health.archive_provider?.configured;
+      const rotationLevel = !maintenanceReady
+        ? 'critical'
+        : archiveReady && recoveryLevel === 'healthy'
+          ? 'healthy'
+          : 'warning';
+      const rotationMessage = !maintenanceReady
+        ? '维护密钥尚未切到 service_role，轮换后不建议执行硬删、隔离和恢复。'
+        : archiveReady
+          ? '维护密钥与归档链路都已连通；轮换后按短手册完成一轮重验收即可。'
+          : '维护密钥已就绪，但归档提供方还需继续复核。';
+
+      rotationCard.className = `teacher-backup-guide-card level-${rotationLevel}`;
+      rotationChip.className = `teacher-backup-guide-chip level-${rotationLevel}`;
+      rotationChip.textContent = rotationLevel === 'healthy' ? '可验收' : rotationLevel === 'critical' ? '未就绪' : '需复核';
+      rotationMeta.innerHTML = [
+        `App key ${health.supabase_app_key_type || '-'}`,
+        `Maint key ${health.supabase_maintenance_key_type || '-'}`,
+        `存储模式 ${health.storage_maintenance_mode || '-'}`,
+        `归档 ${health.archive_provider?.name || '-'}${health.archive_provider?.configured ? '' : ' 未就绪'}`,
+        health.time ? `健康时间 ${formatTeacherBackupHeartbeat(health.time)}` : ''
+      ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+      rotationNote.textContent = `${rotationMessage} /api/health 当前版本 ${health.version || '-'}。`;
+    }
+
+    function ensureTeacherLocalBackupAlertButton() {
+      const topbarRight = document.querySelector('.topbar-right');
+      if (!topbarRight || document.getElementById('localBackupQuickBtn')) return;
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn btn-sm btn-secondary topbar-alert-btn';
+      btn.id = 'localBackupQuickBtn';
+      btn.innerHTML = '本地备份 <span class="nav-attention-dot" id="localBackupNavDot" hidden></span><span class="nav-attention-count" id="localBackupNavCount" hidden>0</span>';
+      btn.addEventListener('click', scrollToTeacherBackupGuideCards);
+      const displayBtn = Array.from(topbarRight.querySelectorAll('button')).find(el => String(el.getAttribute('onclick') || '').includes('openDisplay'));
+      if (displayBtn) topbarRight.insertBefore(btn, displayBtn);
+      else topbarRight.appendChild(btn);
+    }
+
+    function renderTeacherLocalBackupAlert() {
+      ensureTeacherLocalBackupAlertButton();
+      const btn = document.getElementById('localBackupQuickBtn');
+      const dot = document.getElementById('localBackupNavDot');
+      const count = document.getElementById('localBackupNavCount');
+      if (!btn || !dot || !count) return;
+
+      const localStatus = teacherBackupHealthOverview?.local_backup_status || null;
+      const localLevel = normalizeBackupHealthLevel(localStatus);
+      const hasAlert = !!localStatus && localLevel !== 'healthy';
+      btn.classList.toggle('attention-pulse', hasAlert);
+      dot.hidden = !hasAlert;
+      count.hidden = !hasAlert;
+      count.textContent = hasAlert ? '1' : '0';
+
+      const tooltip = hasAlert
+        ? (localStatus?.warning?.message || '本地备份超过安全时限，请尽快检查。')
+        : '本地备份心跳正常';
+      btn.title = tooltip;
+      btn.setAttribute('aria-label', tooltip);
+
+      const reminderKey = `${localLevel}:${localStatus?.last_success_at || ''}:${localStatus?.warning?.message || ''}`;
+      if (hasAlert && reminderKey !== lastLocalBackupAlertKey) {
+        lastLocalBackupAlertKey = reminderKey;
+        toast(`本地备份提醒：${tooltip}`, 'error');
+      } else if (!hasAlert) {
+        lastLocalBackupAlertKey = reminderKey;
       }
     }
 
@@ -3914,6 +4238,10 @@
 
     async function reloadDashboard(showToast = false) {
       try {
+        const healthPromise = fetchTeacherBackupHealthOverview(showToast).catch(error => {
+          lastTeacherBackupHealthError = error.message || '无法读取健康状态';
+          return null;
+        });
         const summary = await api('/teacher/dashboard-summary?activity_id=' + encodeURIComponent(actId));
         dashboardSummary = summary;
         syncSessionActivity(summary.activity || {});
@@ -3937,6 +4265,9 @@
         renderFeedbackList('feedbackLatestList', summary.latest_feedback, 'latest');
         renderLargestFiles(summary);
         renderRoster(summary);
+        teacherBackupHealthOverview = await healthPromise;
+        renderTeacherBackupGuideCards();
+        renderTeacherLocalBackupAlert();
         loadQrCode(summary.activity || {});
         if (showToast) toast('仪表盘已刷新', 'success');
       } catch (e) {
@@ -4217,6 +4548,10 @@
     });
 
     injectTeacherBackupGuideButtons();
+    ensureTeacherBackupGuideCards();
+    ensureTeacherLocalBackupAlertButton();
+    renderTeacherBackupGuideCards();
+    renderTeacherLocalBackupAlert();
     reloadDashboard();
     setInterval(() => reloadDashboard(false), 20000);
   </script>
