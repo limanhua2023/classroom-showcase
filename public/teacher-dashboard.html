@@ -273,6 +273,137 @@
       line-height: 1;
       flex: 0 0 auto;
     }
+    .teacher-backup-status-strip {
+      position: sticky;
+      top: 10px;
+      z-index: 95;
+      width: min(1180px, calc(100% - 40px));
+      margin: 14px auto 0;
+      padding: 12px 14px;
+      border-radius: 22px;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      background: rgba(255, 255, 255, 0.92);
+      backdrop-filter: blur(16px);
+      box-shadow: 0 16px 34px rgba(15, 23, 42, 0.12);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 14px;
+      scroll-margin-top: 96px;
+    }
+    .teacher-backup-status-strip.level-warning {
+      border-color: rgba(245, 158, 11, 0.22);
+      box-shadow: 0 18px 36px rgba(245, 158, 11, 0.12);
+    }
+    .teacher-backup-status-strip.level-critical {
+      border-color: rgba(239, 68, 68, 0.22);
+      box-shadow: 0 18px 36px rgba(239, 68, 68, 0.14);
+    }
+    .teacher-backup-status-main {
+      min-width: 0;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      flex: 1 1 auto;
+    }
+    .teacher-backup-status-intro {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+      min-width: 172px;
+      flex: 0 0 auto;
+    }
+    .teacher-backup-status-intro strong {
+      font-size: 0.92rem;
+      font-weight: 900;
+      color: var(--text-main);
+    }
+    .teacher-backup-status-intro span {
+      font-size: 0.76rem;
+      color: var(--text-light);
+      line-height: 1.5;
+    }
+    .teacher-backup-status-items {
+      min-width: 0;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      flex: 1 1 auto;
+    }
+    .teacher-backup-status-item {
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      background: rgba(248, 250, 252, 0.92);
+      color: var(--text-main);
+      border-radius: 18px;
+      padding: 10px 12px;
+      min-width: 118px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 6px;
+      cursor: pointer;
+      transition: transform 0.18s ease, box-shadow 0.18s ease, border-color 0.18s ease;
+    }
+    .teacher-backup-status-item:hover {
+      transform: translateY(-1px);
+      box-shadow: 0 10px 18px rgba(15, 23, 42, 0.08);
+    }
+    .teacher-backup-status-item strong {
+      font-size: 0.8rem;
+      font-weight: 900;
+      color: var(--text-main);
+      line-height: 1.2;
+    }
+    .teacher-backup-status-detail {
+      font-size: 0.72rem;
+      color: var(--text-light);
+      line-height: 1.45;
+      text-align: left;
+    }
+    .teacher-backup-status-pill {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 58px;
+      height: 22px;
+      padding: 0 10px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 900;
+      line-height: 1;
+      border: 1px solid transparent;
+    }
+    .teacher-backup-status-pill.level-healthy {
+      background: rgba(16, 185, 129, 0.12);
+      color: #047857;
+      border-color: rgba(16, 185, 129, 0.18);
+    }
+    .teacher-backup-status-pill.level-warning {
+      background: rgba(245, 158, 11, 0.12);
+      color: #b45309;
+      border-color: rgba(245, 158, 11, 0.18);
+    }
+    .teacher-backup-status-pill.level-critical {
+      background: rgba(239, 68, 68, 0.12);
+      color: #b91c1c;
+      border-color: rgba(239, 68, 68, 0.18);
+    }
+    .teacher-backup-status-note {
+      min-width: 0;
+      flex: 1 1 220px;
+      font-size: 0.76rem;
+      color: var(--text-muted);
+      line-height: 1.55;
+    }
+    .teacher-backup-status-actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 0 0 auto;
+    }
+    .teacher-backup-status-actions .btn {
+      white-space: nowrap;
+    }
     .card-badge.attention {
       background: rgba(239, 68, 68, 0.12);
       border-color: rgba(239, 68, 68, 0.2);
@@ -835,6 +966,27 @@
       .archive-gauge-layout {
         grid-template-columns: 1fr;
       }
+      .teacher-backup-status-strip {
+        width: calc(100% - 28px);
+        padding: 12px;
+        align-items: stretch;
+        flex-direction: column;
+      }
+      .teacher-backup-status-main {
+        width: 100%;
+        align-items: stretch;
+        flex-direction: column;
+      }
+      .teacher-backup-status-intro {
+        min-width: 0;
+      }
+      .teacher-backup-status-note {
+        flex-basis: auto;
+      }
+      .teacher-backup-status-actions {
+        width: 100%;
+        justify-content: flex-end;
+      }
       .teacher-backup-guide-grid {
         grid-template-columns: 1fr;
       }
@@ -850,6 +1002,12 @@
       }
     }
     @media (max-width: 640px) {
+      .teacher-backup-status-actions {
+        justify-content: stretch;
+      }
+      .teacher-backup-status-actions .btn {
+        width: 100%;
+      }
       .roster-toolbar {
         align-items: stretch;
       }
@@ -1385,6 +1543,7 @@
 
     let dashboardSummary = null;
     let teacherBackupHealthOverview = null;
+    let teacherBackupHealthRefreshBusy = false;
     let lastTeacherBackupHealthError = '';
     let lastStorageDiagnostics = null;
     let lastTrashPurgeResult = null;
@@ -3859,6 +4018,12 @@
       location.href = 'key-rotation-backup-acceptance.html';
     }
 
+    function scrollToTeacherBackupStatusStrip() {
+      ensureTeacherBackupStatusStrip();
+      const strip = document.getElementById('teacherBackupStatusStrip');
+      strip?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+
     function scrollToTeacherBackupGuideCards() {
       ensureTeacherBackupGuideCards();
       const panel = document.getElementById('teacherBackupGuideGrid');
@@ -3903,8 +4068,150 @@
         teacherBackupHealthOverview = null;
         lastTeacherBackupHealthError = error.message || '无法读取健康状态';
       }
+      renderTeacherBackupStatusStrip();
       renderTeacherBackupGuideCards();
       renderTeacherLocalBackupAlert();
+    }
+
+    function ensureTeacherBackupStatusStrip() {
+      const topbar = document.querySelector('.topbar');
+      if (!topbar || document.getElementById('teacherBackupStatusStrip')) return;
+      const strip = document.createElement('section');
+      strip.id = 'teacherBackupStatusStrip';
+      strip.className = 'teacher-backup-status-strip level-warning';
+      strip.innerHTML = `
+        <div class="teacher-backup-status-main">
+          <div class="teacher-backup-status-intro">
+            <strong>备份与恢复状态</strong>
+            <span id="teacherBackupStatusHeartbeat">正在读取最新验收状态...</span>
+          </div>
+          <div class="teacher-backup-status-items">
+            <button class="teacher-backup-status-item" type="button" onclick="scrollToTeacherBackupGuideCards()" id="teacherLocalBackupStatusItem">
+              <strong>本地备份</strong>
+              <span class="teacher-backup-status-pill level-warning" id="teacherLocalBackupStatusPill">检查中</span>
+              <span class="teacher-backup-status-detail" id="teacherLocalBackupStatusDetail">等待最近一次本地镜像心跳</span>
+            </button>
+            <button class="teacher-backup-status-item" type="button" onclick="scrollToTeacherBackupGuideCards()" id="teacherProjectBackupStatusItem">
+              <strong>代码快照</strong>
+              <span class="teacher-backup-status-pill level-warning" id="teacherProjectBackupStatusPill">检查中</span>
+              <span class="teacher-backup-status-detail" id="teacherProjectBackupStatusDetail">等待项目快照状态</span>
+            </button>
+            <button class="teacher-backup-status-item" type="button" onclick="scrollToTeacherBackupGuideCards()" id="teacherSecretsBackupStatusItem">
+              <strong>Secrets</strong>
+              <span class="teacher-backup-status-pill level-warning" id="teacherSecretsBackupStatusPill">检查中</span>
+              <span class="teacher-backup-status-detail" id="teacherSecretsBackupStatusDetail">等待加密备份覆盖面</span>
+            </button>
+          </div>
+          <div class="teacher-backup-status-note" id="teacherBackupStatusNote">如果这里出现黄色或红色，请先点击刷新验收状态，再进入恢复手册或密钥轮换重验收。</div>
+        </div>
+        <div class="teacher-backup-status-actions">
+          <button class="btn btn-secondary btn-sm" type="button" id="refreshTeacherBackupHealthBtn" onclick="manualRefreshTeacherBackupHealth()">刷新验收状态</button>
+        </div>
+      `;
+      topbar.insertAdjacentElement('afterend', strip);
+    }
+
+    function renderTeacherBackupStatusStrip() {
+      ensureTeacherBackupStatusStrip();
+      const strip = document.getElementById('teacherBackupStatusStrip');
+      const heartbeat = document.getElementById('teacherBackupStatusHeartbeat');
+      const note = document.getElementById('teacherBackupStatusNote');
+      const localPill = document.getElementById('teacherLocalBackupStatusPill');
+      const localDetail = document.getElementById('teacherLocalBackupStatusDetail');
+      const projectPill = document.getElementById('teacherProjectBackupStatusPill');
+      const projectDetail = document.getElementById('teacherProjectBackupStatusDetail');
+      const secretsPill = document.getElementById('teacherSecretsBackupStatusPill');
+      const secretsDetail = document.getElementById('teacherSecretsBackupStatusDetail');
+      if (!strip || !heartbeat || !note || !localPill || !localDetail || !projectPill || !projectDetail || !secretsPill || !secretsDetail) return;
+
+      const health = teacherBackupHealthOverview || null;
+      if (!health) {
+        strip.className = 'teacher-backup-status-strip level-warning';
+        heartbeat.textContent = lastTeacherBackupHealthError ? '验收状态读取失败' : '等待首次同步';
+        note.textContent = lastTeacherBackupHealthError || '暂时无法读取备份验收状态，请点击“刷新验收状态”重试。';
+
+        localPill.className = 'teacher-backup-status-pill level-warning';
+        localPill.textContent = '待检查';
+        localDetail.textContent = '未读取到本地备份心跳';
+
+        projectPill.className = 'teacher-backup-status-pill level-warning';
+        projectPill.textContent = '待检查';
+        projectDetail.textContent = '未读取到代码快照状态';
+
+        secretsPill.className = 'teacher-backup-status-pill level-warning';
+        secretsPill.textContent = '待检查';
+        secretsDetail.textContent = '未读取到 secrets 覆盖面';
+        return;
+      }
+
+      const localStatus = health.local_backup_status || null;
+      const projectStatus = health.project_backup_status || null;
+      const secretsStatus = health.project_secrets_backup_status || null;
+      const localLevel = normalizeBackupHealthLevel(localStatus);
+      const projectLevel = normalizeBackupHealthLevel(projectStatus);
+      const secretsLevel = normalizeBackupHealthLevel(secretsStatus);
+      const stripLevel = [localLevel, projectLevel, secretsLevel].includes('critical')
+        ? 'critical'
+        : [localLevel, projectLevel, secretsLevel].every(level => level === 'healthy')
+          ? 'healthy'
+          : 'warning';
+      strip.className = `teacher-backup-status-strip level-${stripLevel}`;
+
+      heartbeat.textContent = `最近同步 ${formatTeacherBackupHeartbeat(health.time, localStatus?.generated_at, projectStatus?.generated_at, secretsStatus?.generated_at)}`;
+
+      localPill.className = `teacher-backup-status-pill level-${localLevel}`;
+      localPill.textContent = backupHealthLabel(localLevel);
+      localDetail.textContent = localStatus?.last_success_at
+        ? `最近成功 ${formatTeacherBackupHeartbeat(localStatus.last_success_at)}`
+        : (localStatus?.warning?.message || '尚未记录本地备份成功时间');
+
+      projectPill.className = `teacher-backup-status-pill level-${projectLevel}`;
+      projectPill.textContent = backupHealthLabel(projectLevel);
+      projectDetail.textContent = projectStatus?.last_success_at
+        ? `最近成功 ${formatTeacherBackupHeartbeat(projectStatus.last_success_at)}`
+        : (projectStatus?.warning?.message || '尚未记录代码快照成功时间');
+
+      const coverage = secretsStatus?.coverage || {};
+      const configuredSources = Array.isArray(coverage.configured_source_files) ? coverage.configured_source_files.length : 0;
+      const foundSources = Array.isArray(coverage.found_source_files) ? coverage.found_source_files.length : 0;
+      secretsPill.className = `teacher-backup-status-pill level-${secretsLevel}`;
+      secretsPill.textContent = backupHealthLabel(secretsLevel);
+      secretsDetail.textContent = configuredSources
+        ? `覆盖 ${foundSources}/${configuredSources}，最近成功 ${formatTeacherBackupHeartbeat(secretsStatus?.last_success_at)}`
+        : (secretsStatus?.warning?.message || '尚未读取到 secrets 覆盖面');
+
+      note.textContent = localLevel !== 'healthy'
+        ? (localStatus?.warning?.message || '本地备份超过安全时间窗，请先检查电脑端备份代理。')
+        : stripLevel === 'healthy'
+          ? '本地备份、代码快照和加密 secrets 备份都处于健康状态。需要演练时，可直接下滑到运维卡片区域。'
+          : '备份链路可用，但仍有待复核项。建议先点击“刷新验收状态”，再进入恢复手册或密钥轮换重验收。';
+    }
+
+    async function manualRefreshTeacherBackupHealth() {
+      if (teacherBackupHealthRefreshBusy) return;
+      teacherBackupHealthRefreshBusy = true;
+      ensureTeacherBackupStatusStrip();
+      const btn = document.getElementById('refreshTeacherBackupHealthBtn');
+      const originalText = btn?.textContent || '刷新验收状态';
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = '刷新中...';
+      }
+      try {
+        await refreshTeacherBackupHealthOverview(true);
+        if (!teacherBackupHealthOverview) {
+          throw new Error(lastTeacherBackupHealthError || '无法读取最新验收状态');
+        }
+        toast('备份验收状态已刷新', 'success');
+      } catch (error) {
+        toast('刷新备份验收状态失败：' + (error.message || '未知错误'), 'error');
+      } finally {
+        teacherBackupHealthRefreshBusy = false;
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
+      }
     }
 
     function injectTeacherBackupGuideButtons() {
@@ -4070,7 +4377,7 @@
       btn.className = 'btn btn-sm btn-secondary topbar-alert-btn';
       btn.id = 'localBackupQuickBtn';
       btn.innerHTML = '本地备份 <span class="nav-attention-dot" id="localBackupNavDot" hidden></span><span class="nav-attention-count" id="localBackupNavCount" hidden>0</span>';
-      btn.addEventListener('click', scrollToTeacherBackupGuideCards);
+      btn.addEventListener('click', scrollToTeacherBackupStatusStrip);
       const displayBtn = Array.from(topbarRight.querySelectorAll('button')).find(el => String(el.getAttribute('onclick') || '').includes('openDisplay'));
       if (displayBtn) topbarRight.insertBefore(btn, displayBtn);
       else topbarRight.appendChild(btn);
@@ -4266,6 +4573,7 @@
         renderLargestFiles(summary);
         renderRoster(summary);
         teacherBackupHealthOverview = await healthPromise;
+        renderTeacherBackupStatusStrip();
         renderTeacherBackupGuideCards();
         renderTeacherLocalBackupAlert();
         loadQrCode(summary.activity || {});
@@ -4548,8 +4856,10 @@
     });
 
     injectTeacherBackupGuideButtons();
+    ensureTeacherBackupStatusStrip();
     ensureTeacherBackupGuideCards();
     ensureTeacherLocalBackupAlertButton();
+    renderTeacherBackupStatusStrip();
     renderTeacherBackupGuideCards();
     renderTeacherLocalBackupAlert();
     reloadDashboard();
