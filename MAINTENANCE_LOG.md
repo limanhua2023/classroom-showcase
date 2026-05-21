@@ -1,6 +1,14 @@
 # ClassShow 维护日志
 
 ## 2026-05-21
+### Teacher Ops Cards and Local Backup Expiry Attention
+- Promoted the two maintenance handbooks inside `public/teacher-dashboard.html` from small action buttons into first-class operations cards placed directly under the activity snapshot section, making recovery and key-rotation guidance visible without extra scrolling or hidden links.
+- Added a new teacher-facing backup-operations grid that summarizes local backup health, project code backup health, encrypted secrets backup health, and secrets coverage directly from the live `/api/health` payload.
+- Added a teacher topbar quick-entry button for local backup status, including a red attention dot, count badge, pulse animation, and contextual tooltip when the local backup chain falls out of the healthy window.
+- Wired the topbar attention entry to scroll directly to the new maintenance cards so operators can move from alert to action in one click.
+- Added graceful fallback rendering when the teacher page cannot load health data, so maintenance cards still surface recovery and key-rotation entry points instead of silently disappearing.
+- Acceptance result after deployment `2b93e9213044628968d55eaf6abf3b422fbd1123`: teacher dashboard markers present, `local_backup_status.warning.level = healthy`, `project_backup_status.warning.level = healthy`, and `project_secrets_backup_status.warning.level = healthy`.
+
 ### Teacher Recovery Entry and Key-Rotation Re-Acceptance Handbook
 - Added direct recovery-entry buttons into the teacher dashboard snapshot action area, so teachers can open the 10-minute disaster recovery handbook and the key-rotation re-acceptance guide without leaving the activity backup section.
 - Added `public/key-rotation-backup-acceptance.html` as the browser-viewable short handbook for post-rotation maintenance acceptance. It reads the live `/api/health` payload, shows service-role / archive-provider / backup-chain status, and provides copyable re-run and task-install commands.
