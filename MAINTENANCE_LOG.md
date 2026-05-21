@@ -1,6 +1,13 @@
 # ClassShow 维护日志
 
 ## 2026-05-21
+### Teacher Fixed Backup Status Strip and Manual Health Refresh
+- Added a sticky backup-status strip to `public/teacher-dashboard.html`, pinned near the top of the teacher page so operators can keep local backup, project code snapshot, and encrypted secrets status in view while browsing the rest of the dashboard.
+- Added compact status pills for the three backup chains, each showing the latest health level and recent success heartbeat pulled from `/api/health`.
+- Added a teacher-side manual refresh button for backup acceptance state, allowing operators to fetch the latest maintenance health immediately instead of waiting for the standard dashboard polling cycle.
+- Re-pointed the topbar local-backup alert button to the new sticky status strip, so warning navigation lands on the most compact actionable view first.
+- Production acceptance after deployment `fb204a27142fd9acab50b13b366372c55112d076`: teacher status-strip markers present, local backup healthy, project backup healthy, and encrypted secrets backup healthy.
+
 ### Teacher Ops Cards and Local Backup Expiry Attention
 - Promoted the two maintenance handbooks inside `public/teacher-dashboard.html` from small action buttons into first-class operations cards placed directly under the activity snapshot section, making recovery and key-rotation guidance visible without extra scrolling or hidden links.
 - Added a new teacher-facing backup-operations grid that summarizes local backup health, project code backup health, encrypted secrets backup health, and secrets coverage directly from the live `/api/health` payload.
