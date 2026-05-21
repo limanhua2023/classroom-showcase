@@ -79,7 +79,10 @@
         <div class="archive-ops-card">
           <div class="archive-ops-head">
             <strong>恢复 readiness</strong>
-            <span class="storage-meta-chip" id="superBackupOverviewStatusChip">Loading</span>
+            <span class="backup-status-tooltip-anchor" tabindex="0">
+              <span class="storage-meta-chip" id="superBackupOverviewStatusChip">Loading</span>
+              <span class="backup-status-tooltip-panel" id="superBackupOverviewStatusTooltip"></span>
+            </span>
           </div>
           <div class="mini-stat-grid" id="superBackupOverviewStats"></div>
           <div class="storage-meta-row" id="superBackupOverviewMeta"></div>
@@ -88,7 +91,10 @@
         <div class="archive-ops-card">
           <div class="archive-ops-head">
             <strong>最新恢复锚点</strong>
-            <span class="storage-meta-chip" id="superBackupOverviewAnchorChip">Loading</span>
+            <span class="backup-status-tooltip-anchor" tabindex="0">
+              <span class="storage-meta-chip" id="superBackupOverviewAnchorChip">Loading</span>
+              <span class="backup-status-tooltip-panel" id="superBackupOverviewAnchorTooltip"></span>
+            </span>
           </div>
           <div class="mini-stat-grid" id="superBackupOverviewAnchorStats"></div>
           <div class="storage-meta-row" id="superBackupOverviewAnchorMeta"></div>
@@ -211,7 +217,10 @@
         <div class="archive-ops-card">
           <div class="archive-ops-head">
             <strong>Local backup agent</strong>
-            <span class="storage-meta-chip" id="superLocalBackupStatusChip">Loading</span>
+            <span class="backup-status-tooltip-anchor" tabindex="0">
+              <span class="storage-meta-chip" id="superLocalBackupStatusChip">Loading</span>
+              <span class="backup-status-tooltip-panel" id="superLocalBackupStatusTooltip"></span>
+            </span>
           </div>
           <div class="mini-stat-grid" id="superLocalBackupStats"></div>
           <div class="storage-meta-row" id="superLocalBackupMeta"></div>
@@ -221,7 +230,10 @@
           <div class="archive-ops-head">
             <strong>Project backup agent</strong>
             <div class="archive-group-actions">
-              <span class="storage-meta-chip" id="superProjectBackupStatusChip">Loading</span>
+              <span class="backup-status-tooltip-anchor" tabindex="0">
+                <span class="storage-meta-chip" id="superProjectBackupStatusChip">Loading</span>
+                <span class="backup-status-tooltip-panel" id="superProjectBackupStatusTooltip"></span>
+              </span>
               <button class="btn btn-secondary btn-sm" type="button" onclick="openProjectBackupRecoveryGuide()">恢复演练说明</button>
             </div>
           </div>
@@ -234,7 +246,10 @@
           <div class="archive-ops-head">
             <strong>Encrypted secrets backup</strong>
             <div class="archive-group-actions">
-              <span class="storage-meta-chip" id="superProjectSecretsBackupStatusChip">Loading</span>
+              <span class="backup-status-tooltip-anchor" tabindex="0">
+                <span class="storage-meta-chip" id="superProjectSecretsBackupStatusChip">Loading</span>
+                <span class="backup-status-tooltip-panel" id="superProjectSecretsBackupStatusTooltip"></span>
+              </span>
               <button class="btn btn-secondary btn-sm" type="button" onclick="openProjectBackupRecoveryGuide()">恢复演练说明</button>
             </div>
           </div>
@@ -1012,6 +1027,7 @@
     function renderLocalBackupStatusPanel() {
       const status = overview?.local_backup_status || null;
       const chipEl = document.getElementById('superLocalBackupStatusChip');
+      const tooltipId = 'superLocalBackupStatusTooltip';
       const statsEl = document.getElementById('superLocalBackupStats');
       const metaEl = document.getElementById('superLocalBackupMeta');
       const noteEl = document.getElementById('superLocalBackupNote');
@@ -1027,6 +1043,11 @@
         metaEl.innerHTML = '<span class="storage-meta-chip">system/local-backup-status.json not found yet</span>';
         noteEl.className = 'archive-gauge-note warning-warning';
         noteEl.textContent = 'Run the local backup agent on your Windows machine once, then this card will show the latest hard-disk backup heartbeat.';
+        renderBackupStatusTooltip(tooltipId, 'Local backup', [
+          'Status Missing',
+          'Last success unavailable',
+          'Run npm run backup:local on the maintainer PC'
+        ]);
         return;
       }
 
@@ -1054,6 +1075,14 @@
 
       noteEl.className = `archive-gauge-note warning-${warningLevel}`;
       noteEl.textContent = warning.message || 'Local backup agent heartbeat is healthy.';
+      renderBackupStatusTooltip(tooltipId, 'Local backup', [
+        `Status ${backupHealthLabel(warningLevel)}`,
+        status.last_success_at ? `Last success ${formatBackupTooltipTime(status.last_success_at)}` : 'Last success unavailable',
+        status.generated_at ? `Heartbeat ${formatBackupTooltipTime(status.generated_at)}` : '',
+        status.host ? `Host ${status.host}` : '',
+        storage.bucket ? `Bucket ${storage.bucket}` : '',
+        status.mode ? `Mode ${status.mode}` : ''
+      ]);
     }
 
     function basenameFromAnyPath(value) {
@@ -1145,12 +1174,30 @@
         .sort((a, b) => b.getTime() - a.getTime())[0] || null;
     }
 
+    function formatBackupTooltipTime(value) {
+      return value ? (formatDateTime(value, { withSeconds: true }) || value) : '';
+    }
+
+    function renderBackupStatusTooltip(elementId, title, lines = [], emptyMessage = 'No backup heartbeat yet.') {
+      const tooltipEl = document.getElementById(elementId);
+      if (!tooltipEl) return;
+      const visibleLines = lines.filter(Boolean);
+      tooltipEl.innerHTML = [
+        `<span class="backup-status-tooltip-title">${escapeHtml(title)}</span>`,
+        ...(visibleLines.length
+          ? visibleLines.map(line => `<span class="backup-status-tooltip-line">${escapeHtml(line)}</span>`)
+          : [`<span class="backup-status-tooltip-line">${escapeHtml(emptyMessage)}</span>`])
+      ].join('');
+    }
+
     function renderBackupRecoveryOverviewPanel() {
       const summaryChipEl = document.getElementById('superBackupOverviewStatusChip');
+      const summaryTooltipId = 'superBackupOverviewStatusTooltip';
       const summaryStatsEl = document.getElementById('superBackupOverviewStats');
       const summaryMetaEl = document.getElementById('superBackupOverviewMeta');
       const summaryNoteEl = document.getElementById('superBackupOverviewNote');
       const anchorChipEl = document.getElementById('superBackupOverviewAnchorChip');
+      const anchorTooltipId = 'superBackupOverviewAnchorTooltip';
       const anchorStatsEl = document.getElementById('superBackupOverviewAnchorStats');
       const anchorMetaEl = document.getElementById('superBackupOverviewAnchorMeta');
       const anchorNoteEl = document.getElementById('superBackupOverviewAnchorNote');
@@ -1264,11 +1311,29 @@
           copyable: true
         })
       ].join('');
+      renderBackupStatusTooltip(summaryTooltipId, 'Restore readiness', [
+        `Healthy layers ${healthyCount}/3`,
+        `Restore ready ${restoreReady ? 'Yes' : 'No'}`,
+        `Coverage ready ${coverageReady ? 'Yes' : 'No'}`,
+        latestBackupTime ? `Latest success ${formatBackupTooltipTime(latestBackupTime.toISOString())}` : 'Latest success unavailable',
+        `Local ${backupHealthLabel(localLevel)}`,
+        `Project ${backupHealthLabel(projectLevel)}`,
+        `Secrets ${backupHealthLabel(secretsLevel)}`
+      ]);
+      renderBackupStatusTooltip(anchorTooltipId, 'Recovery anchor', [
+        latestBackupTime ? `Recovery baseline ${formatBackupTooltipTime(latestBackupTime.toISOString())}` : 'Recovery baseline unavailable',
+        latestZipName ? `ZIP ${latestZipName}` : 'ZIP pending',
+        latestBundleName ? `Bundle ${latestBundleName}` : 'Bundle pending',
+        projectCloud.uploaded ? 'Project cloud sync ready' : 'Project cloud sync pending',
+        secretsCloud.uploaded ? 'Secrets cloud sync ready' : 'Secrets cloud sync pending',
+        secretsStatus?.passphrase_hint ? `Hint ${secretsStatus.passphrase_hint}` : 'Passphrase hint missing'
+      ]);
     }
 
     function renderProjectBackupStatusPanel() {
       const status = overview?.project_backup_status || null;
       const chipEl = document.getElementById('superProjectBackupStatusChip');
+      const tooltipId = 'superProjectBackupStatusTooltip';
       const statsEl = document.getElementById('superProjectBackupStats');
       const metaEl = document.getElementById('superProjectBackupMeta');
       const noteEl = document.getElementById('superProjectBackupNote');
@@ -1286,6 +1351,11 @@
         noteEl.className = 'archive-gauge-note warning-warning';
         noteEl.textContent = 'Run the project backup agent once, then this card will show the latest code/config snapshot heartbeat.';
         detailsEl.innerHTML = '';
+        renderBackupStatusTooltip(tooltipId, 'Project backup', [
+          'Status Missing',
+          'Latest ZIP unavailable',
+          'Run npm run backup:project on the maintainer PC'
+        ]);
         return;
       }
 
@@ -1323,11 +1393,21 @@
         formatBackupDetailRow('Cloud object path', objectName, { displayValue: cloud.object_key, copyValue: cloud.object_key, copyable: !!cloud.object_key }),
         formatBackupDetailRow('Cloud manifest path', manifestName, { displayValue: cloud.manifest_key, copyValue: cloud.manifest_key, copyable: !!cloud.manifest_key })
       ].join('');
+      renderBackupStatusTooltip(tooltipId, 'Project backup', [
+        `Status ${backupHealthLabel(warningLevel)}`,
+        status.last_success_at ? `Last success ${formatBackupTooltipTime(status.last_success_at)}` : 'Last success unavailable',
+        status.generated_at ? `Heartbeat ${formatBackupTooltipTime(status.generated_at)}` : '',
+        local.zip_path ? `ZIP ${basenameFromAnyPath(local.zip_path)}` : 'ZIP unavailable',
+        cloud.uploaded ? 'Cloud upload ready' : 'Cloud upload pending',
+        status.git_branch ? `Branch ${status.git_branch}` : '',
+        status.git_commit ? `Commit ${String(status.git_commit).slice(0, 10)}` : ''
+      ]);
     }
 
     function renderProjectSecretsBackupStatusPanel() {
       const status = overview?.project_secrets_backup_status || null;
       const chipEl = document.getElementById('superProjectSecretsBackupStatusChip');
+      const tooltipId = 'superProjectSecretsBackupStatusTooltip';
       const statsEl = document.getElementById('superProjectSecretsBackupStats');
       const metaEl = document.getElementById('superProjectSecretsBackupMeta');
       const noteEl = document.getElementById('superProjectSecretsBackupNote');
@@ -1345,6 +1425,11 @@
         noteEl.className = 'archive-gauge-note warning-warning';
         noteEl.textContent = 'Run the encrypted secrets backup agent once, then this card will show the latest recovery heartbeat.';
         detailsEl.innerHTML = '';
+        renderBackupStatusTooltip(tooltipId, 'Secrets backup', [
+          'Status Missing',
+          'Encrypted bundle unavailable',
+          'Run npm run backup:secrets on the maintainer PC'
+        ]);
         return;
       }
 
@@ -1407,6 +1492,15 @@
           copyable: coverage.incompleteSourceFiles.length > 0
         })
       ].join('');
+      renderBackupStatusTooltip(tooltipId, 'Secrets backup', [
+        `Status ${backupHealthLabel(warningLevel)}`,
+        status.last_success_at ? `Last success ${formatBackupTooltipTime(status.last_success_at)}` : 'Last success unavailable',
+        status.generated_at ? `Heartbeat ${formatBackupTooltipTime(status.generated_at)}` : '',
+        local.bundle_path ? `Bundle ${basenameFromAnyPath(local.bundle_path)}` : 'Bundle unavailable',
+        `Coverage ${coverage.foundSourceFiles.length}/${coverage.configuredSourceFiles.length || coverage.foundSourceFiles.length}`,
+        coverage.missingSourceFiles.length ? `Missing sources ${coverage.missingSourceFiles.length}` : 'Missing sources 0',
+        coverage.incompleteSourceFiles.length ? `Incomplete sources ${coverage.incompleteSourceFiles.length}` : 'Incomplete sources 0'
+      ]);
     }
 
     function renderOverviewHealthLine() {

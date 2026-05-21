@@ -349,3 +349,10 @@
 - Built `.env.local-backup.local` and `.env.render-backup.local` on the maintainer PC from the existing local backup sources, then reran `npm run backup:secrets` to raise the source coverage from `1` file to `4` files with zero missing sources.
 - Executed two restore drills with `scripts/restore-secrets-backup.mjs` into clean `recovered_secrets/drill_*` folders and verified SHA-256 parity for `.env`, `.env.local-backup.local`, `.env.project-backup.local`, and `.env.render-backup.local`.
 - Remaining manual follow-up is now reduced to one true operator-only secret: `SUPER_ADMIN_PASSWORD` in `.env.render-backup.local`.
+
+## 2026-05-21 Portal-Level Backup Risk Visibility and Super-Admin Tooltip Detail
+- Added hover/focus backup tooltips to the super-admin recovery overview and the three detailed backup cards, surfacing the latest success timestamp, heartbeat timestamp, recovery anchor names, coverage counts, and cloud sync state without forcing a full panel refresh.
+- Reused the existing backup-only health refresh path on the super-admin page so operators can review detailed backup timing context without reloading course business data.
+- Extended the public course portal homepage with a backup-risk bridge into `super-admin.html`: the `超级管理` entry now raises a red badge when backup health is degraded, and an inline operations alert appears above the course grid with direct navigation to the super-admin console.
+- The portal risk bridge reads `/api/health` only, so the homepage can expose backup/restore risk early while staying decoupled from course registry payloads and without refreshing the rest of the portal content.
+- Added responsive support for the portal operations alert block so the warning banner collapses cleanly on mobile while preserving the direct maintenance entry point.

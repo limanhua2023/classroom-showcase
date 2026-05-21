@@ -54,7 +54,10 @@
           <button class="btn btn-secondary btn-block" onclick="location.href='teacher-login.html'">教师登录</button>
           <div style="margin-top:16px;">
             <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-login.html?create=1'">+ 创建新活动</button>
-            <button class="btn btn-sm btn-secondary" style="margin-left:8px;" onclick="location.href='super-admin.html'">超级管理</button>
+            <button id="portalSuperAdminButton" class="btn btn-sm btn-secondary portal-alert-button" style="margin-left:8px;" onclick="location.href='super-admin.html'">
+              超级管理
+              <span id="portalOpsAlertBadge" class="archive-alert-badge" hidden>!</span>
+            </button>
           </div>
         </div>
       </div>
@@ -67,6 +70,13 @@
             <p>以后 AI 学习课程、经济学学习课程、数学学习课程等，都从这里进入。课程页负责课程体验，公共底座继续负责身份、邀请码、上传、反馈、学习时长与运维。</p>
           </div>
           <button class="btn btn-secondary btn-sm" onclick="loadPortalCourses()">刷新课程</button>
+        </div>
+        <div class="course-ops-alert warning" id="portalOpsInlineAlert" hidden>
+          <div class="course-ops-alert-copy">
+            <strong><span class="course-ops-alert-dot"></span><span id="portalOpsInlineTitle">运维提醒</span></strong>
+            <span id="portalOpsInlineText">正在检查备份与恢复状态...</span>
+          </div>
+          <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='super-admin.html'">查看运维</button>
         </div>
         <div class="course-grid" id="coursePortalGrid">
           <div class="course-loading">正在读取课程目录...</div>
@@ -88,6 +98,8 @@
     }
 
     loadPortalCourses();
+    loadPortalOpsHealth();
+    setInterval(loadPortalOpsHealth, 60000);
 
     function switchLoginTab(tab) {
       const isStudent = tab === 'student';
@@ -152,6 +164,71 @@
         renderPortalCourses((data.courses && data.courses.length) ? data.courses : fallbackCourses());
       } catch (e) {
         grid.innerHTML = '<div class="course-loading error">课程目录暂时不可用，请直接使用邀请码进入课堂。</div>';
+      }
+    }
+
+    function normalizePortalOpsLevel(level) {
+      const value = String(level || '').toLowerCase();
+      if (value === 'healthy' || value === 'ok') return 'healthy';
+      if (value === 'critical' || value === 'error') return 'critical';
+      return 'warning';
+    }
+
+    function renderPortalOpsHealthState(level, issueCount, title, text) {
+      const button = document.getElementById('portalSuperAdminButton');
+      const badge = document.getElementById('portalOpsAlertBadge');
+      const alert = document.getElementById('portalOpsInlineAlert');
+      const alertTitle = document.getElementById('portalOpsInlineTitle');
+      const alertText = document.getElementById('portalOpsInlineText');
+      if (!button || !badge || !alert || !alertTitle || !alertText) return;
+
+      const isHealthy = level === 'healthy';
+      button.classList.toggle('portal-alert-active', !isHealthy);
+      button.title = isHealthy ? '系统备份状态健康' : text;
+      badge.hidden = isHealthy;
+      badge.textContent = issueCount > 9 ? '9+' : String(Math.max(issueCount, 1));
+      alert.hidden = isHealthy;
+      alert.className = `course-ops-alert ${level === 'critical' ? 'critical' : 'warning'}`;
+      alertTitle.textContent = title;
+      alertText.textContent = text;
+    }
+
+    function renderPortalOpsHealth(health) {
+      if (!health || health.error) {
+        renderPortalOpsHealthState(
+          'warning',
+          1,
+          '运维状态暂不可读取',
+          health?.error ? `无法读取备份健康状态：${health.error}` : '无法读取备份健康状态，请稍后重试。'
+        );
+        return;
+      }
+
+      const localLevel = normalizePortalOpsLevel(health?.local_backup_status?.warning?.level || health?.local_backup_status?.status);
+      const projectLevel = normalizePortalOpsLevel(health?.project_backup_status?.warning?.level || health?.project_backup_status?.status);
+      const secretsLevel = normalizePortalOpsLevel(health?.project_secrets_backup_status?.warning?.level || health?.project_secrets_backup_status?.status);
+      const issues = [];
+      if (localLevel !== 'healthy') issues.push(`本地备份${localLevel === 'critical' ? '严重异常' : '预警'}`);
+      if (projectLevel !== 'healthy') issues.push(`代码快照${projectLevel === 'critical' ? '严重异常' : '预警'}`);
+      if (secretsLevel !== 'healthy') issues.push(`Secrets 备份${secretsLevel === 'critical' ? '严重异常' : '预警'}`);
+
+      if (!issues.length) {
+        renderPortalOpsHealthState('healthy', 0, '', '');
+        return;
+      }
+
+      const aggregateLevel = [localLevel, projectLevel, secretsLevel].includes('critical') ? 'critical' : 'warning';
+      const title = aggregateLevel === 'critical' ? '运维红色预警' : '运维黄色预警';
+      const text = `${issues.join(' / ')}。请超级管理员尽快登录检查备份与恢复状态。`;
+      renderPortalOpsHealthState(aggregateLevel, issues.length, title, text);
+    }
+
+    async function loadPortalOpsHealth() {
+      try {
+        const health = await api('/health');
+        renderPortalOpsHealth(health);
+      } catch (error) {
+        renderPortalOpsHealth({ error: error.message || 'request failed' });
       }
     }
 
