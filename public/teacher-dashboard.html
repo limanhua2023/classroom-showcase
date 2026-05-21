@@ -3751,6 +3751,37 @@
       });
     }
 
+    function openDisasterRecoveryHandbook() {
+      location.href = 'disaster-recovery-10min.html';
+    }
+
+    function openKeyRotationAcceptanceGuide() {
+      location.href = 'key-rotation-backup-acceptance.html';
+    }
+
+    function injectTeacherBackupGuideButtons() {
+      const actionRow = document.querySelector('.snapshot-actions');
+      if (!actionRow) return;
+      if (!document.getElementById('teacherRecoveryGuideBtn')) {
+        const recoveryBtn = document.createElement('button');
+        recoveryBtn.id = 'teacherRecoveryGuideBtn';
+        recoveryBtn.type = 'button';
+        recoveryBtn.className = 'btn btn-secondary btn-sm';
+        recoveryBtn.textContent = '10 分钟恢复手册';
+        recoveryBtn.addEventListener('click', openDisasterRecoveryHandbook);
+        actionRow.appendChild(recoveryBtn);
+      }
+      if (!document.getElementById('teacherKeyRotationGuideBtn')) {
+        const rotationBtn = document.createElement('button');
+        rotationBtn.id = 'teacherKeyRotationGuideBtn';
+        rotationBtn.type = 'button';
+        rotationBtn.className = 'btn btn-secondary btn-sm';
+        rotationBtn.textContent = '密钥轮换重验收';
+        rotationBtn.addEventListener('click', openKeyRotationAcceptanceGuide);
+        actionRow.appendChild(rotationBtn);
+      }
+    }
+
     async function downloadActivitySnapshot() {
       const btn = document.getElementById('downloadSnapshotBtn');
       if (!btn) return;
@@ -4185,6 +4216,7 @@
       if (event.key === 'Escape' && pendingQuarantinePurgePreview) closeQuarantinePurgePreview();
     });
 
+    injectTeacherBackupGuideButtons();
     reloadDashboard();
     setInterval(() => reloadDashboard(false), 20000);
   </script>

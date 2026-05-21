@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>密钥轮换后备份重验收 - ClassShow</title>
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body class="course-page">
+  <header class="topbar">
+    <a class="topbar-logo" href="index.html">Class<span>Show</span></a>
+    <div class="topbar-right">
+      <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='teacher-dashboard.html'">教师后台</button>
+      <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='disaster-recovery-10min.html'">10 分钟恢复手册</button>
+      <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='super-admin.html'">超级管理员页</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="course-hero">
+      <div class="course-hero-copy">
+        <div class="brand-kicker">KEY ROTATION ACCEPTANCE</div>
+        <h1>密钥轮换后备份重验收</h1>
+        <p>当你轮换 Supabase service-role、R2 Access Key、Render 生产密钥或超级管理员密码后，用这份短手册做一次 3 到 5 分钟重验收，确认备份、恢复和维护链路没有被新密钥打断。</p>
+        <div class="course-hero-actions">
+          <button class="btn btn-primary" type="button" onclick="loadAcceptanceStatus(true)">刷新状态</button>
+          <button class="btn btn-secondary" type="button" onclick="copyHealthUrl()">复制 /api/health</button>
+          <button class="btn btn-secondary" type="button" onclick="copyProjectBackupCommand()">复制代码备份命令</button>
+          <button class="btn btn-secondary" type="button" onclick="copySecretsBackupCommand()">复制 secrets 备份命令</button>
+        </div>
+      </div>
+      <div class="course-scoreboard" aria-label="重验收摘要">
+        <div><strong id="rotationReadyValue">-</strong><span>重验收结果</span></div>
+        <div><strong id="rotationMaintenanceKeyValue">-</strong><span>维护密钥</span></div>
+        <div><strong id="rotationArchiveProviderValue">-</strong><span>归档提供方</span></div>
+        <div><strong id="rotationSecretsCoverageValue">0/0</strong><span>Secrets 覆盖</span></div>
+      </div>
+    </section>
+
+    <section class="course-control-strip">
+      <div>
+        <strong>当前结论</strong>
+        <span id="rotationHeadline">等待读取最新健康状态...</span>
+      </div>
+      <div class="course-card-actions">
+        <button class="btn btn-secondary btn-sm" type="button" onclick="copyTaskInstallCommand('local')">复制本地备份任务</button>
+        <button class="btn btn-secondary btn-sm" type="button" onclick="copyTaskInstallCommand('project')">复制代码备份任务</button>
+        <button class="btn btn-secondary btn-sm" type="button" onclick="copyTaskInstallCommand('secrets')">复制 secrets 任务</button>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">LIVE STATUS</div>
+          <h2>线上健康状态</h2>
+          <p>这部分直接读取生产环境 <code>/api/health</code>，先确认新密钥已经真正被 Render 服务读到，而不是只改了本地文件。</p>
+        </div>
+      </div>
+      <div class="archive-ops-grid">
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>关键链路</strong>
+            <span class="storage-meta-chip" id="rotationVersionChip">Version -</span>
+          </div>
+          <div class="mini-stat-grid" id="rotationLiveStats"></div>
+          <div class="storage-meta-row" id="rotationLiveMeta"></div>
+          <div id="rotationLiveNote" class="archive-gauge-note">等待读取健康状态...</div>
+        </div>
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>备份链路</strong>
+            <span class="storage-meta-chip" id="rotationBackupChip">Backup -</span>
+          </div>
+          <div class="mini-stat-grid" id="rotationBackupStats"></div>
+          <div class="storage-meta-row" id="rotationBackupMeta"></div>
+          <div id="rotationBackupNote" class="archive-gauge-note">等待读取备份状态...</div>
+          <div id="rotationBackupDetails" class="backup-detail-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">FAST CHECKLIST</div>
+          <h2>密钥轮换后 6 步重验收</h2>
+          <p>顺序不要乱。先确认线上读到新密钥，再补本地备份，再重装计划任务，最后做真实验收。</p>
+        </div>
+      </div>
+      <div class="archive-suggestion-list">
+        <article class="archive-suggestion-card level-warning">
+          <strong>1. 更新 Render 生产变量</strong>
+          <p>至少检查 <code>SUPABASE_SERVICE_ROLE_KEY</code>、<code>ARCHIVE_S3_ACCESS_KEY_ID</code>、<code>ARCHIVE_S3_SECRET_ACCESS_KEY</code>、<code>SUPER_ADMIN_PASSWORD</code>。保存后必须重新部署。</p>
+        </article>
+        <article class="archive-suggestion-card level-warning">
+          <strong>2. 更新本地备份源文件</strong>
+          <p>同步更新 <code>.env.project-backup.local</code>、<code>.env.secrets-backup.local</code>、<code>.env.local-backup.local</code>、<code>.env.render-backup.local</code>，避免云端和本地的密钥版本不一致。</p>
+        </article>
+        <article class="archive-suggestion-card level-info">
+          <strong>3. 立即重跑代码与 secrets 备份</strong>
+          <p>执行 <code>npm run backup:project</code> 和 <code>npm run backup:secrets</code>，确保新的密钥版本已经写入最新备份包，而不是继续沿用旧快照。</p>
+        </article>
+        <article class="archive-suggestion-card level-info">
+          <strong>4. 重装 3 个计划任务</strong>
+          <p>重新安装 local / project / secrets 三个 Windows 计划任务，避免旧任务缓存了过期环境变量。</p>
+        </article>
+        <article class="archive-suggestion-card level-info">
+          <strong>5. 做一次教师侧真实动作验收</strong>
+          <p>在教师后台确认活动快照下载、写入云端、归档/恢复入口和恢复手册入口都可正常打开。不要只看健康页。</p>
+        </article>
+        <article class="archive-suggestion-card level-healthy">
+          <strong>6. 核对健康页与覆盖率</strong>
+          <p>目标是看到维护密钥为 <code>service_role</code>、归档提供方为已配置、项目备份/Secrets 备份/本地备份全为健康，Secrets 覆盖率为 <code>4/4</code>。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">COPY COMMANDS</div>
+          <h2>常用命令</h2>
+          <p>下面这些命令都已经按当前项目结构写好。轮换密钥后，维护人员直接复制即可。</p>
+        </div>
+      </div>
+      <div class="archive-ops-grid">
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>立即重跑备份</strong>
+            <button class="btn btn-secondary btn-sm" type="button" onclick="copyCombinedBackupCommand()">复制</button>
+          </div>
+          <pre class="archive-command-block" id="rotationBackupCommandBlock">npm run backup:project
+npm run backup:secrets</pre>
+        </div>
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>重装计划任务</strong>
+            <button class="btn btn-secondary btn-sm" type="button" onclick="copyAllTaskInstallCommands()">复制</button>
+          </div>
+          <pre class="archive-command-block" id="rotationTaskCommandBlock">powershell -ExecutionPolicy Bypass -File scripts/install-local-backup-task.ps1
+powershell -ExecutionPolicy Bypass -File scripts/install-project-backup-task.ps1
+powershell -ExecutionPolicy Bypass -File scripts/install-secrets-backup-task.ps1</pre>
+        </div>
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>Secrets 恢复演练</strong>
+            <button class="btn btn-secondary btn-sm" type="button" onclick="copySecretsRestoreCommand()">复制</button>
+          </div>
+          <pre class="archive-command-block" id="rotationRestoreCommandBlock">node scripts/restore-secrets-backup.mjs --input "secrets_backup\\snapshots\\&lt;timestamp&gt;\\classshow_secrets_backup_&lt;timestamp&gt;.bundle.json" --output ".\\recovered_secrets" --passphrase "&lt;your-passphrase&gt;"</pre>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    let healthPayload = null;
+
+    init();
+
+    async function init() {
+      await loadAcceptanceStatus(false);
+    }
+
+    async function loadAcceptanceStatus(forceRefresh) {
+      try {
+        const url = forceRefresh ? `/api/health?_=${Date.now()}` : '/api/health';
+        const response = await fetch(url, { credentials: 'same-origin' });
+        const payload = await response.json().catch(() => ({}));
+        if (!response.ok) {
+          const detail = payload?.detail || payload?.error || payload?.message || `HTTP ${response.status}`;
+          throw new Error(detail);
+        }
+        healthPayload = payload;
+        renderAcceptanceStatus();
+        if (forceRefresh) toast('已刷新重验收状态', 'success');
+      } catch (error) {
+        document.getElementById('rotationReadyValue').textContent = 'Review';
+        document.getElementById('rotationHeadline').textContent = `读取失败：${error.message}`;
+        document.getElementById('rotationLiveNote').className = 'archive-gauge-note warning-critical';
+        document.getElementById('rotationLiveNote').textContent = `无法读取 /api/health：${error.message}`;
+        document.getElementById('rotationBackupNote').className = 'archive-gauge-note warning-critical';
+        document.getElementById('rotationBackupNote').textContent = '健康页读取失败，暂时无法判断密钥轮换后的备份链路。';
+        toast(`读取健康状态失败：${error.message}`, 'error');
+      }
+    }
+
+    function toast(message, type) {
+      const background = type === 'success' ? '#0ea5e9' : type === 'error' ? '#ef4444' : '#1f2937';
+      const el = document.createElement('div');
+      el.textContent = message;
+      el.style.position = 'fixed';
+      el.style.right = '20px';
+      el.style.bottom = '20px';
+      el.style.zIndex = '9999';
+      el.style.padding = '10px 14px';
+      el.style.borderRadius = '999px';
+      el.style.background = background;
+      el.style.color = '#fff';
+      el.style.boxShadow = '0 12px 30px rgba(15, 23, 42, 0.18)';
+      document.body.appendChild(el);
+      setTimeout(() => el.remove(), 2200);
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
+
+    function formatDateTime(value, options = {}) {
+      if (!value) return '';
+      const date = value instanceof Date ? value : new Date(value);
+      if (Number.isNaN(date.getTime())) return '';
+      const formatter = new Intl.DateTimeFormat('zh-CN', {
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit',
+        hour: '2-digit',
+        minute: '2-digit',
+        second: options.withSeconds ? '2-digit' : undefined,
+        hour12: false,
+        timeZone: 'Asia/Bangkok'
+      });
+      return formatter.format(date);
+    }
+
+    function formatBytes(value) {
+      const bytes = Number(value || 0);
+      if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+      const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+      let size = bytes;
+      let index = 0;
+      while (size >= 1024 && index < units.length - 1) {
+        size /= 1024;
+        index += 1;
+      }
+      const digits = size >= 100 || index === 0 ? 0 : size >= 10 ? 1 : 2;
+      return `${size.toFixed(digits)} ${units[index]}`;
+    }
+
+    function normalizeHealthLevel(status) {
+      const level = status?.warning?.level || status?.status || 'warning';
+      if (level === 'healthy' || level === 'ok') return 'healthy';
+      if (level === 'critical' || level === 'error') return 'critical';
+      return 'warning';
+    }
+
+    function healthLabel(status) {
+      const level = normalizeHealthLevel(status);
+      if (level === 'healthy') return 'Healthy';
+      if (level === 'critical') return 'Critical';
+      return 'Warning';
+    }
+
+    function summarizeSecretsCoverage(status) {
+      const coverage = status?.coverage || {};
+      const configuredSourceFiles = Array.isArray(coverage.configured_source_files) ? coverage.configured_source_files : [];
+      const foundSourceFiles = Array.isArray(coverage.found_source_files) ? coverage.found_source_files : [];
+      const missingSourceFiles = Array.isArray(coverage.missing_source_files) ? coverage.missing_source_files : [];
+      const sourceFileDetails = Array.isArray(coverage.source_file_details) ? coverage.source_file_details : [];
+      const incompleteSourceFiles = sourceFileDetails.filter(item =>
+        Number(item?.empty_assignment_count || 0) > 0 || Number(item?.placeholder_assignment_count || 0) > 0
+      );
+      return {
+        configuredSourceFiles,
+        foundSourceFiles,
+        missingSourceFiles,
+        incompleteSourceFiles
+      };
+    }
+
+    function copyText(value, successMessage) {
+      navigator.clipboard.writeText(String(value || ''))
+        .then(() => toast(successMessage || '已复制', 'success'))
+        .catch(() => toast('复制失败，请手动复制', 'error'));
+    }
+
+    function copyHealthUrl() {
+      copyText(`${location.origin}/api/health`, '已复制 /api/health 地址');
+    }
+
+    function copyProjectBackupCommand() {
+      copyText('npm run backup:project', '已复制代码备份命令');
+    }
+
+    function copySecretsBackupCommand() {
+      copyText('npm run backup:secrets', '已复制 secrets 备份命令');
+    }
+
+    function copyCombinedBackupCommand() {
+      copyText('npm run backup:project\nnpm run backup:secrets', '已复制组合备份命令');
+    }
+
+    function copyTaskInstallCommand(kind) {
+      const mapping = {
+        local: 'powershell -ExecutionPolicy Bypass -File scripts/install-local-backup-task.ps1',
+        project: 'powershell -ExecutionPolicy Bypass -File scripts/install-project-backup-task.ps1',
+        secrets: 'powershell -ExecutionPolicy Bypass -File scripts/install-secrets-backup-task.ps1'
+      };
+      copyText(mapping[kind] || '', '已复制计划任务命令');
+    }
+
+    function copyAllTaskInstallCommands() {
+      copyText(document.getElementById('rotationTaskCommandBlock').textContent, '已复制全部计划任务命令');
+    }
+
+    function copySecretsRestoreCommand() {
+      copyText(document.getElementById('rotationRestoreCommandBlock').textContent, '已复制 secrets 恢复命令');
+    }
+
+    function renderAcceptanceStatus() {
+      const projectBackup = healthPayload?.project_backup_status || null;
+      const secretsBackup = healthPayload?.project_secrets_backup_status || null;
+      const localBackup = healthPayload?.local_backup_status || null;
+      const archiveProvider = healthPayload?.archive_provider || {};
+      const coverage = summarizeSecretsCoverage(secretsBackup);
+      const coverageTarget = coverage.configuredSourceFiles.length || coverage.foundSourceFiles.length || 0;
+      const coverageReady = coverageTarget > 0
+        && coverage.missingSourceFiles.length === 0
+        && coverage.incompleteSourceFiles.length === 0;
+      const maintenanceReady = healthPayload?.supabase_maintenance_key_type === 'service_role'
+        && healthPayload?.storage_maintenance_mode === 'service_role';
+      const backupReady = normalizeHealthLevel(projectBackup) === 'healthy'
+        && normalizeHealthLevel(secretsBackup) === 'healthy'
+        && normalizeHealthLevel(localBackup) === 'healthy';
+      const archiveReady = !!archiveProvider?.configured;
+      const ready = maintenanceReady && archiveReady && backupReady && coverageReady;
+
+      document.getElementById('rotationReadyValue').textContent = ready ? 'Ready' : 'Review';
+      document.getElementById('rotationMaintenanceKeyValue').textContent = healthPayload?.supabase_maintenance_key_type || 'missing';
+      document.getElementById('rotationArchiveProviderValue').textContent = archiveProvider?.name || 'none';
+      document.getElementById('rotationSecretsCoverageValue').textContent = coverageTarget ? `${coverage.foundSourceFiles.length}/${coverageTarget}` : '0/0';
+      document.getElementById('rotationHeadline').textContent = ready
+        ? `重验收通过：维护密钥、归档链路、代码备份、secrets 备份和覆盖率均正常。最近成功时间 ${formatDateTime(latestSuccessTime(projectBackup, secretsBackup, localBackup), { withSeconds: true }) || '-' }`
+        : '发现至少一项重验收条件未达标。请按下方 6 步清单逐项补齐后再继续教学使用。';
+
+      document.getElementById('rotationVersionChip').textContent = `Version ${healthPayload?.version || '-'}`;
+      document.getElementById('rotationBackupChip').textContent = ready ? 'Backup ready' : 'Backup review';
+
+      document.getElementById('rotationLiveStats').innerHTML = [
+        ['App key', healthPayload?.supabase_app_key_type || '-'],
+        ['Maint key', healthPayload?.supabase_maintenance_key_type || '-'],
+        ['Storage mode', healthPayload?.storage_maintenance_mode || '-'],
+        ['Archive auth', archiveProvider?.auth_mode || '-']
+      ].map(item => `
+        <div class="mini-stat">
+          <strong>${escapeHtml(item[1])}</strong>
+          <span>${escapeHtml(item[0])}</span>
+        </div>
+      `).join('');
+
+      document.getElementById('rotationBackupStats').innerHTML = [
+        ['Project backup', healthLabel(projectBackup)],
+        ['Secrets backup', healthLabel(secretsBackup)],
+        ['Local backup', healthLabel(localBackup)],
+        ['Coverage', coverageTarget ? `${coverage.foundSourceFiles.length}/${coverageTarget}` : '0/0']
+      ].map(item => `
+        <div class="mini-stat">
+          <strong>${escapeHtml(item[1])}</strong>
+          <span>${escapeHtml(item[0])}</span>
+        </div>
+      `).join('');
+
+      document.getElementById('rotationLiveMeta').innerHTML = [
+        healthPayload?.time ? `Health time ${formatDateTime(healthPayload.time, { withSeconds: true }) || healthPayload.time}` : '',
+        archiveProvider?.configured ? 'Archive configured' : 'Archive not configured',
+        archiveProvider?.provider_label ? `Provider ${archiveProvider.provider_label}` : ''
+      ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+
+      document.getElementById('rotationBackupMeta').innerHTML = [
+        projectBackup?.last_success_at ? `Code ${formatDateTime(projectBackup.last_success_at, { withSeconds: true }) || projectBackup.last_success_at}` : '',
+        secretsBackup?.last_success_at ? `Secrets ${formatDateTime(secretsBackup.last_success_at, { withSeconds: true }) || secretsBackup.last_success_at}` : '',
+        localBackup?.last_success_at ? `Local ${formatDateTime(localBackup.last_success_at, { withSeconds: true }) || localBackup.last_success_at}` : ''
+      ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+
+      const liveNote = document.getElementById('rotationLiveNote');
+      liveNote.className = `archive-gauge-note warning-${maintenanceReady && archiveReady ? 'healthy' : 'warning'}`;
+      liveNote.textContent = maintenanceReady
+        ? `维护链路已切到 ${healthPayload?.storage_maintenance_mode || '-'}。`
+        : '维护链路尚未切到 service_role，请先检查 Render 中的 service-role 变量与重新部署。';
+
+      const backupNote = document.getElementById('rotationBackupNote');
+      backupNote.className = `archive-gauge-note warning-${ready ? 'healthy' : backupReady ? 'warning' : 'critical'}`;
+      backupNote.textContent = ready
+        ? '代码备份、Secrets 备份、本地备份和覆盖率均已通过。'
+        : `代码 ${healthLabel(projectBackup)} / Secrets ${healthLabel(secretsBackup)} / 本地 ${healthLabel(localBackup)}，请继续复核缺口。`;
+
+      document.getElementById('rotationBackupDetails').innerHTML = [
+        detailRow('缺失源文件', coverage.missingSourceFiles.length ? coverage.missingSourceFiles.join(' | ') : '无'),
+        detailRow('未补全源文件', coverage.incompleteSourceFiles.length
+          ? coverage.incompleteSourceFiles.map(item => item.relative_path).join(' | ')
+          : '无'),
+        detailRow('最新代码 ZIP', projectBackup?.local?.zip_path || projectBackup?.cloud?.object_key || '未记录'),
+        detailRow('最新 secrets bundle', secretsBackup?.local?.bundle_path || secretsBackup?.cloud?.object_key || '未记录')
+      ].join('');
+    }
+
+    function latestSuccessTime(...statuses) {
+      return statuses
+        .map(status => status?.last_success_at || status?.generated_at || null)
+        .filter(Boolean)
+        .map(value => new Date(value))
+        .filter(date => !Number.isNaN(date.getTime()))
+        .sort((a, b) => b.getTime() - a.getTime())[0] || null;
+    }
+
+    function detailRow(label, value) {
+      return `
+        <div class="backup-detail-row">
+          <div>
+            <strong>${escapeHtml(label)}</strong>
+            <small>${escapeHtml(value)}</small>
+          </div>
+        </div>
+      `;
+    }
+  </script>
+</body>
+</html>

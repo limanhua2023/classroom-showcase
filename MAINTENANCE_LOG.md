@@ -1,6 +1,13 @@
 # ClassShow 维护日志
 
 ## 2026-05-21
+### Teacher Recovery Entry and Key-Rotation Re-Acceptance Handbook
+- Added direct recovery-entry buttons into the teacher dashboard snapshot action area, so teachers can open the 10-minute disaster recovery handbook and the key-rotation re-acceptance guide without leaving the activity backup section.
+- Added `public/key-rotation-backup-acceptance.html` as the browser-viewable short handbook for post-rotation maintenance acceptance. It reads the live `/api/health` payload, shows service-role / archive-provider / backup-chain status, and provides copyable re-run and task-install commands.
+- Added `KEY_ROTATION_BACKUP_ACCEPTANCE.md` as the repo-level offline maintenance note for operators who need the same checklist when the browser UI is unavailable.
+- Linked both `public/disaster-recovery-10min.html` and `public/project-backup-recovery.html` to the new key-rotation guide, so recovery, drill, and post-rotation acceptance pages now form one continuous maintenance loop.
+- Acceptance target after any future key rotation: production redeployed, local backup source files updated, project backup rerun, secrets backup rerun, all three scheduled tasks reinstalled, and `/api/health` back to `healthy`.
+
 ### Backup Overview Promotion and 10-Minute Disaster Recovery Handbook
 - Promoted the backup and recovery summary to the first screen of `public/super-admin.html`, so the super-admin can see code backup, local backup, encrypted secrets coverage, and restore readiness without scrolling into the lower storage sections.
 - Added a recovery handbook button and a direct scroll-to-detail action in the new super-admin backup hero panel, reducing the time needed to locate the latest restore anchors during an outage.
