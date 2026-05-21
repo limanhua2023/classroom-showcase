@@ -331,6 +331,7 @@
       flex: 1 1 auto;
     }
     .teacher-backup-status-item {
+      position: relative;
       border: 1px solid rgba(15, 23, 42, 0.08);
       background: rgba(248, 250, 252, 0.92);
       color: var(--text-main);
@@ -348,6 +349,12 @@
       transform: translateY(-1px);
       box-shadow: 0 10px 18px rgba(15, 23, 42, 0.08);
     }
+    .teacher-backup-status-item:focus-visible .teacher-backup-status-tooltip,
+    .teacher-backup-status-item:hover .teacher-backup-status-tooltip {
+      opacity: 1;
+      transform: translateY(0);
+      pointer-events: auto;
+    }
     .teacher-backup-status-item strong {
       font-size: 0.8rem;
       font-weight: 900;
@@ -359,6 +366,45 @@
       color: var(--text-light);
       line-height: 1.45;
       text-align: left;
+    }
+    .teacher-backup-status-tooltip {
+      position: absolute;
+      top: calc(100% + 10px);
+      left: 0;
+      min-width: 220px;
+      max-width: min(320px, calc(100vw - 48px));
+      padding: 12px 14px;
+      border-radius: 16px;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      background: rgba(15, 23, 42, 0.96);
+      color: rgba(255, 255, 255, 0.92);
+      box-shadow: 0 18px 34px rgba(15, 23, 42, 0.22);
+      font-size: 0.72rem;
+      line-height: 1.6;
+      white-space: pre-line;
+      opacity: 0;
+      transform: translateY(6px);
+      pointer-events: none;
+      transition: opacity 0.18s ease, transform 0.18s ease;
+      z-index: 25;
+    }
+    .teacher-backup-status-tooltip::before {
+      content: '';
+      position: absolute;
+      top: -7px;
+      left: 18px;
+      width: 12px;
+      height: 12px;
+      border-left: 1px solid rgba(15, 23, 42, 0.08);
+      border-top: 1px solid rgba(15, 23, 42, 0.08);
+      background: rgba(15, 23, 42, 0.96);
+      transform: rotate(45deg);
+    }
+    .teacher-backup-status-tooltip strong {
+      display: block;
+      margin-bottom: 6px;
+      font-size: 0.74rem;
+      color: #fff;
     }
     .teacher-backup-status-pill {
       display: inline-flex;
@@ -1847,10 +1893,10 @@
           <td>${row.active === false ? '停用' : '启用'}</td>
           <td>${row.feedback_muted ? '已禁言反馈' : '反馈正常'}</td>
           <td>
-            <button class="btn btn-sm ${row.feedback_muted ? 'btn-secondary' : 'btn-danger'}" type="button"
-              onclick="toggleRosterFeedbackMute('${encodeURIComponent(row.student_id || '')}', ${row.feedback_muted ? 'false' : 'true'}, '${encodeURIComponent(row.name || '')}')">
-              ${row.feedback_muted ? '解除禁言' : '禁言反馈'}
-            </button>
+              <button class="btn btn-sm ${row.feedback_muted ? 'btn-secondary' : 'btn-danger'}" type="button"
+                onclick="toggleRosterFeedbackMute('${encodeURIComponent(row.student_id || '')}', ${row.feedback_muted ? 'false' : 'true'}, '${encodeURIComponent(row.name || '')}')">
+                ${row.feedback_muted ? '解除禁言' : '禁言反馈'}
+              </button>
           </td>
         </tr>
       `).join('') : '<tr><td colspan="5" style="color:var(--text-muted);">暂无名单</td></tr>';
@@ -4048,6 +4094,13 @@
       return candidate ? (formatDateTime(candidate, { withSeconds: true }) || String(candidate)) : '未记录';
     }
 
+    function renderTeacherBackupStatusTooltip(elementId, title, lines = []) {
+      const el = document.getElementById(elementId);
+      if (!el) return;
+      const safeLines = lines.filter(Boolean).map(line => escapeHtml(String(line)));
+      el.innerHTML = `<strong>${escapeHtml(title)}</strong>${safeLines.length ? safeLines.join('<br>') : 'Waiting for backup heartbeat...'}`;
+    }
+
     async function fetchTeacherBackupHealthOverview(forceRefresh = false) {
       const url = forceRefresh ? `/api/health?_=${Date.now()}` : '/api/health';
       const res = await fetch(url, {
@@ -4090,14 +4143,17 @@
               <strong>本地备份</strong>
               <span class="teacher-backup-status-pill level-warning" id="teacherLocalBackupStatusPill">检查中</span>
               <span class="teacher-backup-status-detail" id="teacherLocalBackupStatusDetail">等待最近一次本地镜像心跳</span>
+              <span class="teacher-backup-status-tooltip" id="teacherLocalBackupStatusTooltip"></span>
             </button>
             <button class="teacher-backup-status-item" type="button" onclick="scrollToTeacherBackupGuideCards()" id="teacherProjectBackupStatusItem">
               <strong>代码快照</strong>
               <span class="teacher-backup-status-pill level-warning" id="teacherProjectBackupStatusPill">检查中</span>
               <span class="teacher-backup-status-detail" id="teacherProjectBackupStatusDetail">等待项目快照状态</span>
+              <span class="teacher-backup-status-tooltip" id="teacherProjectBackupStatusTooltip"></span>
             </button>
             <button class="teacher-backup-status-item" type="button" onclick="scrollToTeacherBackupGuideCards()" id="teacherSecretsBackupStatusItem">
               <strong>Secrets</strong>
+              <span class="teacher-backup-status-tooltip" id="teacherSecretsBackupStatusTooltip"></span>
               <span class="teacher-backup-status-pill level-warning" id="teacherSecretsBackupStatusPill">检查中</span>
               <span class="teacher-backup-status-detail" id="teacherSecretsBackupStatusDetail">等待加密备份覆盖面</span>
             </button>
@@ -4141,6 +4197,9 @@
         secretsPill.className = 'teacher-backup-status-pill level-warning';
         secretsPill.textContent = '待检查';
         secretsDetail.textContent = '未读取到 secrets 覆盖面';
+        renderTeacherBackupStatusTooltip('teacherLocalBackupStatusTooltip', 'Local backup', [lastTeacherBackupHealthError || 'Health heartbeat unavailable.']);
+        renderTeacherBackupStatusTooltip('teacherProjectBackupStatusTooltip', 'Project snapshot', [lastTeacherBackupHealthError || 'Health heartbeat unavailable.']);
+        renderTeacherBackupStatusTooltip('teacherSecretsBackupStatusTooltip', 'Secrets backup', [lastTeacherBackupHealthError || 'Health heartbeat unavailable.']);
         return;
       }
 
@@ -4185,6 +4244,29 @@
         : stripLevel === 'healthy'
           ? '本地备份、代码快照和加密 secrets 备份都处于健康状态。需要演练时，可直接下滑到运维卡片区域。'
           : '备份链路可用，但仍有待复核项。建议先点击“刷新验收状态”，再进入恢复手册或密钥轮换重验收。';
+      renderTeacherBackupStatusTooltip('teacherLocalBackupStatusTooltip', 'Local backup', [
+        `Last success: ${formatTeacherBackupHeartbeat(localStatus?.last_success_at)}`,
+        `Heartbeat: ${formatTeacherBackupHeartbeat(localStatus?.generated_at)}`,
+        localStatus?.host ? `Host: ${localStatus.host}` : '',
+        localStatus?.backup_root ? `Root: ${localStatus.backup_root}` : '',
+        localStatus?.warning?.message ? `Note: ${localStatus.warning.message}` : ''
+      ]);
+      renderTeacherBackupStatusTooltip('teacherProjectBackupStatusTooltip', 'Project snapshot', [
+        `Last success: ${formatTeacherBackupHeartbeat(projectStatus?.last_success_at)}`,
+        `Heartbeat: ${formatTeacherBackupHeartbeat(projectStatus?.generated_at)}`,
+        projectStatus?.git_branch ? `Branch: ${projectStatus.git_branch}` : '',
+        projectStatus?.git_commit ? `Commit: ${String(projectStatus.git_commit).slice(0, 10)}` : '',
+        projectStatus?.cloud?.object_key ? `Cloud object: ${projectStatus.cloud.object_key}` : '',
+        projectStatus?.warning?.message ? `Note: ${projectStatus.warning.message}` : ''
+      ]);
+      renderTeacherBackupStatusTooltip('teacherSecretsBackupStatusTooltip', 'Secrets backup', [
+        `Last success: ${formatTeacherBackupHeartbeat(secretsStatus?.last_success_at)}`,
+        `Heartbeat: ${formatTeacherBackupHeartbeat(secretsStatus?.generated_at)}`,
+        configuredSources ? `Coverage: ${foundSources}/${configuredSources}` : 'Coverage: 0/0',
+        secretsStatus?.passphrase_hint ? `Hint: ${secretsStatus.passphrase_hint}` : '',
+        secretsStatus?.cloud?.object_key ? `Cloud object: ${secretsStatus.cloud.object_key}` : '',
+        secretsStatus?.warning?.message ? `Note: ${secretsStatus.warning.message}` : ''
+      ]);
     }
 
     async function manualRefreshTeacherBackupHealth() {

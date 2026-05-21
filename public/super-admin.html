@@ -56,6 +56,7 @@
         <span id="healthLine">未登录</span>
       </div>
       <div class="course-search">
+        <button class="btn btn-secondary btn-sm" type="button" id="refreshBackupOnlyOverviewBtn" onclick="refreshBackupOnlyOverview()">Refresh backup health</button>
         <input id="superSearch" type="search" placeholder="按课程名 / slug / 状态搜索" oninput="renderOverviewBlocks()">
         <button class="btn btn-secondary btn-sm" onclick="loadOverview()">刷新</button>
       </div>
@@ -457,6 +458,7 @@
   <script>
     let overview = null;
     let superStatus = null;
+    let backupOnlyRefreshBusy = false;
     let superArchiveTrendWindowDays = 7;
     const registryEditorState = {
       mode: 'create',
@@ -532,6 +534,44 @@
       renderCourses();
       renderRegistry();
       renderRecentActivities();
+    }
+
+    function renderOpsOverviewBlocks() {
+      renderOverviewHealthLine();
+      renderBackupRecoveryOverviewPanel();
+      renderHotStorageGauge();
+      renderHotStorageOpsPanel();
+      renderArchiveStorageGauge();
+      renderArchiveStorageTrend();
+      renderArchiveOpsPanel();
+      renderLocalBackupStatusPanel();
+      renderProjectBackupStatusPanel();
+      renderProjectSecretsBackupStatusPanel();
+    }
+
+    async function refreshBackupOnlyOverview(showToast = true) {
+      const token = sessionStorage.getItem('superAdminToken');
+      if (!token || backupOnlyRefreshBusy) return;
+      backupOnlyRefreshBusy = true;
+      const btn = document.getElementById('refreshBackupOnlyOverviewBtn');
+      const originalText = btn?.textContent || 'Refresh backup health';
+      if (btn) {
+        btn.disabled = true;
+        btn.textContent = 'Refreshing...';
+      }
+      try {
+        overview = await api(`/super-admin/overview?_=${Date.now()}`);
+        renderOpsOverviewBlocks();
+        if (showToast) toast('Backup health refreshed.', 'success');
+      } catch (error) {
+        if (showToast) toast('Failed to refresh backup health: ' + error.message, 'error');
+      } finally {
+        backupOnlyRefreshBusy = false;
+        if (btn) {
+          btn.disabled = false;
+          btn.textContent = originalText;
+        }
+      }
     }
 
     function formatArchiveGaugeGb(bytes) {
@@ -1369,13 +1409,7 @@
       ].join('');
     }
 
-    function renderOverviewSummary() {
-      const summary = overview?.summary || {};
-      document.getElementById('sumCourses').textContent = Number(summary.course_count || 0);
-      document.getElementById('sumRegistered').textContent = Number(summary.registered_course_count || 0);
-      document.getElementById('sumReady').textContent = Number(summary.ready_course_count || 0);
-      document.getElementById('sumActivities').textContent = Number(summary.live_activity_count || 0);
-
+    function renderOverviewHealthLine() {
       const health = overview?.health || {};
       const localBackup = overview?.local_backup_status || {};
       const projectBackup = overview?.project_backup_status || {};
@@ -1385,6 +1419,16 @@
       const registryPath = superStatus?.registry_storage_path || '-';
       document.getElementById('healthLine').textContent =
         `Version ${health.version || '-'} | Storage ${health.storage_maintenance_mode || '-'} | App key ${health.supabase_app_key_type || '-'} | Maint key ${health.supabase_maintenance_key_type || '-'} | Hot tier ${hotStorage.strategy?.phase || hotStorage.warning?.level || 'unknown'} | Registry ${registryBackend} ${registryPath} | Local backup ${localBackup.warning?.level || localBackup.status || 'missing'} | Project backup ${projectBackup.warning?.level || projectBackup.status || 'missing'} | Secrets backup ${projectSecretsBackup.warning?.level || projectSecretsBackup.status || 'missing'}`;
+    }
+
+    function renderOverviewSummary() {
+      const summary = overview?.summary || {};
+      document.getElementById('sumCourses').textContent = Number(summary.course_count || 0);
+      document.getElementById('sumRegistered').textContent = Number(summary.registered_course_count || 0);
+      document.getElementById('sumReady').textContent = Number(summary.ready_course_count || 0);
+      document.getElementById('sumActivities').textContent = Number(summary.live_activity_count || 0);
+
+      renderOverviewHealthLine();
 
       document.getElementById('registryMeta').textContent =
         `版本 ${Number(overview?.registry?.version || 0)} | 最近更新 ${formatDateTime(overview?.registry?.updated_at, { withSeconds: true }) || '-'} | 已停用 ${Number(summary.disabled_course_count || 0)} | 动态骨架 ${Number(summary.scaffold_course_count || 0)}`;

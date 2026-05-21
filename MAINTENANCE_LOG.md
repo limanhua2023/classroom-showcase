@@ -1,6 +1,13 @@
 # ClassShow 维护日志
 
 ## 2026-05-21
+### Teacher Backup Hover Detail and Super-Admin Backup-Only Refresh
+- Added hover/focus backup detail popovers to the sticky teacher backup-status strip in `public/teacher-dashboard.html`, so operators can inspect the latest successful backup time, heartbeat, host, coverage, and cloud object anchor without leaving the top of the page.
+- Extended the teacher strip rendering logic to populate contextual backup details for local backup, project snapshot, and encrypted secrets backup directly from `/api/health`.
+- Added a super-admin backup-only refresh shortcut to `public/super-admin.html`, allowing operations staff to re-fetch maintenance health and backup/storage panels without re-rendering the course registry, recent activity cards, or the rest of the portal business data.
+- Split the super-admin health-line rendering into a reusable path so the lightweight backup refresh can update the top maintenance line and backup panels consistently.
+- Acceptance target after deployment: teacher and super-admin inline scripts parse successfully, production shows the new teacher tooltip markers and the super-admin backup-only refresh control, and `/api/health` remains healthy across local, project, and encrypted secrets backup chains.
+
 ### Teacher Fixed Backup Status Strip and Manual Health Refresh
 - Added a sticky backup-status strip to `public/teacher-dashboard.html`, pinned near the top of the teacher page so operators can keep local backup, project code snapshot, and encrypted secrets status in view while browsing the rest of the dashboard.
 - Added compact status pills for the three backup chains, each showing the latest health level and recent success heartbeat pulled from `/api/health`.
