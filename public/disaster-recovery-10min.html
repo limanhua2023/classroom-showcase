@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>10 分钟恢复手册 - ClassShow</title>
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body class="course-page">
+  <header class="topbar">
+    <a class="topbar-logo" href="index.html">Class<span>Show</span></a>
+    <div class="topbar-right">
+      <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='super-admin.html'">返回统一课程管理页</button>
+      <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='project-backup-recovery.html'">恢复演练详情</button>
+      <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='index.html'">总门户</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="course-hero">
+      <div class="course-hero-copy">
+        <div class="brand-kicker">10-MIN RUNBOOK</div>
+        <h1>系统崩溃后 10 分钟恢复手册</h1>
+        <p>这是一份面向日常维护的紧急恢复手册。目标不是解释架构，而是在 Render、电脑、本地代码或配置出现故障时，用最短路径把 ClassShow 拉回可用状态。</p>
+        <div class="course-hero-actions">
+          <button class="btn btn-primary" type="button" onclick="loadRunbookOverview(true)">刷新状态</button>
+          <button class="btn btn-secondary" type="button" onclick="copyRestoreCommand()">复制 secrets 恢复命令</button>
+          <button class="btn btn-secondary" type="button" onclick="copyCodeZipPath()">复制最新代码 ZIP</button>
+        </div>
+      </div>
+      <div class="course-scoreboard" aria-label="恢复摘要">
+        <div><strong id="runbookReadyValue">-</strong><span>恢复 readiness</span></div>
+        <div><strong id="runbookCodeValue">-</strong><span>代码备份</span></div>
+        <div><strong id="runbookSecretsValue">-</strong><span>Secrets 备份</span></div>
+        <div><strong id="runbookCoverageValue">0/0</strong><span>覆盖率</span></div>
+      </div>
+    </section>
+
+    <section class="course-entry-panel" id="runbookGatePanel">
+      <div>
+        <strong>需要超级管理员登录态</strong>
+        <span id="runbookGateHint">正在检查当前超级管理员登录状态...</span>
+      </div>
+      <div class="course-entry-actions">
+        <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='super-admin.html'">前往统一课程管理页登录</button>
+      </div>
+    </section>
+
+    <section class="course-control-strip">
+      <div>
+        <strong>当前建议</strong>
+        <span id="runbookHeadline">等待读取最新恢复锚点...</span>
+      </div>
+      <div class="course-card-actions">
+        <button class="btn btn-secondary btn-sm" type="button" onclick="copySecretsBundlePath()">复制最新 secrets bundle</button>
+        <button class="btn btn-secondary btn-sm" type="button" onclick="copyHealthUrl()">复制 /api/health 地址</button>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">ACTION PLAN</div>
+          <h2>10 分钟恢复步骤</h2>
+          <p>按顺序执行，不要跳步。前 3 步负责“拉起系统”，后 3 步负责“验证系统并恢复持续备份”。</p>
+        </div>
+      </div>
+      <div class="archive-suggestion-list">
+        <article class="archive-suggestion-card level-critical">
+          <strong>1. 冻结变更，先确认损坏范围</strong>
+          <p>先暂停继续上传、删除、编辑，打开 <code>/api/health</code>，确认是 Render 崩溃、配置丢失、还是本地环境损坏。避免边修边写入造成二次污染。</p>
+        </article>
+        <article class="archive-suggestion-card level-warning">
+          <strong>2. 用最新代码 ZIP 恢复仓库</strong>
+          <p>在新目录或新电脑解压最新代码 ZIP，不要直接覆盖旧目录。确认至少有 <code>server.js</code>、<code>public/</code>、<code>scripts/</code>、<code>package.json</code>。</p>
+        </article>
+        <article class="archive-suggestion-card level-warning">
+          <strong>3. 用加密 bundle 恢复 secrets</strong>
+          <p>执行下方恢复命令，把 <code>.env*</code> 文件恢复到本地。需要你自己保管的 passphrase；没有 passphrase，就不能恢复 secrets。</p>
+        </article>
+        <article class="archive-suggestion-card level-info">
+          <strong>4. 回填 Render / Supabase / R2 凭证并重启服务</strong>
+          <p>确认 <code>APP_SECRET</code>、<code>SUPER_ADMIN_PASSWORD</code>、<code>SUPABASE_URL</code>、<code>SUPABASE_SERVICE_ROLE_KEY</code>、R2 变量都已恢复，然后重新部署 Render。</p>
+        </article>
+        <article class="archive-suggestion-card level-info">
+          <strong>5. 重新安装 3 个备份任务</strong>
+          <p>本地活动备份、项目代码备份、加密 secrets 备份任务要重新装回去，否则系统虽然恢复了，但持续备份链会断。</p>
+        </article>
+        <article class="archive-suggestion-card level-healthy">
+          <strong>6. 做 60 秒验收</strong>
+          <p>确认 <code>/api/health</code>、教师后台、超级管理员页、Supabase 热层、R2 冷层、备份状态卡片全部恢复正常，最后再放开教学使用。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">CRITICAL COMMANDS</div>
+          <h2>关键命令</h2>
+          <p>下面三组命令已经按当前项目结构写好。出事故时，不要临时拼命令，直接复制。</p>
+        </div>
+      </div>
+      <div class="archive-ops-grid">
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>Secrets 恢复命令</strong>
+            <button class="btn btn-secondary btn-sm" type="button" onclick="copyRestoreCommand()">复制</button>
+          </div>
+          <pre class="archive-command-block" id="runbookRestoreCommand">等待生成恢复命令...</pre>
+        </div>
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>项目代码备份任务</strong>
+            <button class="btn btn-secondary btn-sm" type="button" onclick="copyProjectTaskCommand()">复制</button>
+          </div>
+          <pre class="archive-command-block" id="runbookProjectTaskCommand">powershell -ExecutionPolicy Bypass -File scripts/install-project-backup-task.ps1</pre>
+        </div>
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>Secrets 备份任务</strong>
+            <button class="btn btn-secondary btn-sm" type="button" onclick="copySecretsTaskCommand()">复制</button>
+          </div>
+          <pre class="archive-command-block" id="runbookSecretsTaskCommand">powershell -ExecutionPolicy Bypass -File scripts/install-secrets-backup-task.ps1</pre>
+        </div>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">LATEST ANCHORS</div>
+          <h2>最新恢复锚点</h2>
+          <p>这里显示最近一次可用于恢复的代码 ZIP、加密 bundle 和覆盖率。恢复前先确认这些锚点真实存在。</p>
+        </div>
+      </div>
+      <div class="archive-ops-grid">
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>代码与云端对象</strong>
+            <span class="storage-meta-chip" id="runbookCodeChip">Loading</span>
+          </div>
+          <div class="mini-stat-grid" id="runbookCodeStats"></div>
+          <div class="storage-meta-row" id="runbookCodeMeta"></div>
+          <div id="runbookCodeNote" class="archive-gauge-note">等待代码备份 heartbeat...</div>
+          <div id="runbookCodeDetails" class="backup-detail-list"></div>
+        </div>
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>Secrets 与覆盖率</strong>
+            <span class="storage-meta-chip" id="runbookSecretsChip">Loading</span>
+          </div>
+          <div class="mini-stat-grid" id="runbookSecretsStats"></div>
+          <div class="storage-meta-row" id="runbookSecretsMeta"></div>
+          <div id="runbookSecretsNote" class="archive-gauge-note">等待加密 secrets heartbeat...</div>
+          <div id="runbookSecretsDetails" class="backup-detail-list"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">60-SECOND ACCEPTANCE</div>
+          <h2>恢复后 60 秒验收</h2>
+          <p>下面 5 项都通过，才算真正恢复完成。</p>
+        </div>
+      </div>
+      <div class="archive-suggestion-list">
+        <article class="archive-suggestion-card level-info">
+          <strong>A. /api/health</strong>
+          <p>确认 <code>supabase_ok = true</code>，且 local backup、project backup、project secrets backup 都是 <code>ok / healthy</code>。</p>
+        </article>
+        <article class="archive-suggestion-card level-info">
+          <strong>B. 教师后台</strong>
+          <p>确认能打开作品管理、回收区、备份快照、热层/冷层仪表盘，不再出现 <code>{\"detail\":\"Bad Request\"}</code> 这类模糊错误。</p>
+        </article>
+        <article class="archive-suggestion-card level-info">
+          <strong>C. 超级管理员页</strong>
+          <p>确认统一课程管理页能显示备份与恢复总览、R2 仪表盘、Supabase 热层仪表盘和课程注册表。</p>
+        </article>
+        <article class="archive-suggestion-card level-info">
+          <strong>D. 归档链路</strong>
+          <p>确认 R2 bucket、archive provider、Cloudflare budget alert 和存储占用趋势都能正常显示。</p>
+        </article>
+        <article class="archive-suggestion-card level-info">
+          <strong>E. 自动备份</strong>
+          <p>确认 3 个本地计划任务仍然存在，并至少手动执行一次，避免系统恢复后备份链反而中断。</p>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <script src="js/api.js"></script>
+  <script>
+    let runbookOverview = null;
+
+    init();
+
+    async function init() {
+      const token = sessionStorage.getItem('superAdminToken');
+      if (!token) {
+        document.getElementById('runbookGateHint').textContent = '当前没有检测到超级管理员登录态，请先回统一课程管理页登录。';
+        return;
+      }
+      document.getElementById('runbookGatePanel').style.display = 'none';
+      await loadRunbookOverview(false);
+    }
+
+    async function loadRunbookOverview(forceRefresh) {
+      try {
+        runbookOverview = await api('/super-admin/overview');
+        document.getElementById('runbookGatePanel').style.display = 'none';
+        renderRunbookStatus();
+        if (forceRefresh) toast('已刷新恢复手册状态', 'success');
+      } catch (error) {
+        document.getElementById('runbookGatePanel').style.display = '';
+        document.getElementById('runbookGateHint').textContent = `读取失败：${error.message}`;
+        toast(`读取恢复手册状态失败：${error.message}`, 'error');
+      }
+    }
+
+    function copyValueText(encodedValue) {
+      const value = decodeURIComponent(String(encodedValue || ''));
+      if (!value) return toast('当前没有可复制的内容', 'error');
+      navigator.clipboard.writeText(value)
+        .then(() => toast('已复制', 'success'))
+        .catch(() => toast('复制失败，请手动复制', 'error'));
+    }
+
+    function basenameFromAnyPath(value) {
+      const source = String(value || '').trim();
+      if (!source) return '';
+      const normalized = source.replace(/\\/g, '/');
+      const parts = normalized.split('/').filter(Boolean);
+      return parts.length ? parts[parts.length - 1] : normalized;
+    }
+
+    function formatBackupDetailRow(label, titleValue, options = {}) {
+      const displayValue = String(options.displayValue || '').trim();
+      const copyValue = String(options.copyValue || displayValue).trim();
+      const copyable = !!options.copyable;
+      const titleText = titleValue ? escapeHtml(String(titleValue)) : '未记录';
+      const subtitleText = displayValue ? escapeHtml(displayValue) : '未记录';
+      return `
+        <div class="backup-detail-row">
+          <div>
+            <strong>${escapeHtml(label)}</strong>
+            <small>${titleText}</small>
+            <small>${subtitleText}</small>
+          </div>
+          ${copyable ? `<button class="btn btn-secondary btn-sm archive-object-action" type="button" onclick="copyValueText('${encodeURIComponent(copyValue)}')">复制</button>` : ''}
+        </div>
+      `;
+    }
+
+    function summarizeSecretsCoverage(status) {
+      const coverage = status?.coverage || {};
+      const configuredSourceFiles = Array.isArray(coverage.configured_source_files) ? coverage.configured_source_files : [];
+      const foundSourceFiles = Array.isArray(coverage.found_source_files) ? coverage.found_source_files : [];
+      const missingSourceFiles = Array.isArray(coverage.missing_source_files) ? coverage.missing_source_files : [];
+      const sourceFileDetails = Array.isArray(coverage.source_file_details) ? coverage.source_file_details : [];
+      const incompleteSourceFiles = sourceFileDetails.filter(item =>
+        Number(item?.empty_assignment_count || 0) > 0 || Number(item?.placeholder_assignment_count || 0) > 0
+      );
+      return {
+        configuredSourceFiles,
+        foundSourceFiles,
+        missingSourceFiles,
+        incompleteSourceFiles
+      };
+    }
+
+    function getCodeStatus() {
+      return runbookOverview?.project_backup_status || null;
+    }
+
+    function getSecretsStatus() {
+      return runbookOverview?.project_secrets_backup_status || null;
+    }
+
+    function getLocalStatus() {
+      return runbookOverview?.local_backup_status || null;
+    }
+
+    function normalizeHealthLevel(status) {
+      const level = status?.warning?.level || status?.status || 'warning';
+      if (level === 'healthy' || level === 'ok') return 'healthy';
+      if (level === 'critical' || level === 'error') return 'critical';
+      return 'warning';
+    }
+
+    function healthLabel(status) {
+      const level = normalizeHealthLevel(status);
+      if (level === 'healthy') return 'Healthy';
+      if (level === 'critical') return 'Critical';
+      return 'Warning';
+    }
+
+    function pickLatestBackupTimestamp(...values) {
+      return values
+        .map(value => {
+          if (!value) return null;
+          const time = new Date(value);
+          return Number.isNaN(time.getTime()) ? null : time;
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.getTime() - a.getTime())[0] || null;
+    }
+
+    function buildRestoreCommand() {
+      const secretsStatus = getSecretsStatus();
+      const localBundle = secretsStatus?.local?.bundle_path || 'secrets_backup\\snapshots\\<timestamp>\\classshow_secrets_backup_<timestamp>.bundle.json';
+      return `node scripts/restore-secrets-backup.mjs --input "${localBundle}" --output ".\\\\recovered_secrets" --passphrase "<your-passphrase>"`;
+    }
+
+    function copyRestoreCommand() {
+      copyValueText(encodeURIComponent(buildRestoreCommand()));
+    }
+
+    function copyCodeZipPath() {
+      const value = getCodeStatus()?.local?.zip_path || getCodeStatus()?.cloud?.object_key || '';
+      if (!value) return toast('当前没有代码 ZIP 路径', 'error');
+      copyValueText(encodeURIComponent(value));
+    }
+
+    function copySecretsBundlePath() {
+      const value = getSecretsStatus()?.local?.bundle_path || getSecretsStatus()?.cloud?.object_key || '';
+      if (!value) return toast('当前没有 secrets bundle 路径', 'error');
+      copyValueText(encodeURIComponent(value));
+    }
+
+    function copyProjectTaskCommand() {
+      copyValueText(encodeURIComponent('powershell -ExecutionPolicy Bypass -File scripts/install-project-backup-task.ps1'));
+    }
+
+    function copySecretsTaskCommand() {
+      copyValueText(encodeURIComponent('powershell -ExecutionPolicy Bypass -File scripts/install-secrets-backup-task.ps1'));
+    }
+
+    function copyHealthUrl() {
+      const url = `${location.origin}/api/health`;
+      copyValueText(encodeURIComponent(url));
+    }
+
+    function renderRunbookStatus() {
+      const localStatus = getLocalStatus();
+      const codeStatus = getCodeStatus();
+      const secretsStatus = getSecretsStatus();
+      const codeLocal = codeStatus?.local || {};
+      const codeCloud = codeStatus?.cloud || {};
+      const secretsLocal = secretsStatus?.local || {};
+      const secretsCloud = secretsStatus?.cloud || {};
+      const coverage = summarizeSecretsCoverage(secretsStatus);
+      const coverageTarget = coverage.configuredSourceFiles.length || coverage.foundSourceFiles.length || 0;
+      const coverageReady = coverageTarget > 0 && coverage.missingSourceFiles.length === 0 && coverage.incompleteSourceFiles.length === 0;
+      const ready = normalizeHealthLevel(localStatus) === 'healthy'
+        && normalizeHealthLevel(codeStatus) === 'healthy'
+        && normalizeHealthLevel(secretsStatus) === 'healthy'
+        && coverageReady
+        && !!codeCloud.uploaded
+        && !!secretsCloud.uploaded;
+      const latestTime = pickLatestBackupTimestamp(
+        localStatus?.last_success_at,
+        codeStatus?.last_success_at,
+        secretsStatus?.last_success_at,
+        localStatus?.generated_at,
+        codeStatus?.generated_at,
+        secretsStatus?.generated_at
+      );
+
+      document.getElementById('runbookReadyValue').textContent = ready ? 'Ready' : 'Review';
+      document.getElementById('runbookCodeValue').textContent = healthLabel(codeStatus);
+      document.getElementById('runbookSecretsValue').textContent = healthLabel(secretsStatus);
+      document.getElementById('runbookCoverageValue').textContent = coverageTarget ? `${coverage.foundSourceFiles.length}/${coverageTarget}` : '0/0';
+      document.getElementById('runbookHeadline').textContent = ready
+        ? `当前三层备份已可恢复。最近成功时间：${formatDateTime(latestTime, { withSeconds: true }) || latestTime?.toISOString() || '-'}`
+        : '当前恢复链还需要人工复核至少一项状态，请先看下方“最新恢复锚点”卡片。';
+
+      document.getElementById('runbookRestoreCommand').textContent = buildRestoreCommand();
+
+      document.getElementById('runbookCodeChip').textContent = healthLabel(codeStatus);
+      document.getElementById('runbookCodeStats').innerHTML = [
+        ['Files', Number(codeLocal.file_count || 0)],
+        ['ZIP size', formatBytes(codeLocal.zip_size_bytes || 0)],
+        ['Cloud upload', codeCloud.uploaded ? 'Yes' : 'No'],
+        ['Branch', codeStatus?.git_branch || '-']
+      ].map(item => `
+        <div class="mini-stat">
+          <strong>${escapeHtml(item[1])}</strong>
+          <span>${escapeHtml(item[0])}</span>
+        </div>
+      `).join('');
+      document.getElementById('runbookCodeMeta').innerHTML = [
+        codeStatus?.last_success_at ? `Last success ${formatDateTime(codeStatus.last_success_at, { withSeconds: true }) || codeStatus.last_success_at}` : '',
+        codeStatus?.git_commit ? `Commit ${String(codeStatus.git_commit).slice(0, 10)}` : '',
+        codeCloud.bucket ? `Bucket ${codeCloud.bucket}` : ''
+      ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+      document.getElementById('runbookCodeNote').className = `archive-gauge-note warning-${normalizeHealthLevel(codeStatus)}`;
+      document.getElementById('runbookCodeNote').textContent = codeStatus?.warning?.message || '代码 ZIP 与云端对象状态正常。';
+      document.getElementById('runbookCodeDetails').innerHTML = [
+        formatBackupDetailRow('Latest code ZIP', basenameFromAnyPath(codeLocal.zip_path || codeCloud.object_key), {
+          displayValue: codeLocal.zip_path || codeCloud.object_key,
+          copyValue: codeLocal.zip_path || codeCloud.object_key,
+          copyable: !!(codeLocal.zip_path || codeCloud.object_key)
+        }),
+        formatBackupDetailRow('Cloud manifest', basenameFromAnyPath(codeCloud.manifest_key), {
+          displayValue: codeCloud.manifest_key,
+          copyValue: codeCloud.manifest_key,
+          copyable: !!codeCloud.manifest_key
+        })
+      ].join('');
+
+      document.getElementById('runbookSecretsChip').textContent = healthLabel(secretsStatus);
+      document.getElementById('runbookSecretsStats').innerHTML = [
+        ['Files', Number(secretsLocal.file_count || 0)],
+        ['Bundle size', formatBytes(secretsLocal.bundle_size_bytes || 0)],
+        ['Cloud upload', secretsCloud.uploaded ? 'Yes' : 'No'],
+        ['Hint', secretsStatus?.passphrase_hint ? 'Set' : 'Missing']
+      ].map(item => `
+        <div class="mini-stat">
+          <strong>${escapeHtml(item[1])}</strong>
+          <span>${escapeHtml(item[0])}</span>
+        </div>
+      `).join('');
+      document.getElementById('runbookSecretsMeta').innerHTML = [
+        secretsStatus?.last_success_at ? `Last success ${formatDateTime(secretsStatus.last_success_at, { withSeconds: true }) || secretsStatus.last_success_at}` : '',
+        coverageTarget ? `Coverage ${coverage.foundSourceFiles.length}/${coverageTarget}` : '',
+        secretsCloud.bucket ? `Bucket ${secretsCloud.bucket}` : ''
+      ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+      document.getElementById('runbookSecretsNote').className = `archive-gauge-note warning-${normalizeHealthLevel(secretsStatus)}`;
+      document.getElementById('runbookSecretsNote').textContent = secretsStatus?.warning?.message || '加密 secrets bundle 与覆盖率状态正常。';
+      document.getElementById('runbookSecretsDetails').innerHTML = [
+        formatBackupDetailRow('Latest secrets bundle', basenameFromAnyPath(secretsLocal.bundle_path || secretsCloud.object_key), {
+          displayValue: secretsLocal.bundle_path || secretsCloud.object_key,
+          copyValue: secretsLocal.bundle_path || secretsCloud.object_key,
+          copyable: !!(secretsLocal.bundle_path || secretsCloud.object_key)
+        }),
+        formatBackupDetailRow('Missing source files', coverage.missingSourceFiles.length ? `${coverage.missingSourceFiles.length} files` : '0', {
+          displayValue: coverage.missingSourceFiles.join(' | ') || 'None',
+          copyValue: coverage.missingSourceFiles.join('\n'),
+          copyable: coverage.missingSourceFiles.length > 0
+        }),
+        formatBackupDetailRow('Incomplete source files', coverage.incompleteSourceFiles.length ? `${coverage.incompleteSourceFiles.length} files` : '0', {
+          displayValue: coverage.incompleteSourceFiles.map(item => item.relative_path).join(' | ') || 'None',
+          copyValue: coverage.incompleteSourceFiles.map(item =>
+            `${item.relative_path}: empty=${Number(item.empty_assignment_count || 0)}, placeholder=${Number(item.placeholder_assignment_count || 0)}`
+          ).join('\n'),
+          copyable: coverage.incompleteSourceFiles.length > 0
+        })
+      ].join('');
+    }
+  </script>
+</body>
+</html>

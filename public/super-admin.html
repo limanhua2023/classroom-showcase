@@ -61,6 +61,42 @@
       </div>
     </section>
 
+    <section class="course-portal archive-storage-shell" id="superBackupOverviewSection">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">BACKUP &amp; RECOVERY</div>
+          <h2>备份与恢复状态总览</h2>
+          <p>把本地活动备份、项目快照、加密 secrets、恢复覆盖率和恢复手册入口放到首屏。先看这里，再决定是否继续上课、升级或排障。</p>
+        </div>
+        <div class="course-card-actions">
+          <button class="btn btn-primary btn-sm" type="button" onclick="openDisasterRecoveryHandbook()">10 分钟恢复手册</button>
+          <button class="btn btn-secondary btn-sm" type="button" onclick="openProjectBackupRecoveryGuide()">恢复演练详情</button>
+          <button class="btn btn-secondary btn-sm" type="button" onclick="scrollToBackupDetailSection()">查看详细状态</button>
+        </div>
+      </div>
+      <div class="archive-ops-grid">
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>恢复 readiness</strong>
+            <span class="storage-meta-chip" id="superBackupOverviewStatusChip">Loading</span>
+          </div>
+          <div class="mini-stat-grid" id="superBackupOverviewStats"></div>
+          <div class="storage-meta-row" id="superBackupOverviewMeta"></div>
+          <div id="superBackupOverviewNote" class="archive-gauge-note">Waiting for backup heartbeat aggregation...</div>
+        </div>
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>最新恢复锚点</strong>
+            <span class="storage-meta-chip" id="superBackupOverviewAnchorChip">Loading</span>
+          </div>
+          <div class="mini-stat-grid" id="superBackupOverviewAnchorStats"></div>
+          <div class="storage-meta-row" id="superBackupOverviewAnchorMeta"></div>
+          <div id="superBackupOverviewAnchorNote" class="archive-gauge-note">Waiting for the latest ZIP, bundle, and drill baseline...</div>
+          <div id="superBackupOverviewAnchorDetails" class="backup-detail-list"></div>
+        </div>
+      </div>
+    </section>
+
     <section class="course-portal archive-storage-shell" id="superHotStorageSection">
       <div class="course-portal-head">
         <div>
@@ -484,6 +520,7 @@
 
     function renderOverviewBlocks() {
       renderOverviewSummary();
+      renderBackupRecoveryOverviewPanel();
       renderHotStorageGauge();
       renderHotStorageOpsPanel();
       renderArchiveStorageGauge();
@@ -1032,6 +1069,161 @@
 
     function openProjectBackupRecoveryGuide() {
       location.href = 'project-backup-recovery.html';
+    }
+
+    function openDisasterRecoveryHandbook() {
+      location.href = 'disaster-recovery-10min.html';
+    }
+
+    function scrollToBackupDetailSection() {
+      const anchor = document.getElementById('superProjectBackupStatusChip') || document.getElementById('superArchiveStorageSection');
+      if (!anchor) return;
+      anchor.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    function normalizeBackupHealthLevel(status) {
+      const level = status?.warning?.level || status?.status || 'warning';
+      if (level === 'healthy' || level === 'ok') return 'healthy';
+      if (level === 'critical' || level === 'error') return 'critical';
+      return 'warning';
+    }
+
+    function backupHealthLabel(level) {
+      if (level === 'healthy') return 'Healthy';
+      if (level === 'critical') return 'Critical';
+      return 'Warning';
+    }
+
+    function pickLatestBackupTimestamp(...values) {
+      return values
+        .map(value => {
+          if (!value) return null;
+          const time = new Date(value);
+          return Number.isNaN(time.getTime()) ? null : time;
+        })
+        .filter(Boolean)
+        .sort((a, b) => b.getTime() - a.getTime())[0] || null;
+    }
+
+    function renderBackupRecoveryOverviewPanel() {
+      const summaryChipEl = document.getElementById('superBackupOverviewStatusChip');
+      const summaryStatsEl = document.getElementById('superBackupOverviewStats');
+      const summaryMetaEl = document.getElementById('superBackupOverviewMeta');
+      const summaryNoteEl = document.getElementById('superBackupOverviewNote');
+      const anchorChipEl = document.getElementById('superBackupOverviewAnchorChip');
+      const anchorStatsEl = document.getElementById('superBackupOverviewAnchorStats');
+      const anchorMetaEl = document.getElementById('superBackupOverviewAnchorMeta');
+      const anchorNoteEl = document.getElementById('superBackupOverviewAnchorNote');
+      const anchorDetailsEl = document.getElementById('superBackupOverviewAnchorDetails');
+      if (!summaryChipEl || !summaryStatsEl || !summaryMetaEl || !summaryNoteEl || !anchorChipEl || !anchorStatsEl || !anchorMetaEl || !anchorNoteEl || !anchorDetailsEl) return;
+
+      const localStatus = overview?.local_backup_status || null;
+      const projectStatus = overview?.project_backup_status || null;
+      const secretsStatus = overview?.project_secrets_backup_status || null;
+      const localLevel = normalizeBackupHealthLevel(localStatus);
+      const projectLevel = normalizeBackupHealthLevel(projectStatus);
+      const secretsLevel = normalizeBackupHealthLevel(secretsStatus);
+      const levels = [localLevel, projectLevel, secretsLevel];
+      const healthyCount = levels.filter(level => level === 'healthy').length;
+      const aggregateLevel = healthyCount === 3 ? 'healthy' : levels.includes('critical') ? 'critical' : 'warning';
+      const secretsCoverage = summarizeSecretsCoverage(secretsStatus);
+      const coverageTarget = secretsCoverage.configuredSourceFiles.length || secretsCoverage.foundSourceFiles.length || 0;
+      const coverageReady = coverageTarget > 0
+        && secretsCoverage.missingSourceFiles.length === 0
+        && secretsCoverage.incompleteSourceFiles.length === 0;
+      const localReady = !!localStatus?.last_success_at;
+      const projectReady = !!projectStatus?.local?.zip_path && !!projectStatus?.cloud?.object_key;
+      const secretsReady = !!secretsStatus?.local?.bundle_path && !!secretsStatus?.cloud?.object_key;
+      const restoreReady = aggregateLevel === 'healthy' && coverageReady && localReady && projectReady && secretsReady;
+      const latestBackupTime = pickLatestBackupTimestamp(
+        localStatus?.last_success_at,
+        localStatus?.generated_at,
+        projectStatus?.last_success_at,
+        projectStatus?.generated_at,
+        secretsStatus?.last_success_at,
+        secretsStatus?.generated_at
+      );
+
+      summaryChipEl.textContent = restoreReady ? 'Ready' : backupHealthLabel(aggregateLevel);
+      summaryChipEl.style.color = aggregateLevel === 'critical' ? '#ef4444' : aggregateLevel === 'warning' ? '#f59e0b' : '#10b981';
+      summaryStatsEl.innerHTML = [
+        ['Healthy layers', `${healthyCount}/3`],
+        ['Restore ready', restoreReady ? 'Yes' : 'No'],
+        ['Secrets coverage', coverageTarget ? `${secretsCoverage.foundSourceFiles.length}/${coverageTarget}` : '0/0'],
+        ['Missing sources', Number(secretsCoverage.missingSourceFiles.length || 0)]
+      ].map(item => `
+        <div class="mini-stat">
+          <strong>${escapeHtml(item[1])}</strong>
+          <span>${escapeHtml(item[0])}</span>
+        </div>
+      `).join('');
+      summaryMetaEl.innerHTML = [
+        `Local ${backupHealthLabel(localLevel)}`,
+        `Project ${backupHealthLabel(projectLevel)}`,
+        `Secrets ${backupHealthLabel(secretsLevel)}`,
+        latestBackupTime ? `Latest success ${formatDateTime(latestBackupTime, { withSeconds: true }) || latestBackupTime.toISOString()}` : ''
+      ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+
+      if (!localStatus || !projectStatus || !secretsStatus) {
+        summaryNoteEl.className = 'archive-gauge-note warning-warning';
+        summaryNoteEl.textContent = '至少有一层备份 heartbeat 缺失。先检查本地任务、项目快照和加密 secrets 任务是否都已跑通。';
+      } else if (!coverageReady) {
+        summaryNoteEl.className = 'archive-gauge-note warning-warning';
+        summaryNoteEl.textContent = '加密 secrets 备份覆盖面还不完整。先补齐缺失源文件，再把恢复手册作为真正可执行方案。';
+      } else if (restoreReady) {
+        summaryNoteEl.className = 'archive-gauge-note warning-healthy';
+        summaryNoteEl.textContent = '三层备份、云端对象和恢复覆盖率均已就绪，当前系统可以按恢复手册完成 10 分钟级灾难恢复。';
+      } else {
+        summaryNoteEl.className = `archive-gauge-note warning-${aggregateLevel}`;
+        summaryNoteEl.textContent = '备份链路基本可用，但还缺少至少一个关键恢复锚点。建议先打开“恢复演练详情”确认 ZIP、bundle 与云端对象路径。';
+      }
+
+      const projectLocal = projectStatus?.local || {};
+      const projectCloud = projectStatus?.cloud || {};
+      const secretsLocal = secretsStatus?.local || {};
+      const secretsCloud = secretsStatus?.cloud || {};
+      const latestZipName = basenameFromAnyPath(projectLocal.zip_path || projectCloud.object_key);
+      const latestBundleName = basenameFromAnyPath(secretsLocal.bundle_path || secretsCloud.object_key);
+      anchorChipEl.textContent = restoreReady ? 'Drill ready' : 'Need review';
+      anchorChipEl.style.color = restoreReady ? '#10b981' : '#f59e0b';
+      anchorStatsEl.innerHTML = [
+        ['ZIP size', formatBytes(projectLocal.zip_size_bytes || 0)],
+        ['Bundle size', formatBytes(secretsLocal.bundle_size_bytes || 0)],
+        ['Cloud sync', projectCloud.uploaded && secretsCloud.uploaded ? 'Yes' : 'Partial'],
+        ['Passphrase hint', secretsStatus?.passphrase_hint ? 'Set' : 'Missing']
+      ].map(item => `
+        <div class="mini-stat">
+          <strong>${escapeHtml(item[1])}</strong>
+          <span>${escapeHtml(item[0])}</span>
+        </div>
+      `).join('');
+      anchorMetaEl.innerHTML = [
+        latestBackupTime ? `Recovery baseline ${formatDateTime(latestBackupTime, { withSeconds: true }) || latestBackupTime.toISOString()}` : '',
+        projectStatus?.git_branch ? `Branch ${projectStatus.git_branch}` : '',
+        projectStatus?.git_commit ? `Commit ${String(projectStatus.git_commit).slice(0, 10)}` : '',
+        secretsStatus?.passphrase_hint ? `Hint ${secretsStatus.passphrase_hint}` : ''
+      ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+      anchorNoteEl.className = `archive-gauge-note warning-${restoreReady ? 'healthy' : 'warning'}`;
+      anchorNoteEl.textContent = restoreReady
+        ? '代码 ZIP、加密 bundle、manifest、云端对象和覆盖率都已经具备。系统崩溃时，先开手册，再按恢复演练页复制路径和命令。'
+        : '恢复锚点已大致形成，但还建议再看一眼最新 ZIP / bundle / manifest 是否齐全。';
+      anchorDetailsEl.innerHTML = [
+        formatBackupDetailRow('Latest ZIP file', latestZipName, {
+          displayValue: projectLocal.zip_path || projectCloud.object_key,
+          copyValue: projectLocal.zip_path || projectCloud.object_key,
+          copyable: !!(projectLocal.zip_path || projectCloud.object_key)
+        }),
+        formatBackupDetailRow('Latest secrets bundle', latestBundleName, {
+          displayValue: secretsLocal.bundle_path || secretsCloud.object_key,
+          copyValue: secretsLocal.bundle_path || secretsCloud.object_key,
+          copyable: !!(secretsLocal.bundle_path || secretsCloud.object_key)
+        }),
+        formatBackupDetailRow('Cloud restore command', 'restore-secrets-backup.mjs', {
+          displayValue: `node scripts/restore-secrets-backup.mjs --input "${secretsLocal.bundle_path || 'secrets_backup\\\\snapshots\\\\<timestamp>\\\\classshow_secrets_backup_<timestamp>.bundle.json'}" --output ".\\\\recovered_secrets" --passphrase "<your-passphrase>"`,
+          copyValue: `node scripts/restore-secrets-backup.mjs --input "${secretsLocal.bundle_path || 'secrets_backup\\\\snapshots\\\\<timestamp>\\\\classshow_secrets_backup_<timestamp>.bundle.json'}" --output ".\\\\recovered_secrets" --passphrase "<your-passphrase>"`,
+          copyable: true
+        })
+      ].join('');
     }
 
     function renderProjectBackupStatusPanel() {

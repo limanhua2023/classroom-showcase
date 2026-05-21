@@ -1,5 +1,14 @@
 # ClassShow 维护日志
 
+## 2026-05-21
+### Backup Overview Promotion and 10-Minute Disaster Recovery Handbook
+- Promoted the backup and recovery summary to the first screen of `public/super-admin.html`, so the super-admin can see code backup, local backup, encrypted secrets coverage, and restore readiness without scrolling into the lower storage sections.
+- Added a recovery handbook button and a direct scroll-to-detail action in the new super-admin backup hero panel, reducing the time needed to locate the latest restore anchors during an outage.
+- Added `public/disaster-recovery-10min.html` as the browser-viewable emergency runbook for rapid operations. It shows restore readiness, latest code ZIP and secrets bundle anchors, copyable restore commands, and a 60-second post-restore acceptance checklist.
+- Added `SYSTEM_DISASTER_RECOVERY_10_MINUTES.md` as the repo-level offline companion runbook for maintenance use when the web UI is unavailable.
+- Linked `public/project-backup-recovery.html` back to the new 10-minute handbook so operators can switch between the detailed drill page and the concise emergency page during real incidents.
+- Real backup-chain status at handoff: local backup = healthy, project code backup = healthy, encrypted secrets backup = healthy, R2 upload = healthy, secrets source-file coverage = `4/4`.
+
 ## 2026-05-14
 ### Super Admin Course Console and Integration Spec
 - Added a unified super-admin course console at `public/super-admin.html`.
