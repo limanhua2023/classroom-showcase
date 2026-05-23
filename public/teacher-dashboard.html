@@ -1758,6 +1758,9 @@
     </div>
   </div>
 
+  <script>window.CLASSSHOW_SURFACE = 'backend';</script>
+  <script src="js/deployment-config.js"></script>
+  <script src="js/app-config.js"></script>
   <script src="js/api.js"></script>
   <script src="vendor/xlsx.full.min.js"></script>
   <script>
@@ -1825,7 +1828,9 @@
 
     function openDisplay() {
       const code = ((dashboardSummary?.activity?.invite_code) || act.invite_code || '').trim();
-      const url = code ? ('display.html?code=' + encodeURIComponent(code)) : 'display.html';
+      const url = typeof window.classShowStudentUrl === 'function'
+        ? window.classShowStudentUrl(code ? ('/display.html?code=' + encodeURIComponent(code)) : '/display.html')
+        : (code ? ('display.html?code=' + encodeURIComponent(code)) : 'display.html');
       window.open(url, '_blank');
     }
 
@@ -5027,7 +5032,9 @@
 
     async function loadQrCode(activity) {
       try {
-        const url = location.origin + '/index.html?code=' + encodeURIComponent(activity.invite_code || '');
+        const url = typeof window.classShowStudentUrl === 'function'
+          ? window.classShowStudentUrl('/index.html?code=' + encodeURIComponent(activity.invite_code || ''))
+          : (location.origin + '/index.html?code=' + encodeURIComponent(activity.invite_code || ''));
         const result = await api('/qrcode?text=' + encodeURIComponent(url));
         if (result.url) {
           const img = document.getElementById('qrCode');

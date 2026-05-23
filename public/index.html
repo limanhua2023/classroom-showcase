@@ -51,10 +51,10 @@
           </div>
 
           <div class="divider-line">教师入口</div>
-          <button class="btn btn-secondary btn-block" onclick="location.href='teacher-login.html'">教师登录</button>
+          <button class="btn btn-secondary btn-block" onclick="navigateToBackend('/teacher-login.html')">教师登录</button>
           <div style="margin-top:16px;">
-            <button class="btn btn-sm btn-secondary" onclick="location.href='teacher-login.html?create=1'">+ 创建新活动</button>
-            <button id="portalSuperAdminButton" class="btn btn-sm btn-secondary portal-alert-button" style="margin-left:8px;" onclick="location.href='super-admin.html'">
+            <button class="btn btn-sm btn-secondary" onclick="navigateToBackend('/teacher-login.html?create=1')">+ 创建新活动</button>
+            <button id="portalSuperAdminButton" class="btn btn-sm btn-secondary portal-alert-button" style="margin-left:8px;" onclick="navigateToBackend('/super-admin.html')">
               超级管理
               <span id="portalOpsAlertBadge" class="archive-alert-badge" hidden>!</span>
             </button>
@@ -76,7 +76,7 @@
             <strong><span class="course-ops-alert-dot"></span><span id="portalOpsInlineTitle">运维提醒</span></strong>
             <span id="portalOpsInlineText">正在检查备份与恢复状态...</span>
           </div>
-          <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='super-admin.html'">查看运维</button>
+          <button class="btn btn-secondary btn-sm" type="button" onclick="navigateToBackend('/super-admin.html')">查看运维</button>
         </div>
         <div class="course-grid" id="coursePortalGrid">
           <div class="course-loading">正在读取课程目录...</div>
@@ -85,6 +85,9 @@
     </div>
   </div>
 
+  <script>window.CLASSSHOW_SURFACE = 'student';</script>
+  <script src="js/deployment-config.js"></script>
+  <script src="js/app-config.js"></script>
   <script src="js/api.js"></script>
   <script>
     document.getElementById('inviteCode').addEventListener('keydown', e => { if (e.key === 'Enter') joinActivity(); });
@@ -262,7 +265,7 @@
             <div class="course-preview">${preview || '<span>还没有活动，创建后会自动出现在这里</span>'}</div>
             <div class="course-card-actions">
               <button class="btn btn-primary btn-sm" onclick="openCourse('${encodeURIComponent(course.course_name)}')">进入课程</button>
-              <button class="btn btn-secondary btn-sm" onclick="location.href='teacher-login.html'">教师管理</button>
+              <button class="btn btn-secondary btn-sm" onclick="navigateToBackend('/teacher-login.html')">教师管理</button>
             </div>
           </article>
         `;

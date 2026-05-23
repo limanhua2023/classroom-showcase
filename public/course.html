@@ -8,7 +8,7 @@
 </head>
 <body class="course-page">
   <header class="topbar">
-    <a class="topbar-logo" href="index.html">Class<span>Show</span></a>
+    <a class="topbar-logo" href="index.html" onclick="navigateToStudent('/index.html'); return false;">Class<span>Show</span></a>
     <div class="topbar-right">
       <button class="btn btn-secondary btn-sm" onclick="location.href='index.html'">总门户</button>
       <button class="btn btn-secondary btn-sm" onclick="location.href='teacher-login.html'">教师管理</button>
@@ -70,6 +70,9 @@
     </section>
   </main>
 
+  <script>window.CLASSSHOW_SURFACE = 'student';</script>
+  <script src="js/deployment-config.js"></script>
+  <script src="js/app-config.js"></script>
   <script src="js/api.js"></script>
   <script>
     const params = new URLSearchParams(location.search);

@@ -469,8 +469,23 @@
     </section>
   </main>
 
+  <script>window.CLASSSHOW_SURFACE = 'backend';</script>
+  <script src="js/deployment-config.js"></script>
+  <script src="js/app-config.js"></script>
   <script src="js/api.js"></script>
   <script>
+    const superAdminLogo = document.querySelector('.topbar-logo');
+    if (superAdminLogo) {
+      superAdminLogo.onclick = () => {
+        navigateToStudent('/index.html');
+        return false;
+      };
+    }
+    const superAdminTopButtons = document.querySelectorAll('.topbar-right .btn');
+    if (superAdminTopButtons[0]) {
+      superAdminTopButtons[0].onclick = () => navigateToStudent('/index.html');
+    }
+
     let overview = null;
     let superStatus = null;
     let backupOnlyRefreshBusy = false;
@@ -617,7 +632,9 @@
       const button = document.getElementById('superFeaturedCourseButton');
       const courseName = String(button?.dataset.courseName || '').trim();
       if (!courseName) return toast('当前还没有可打开的课程注册项', 'error');
-      location.href = 'course.html?course=' + encodeURIComponent(courseName);
+      location.href = typeof window.classShowStudentUrl === 'function'
+        ? window.classShowStudentUrl('/course.html?course=' + encodeURIComponent(courseName))
+        : ('course.html?course=' + encodeURIComponent(courseName));
     }
 
     function formatArchiveGaugeGb(bytes) {
@@ -2050,7 +2067,13 @@
         await loadStatus();
         await loadOverview();
         if (result.page_url) {
-          window.open(result.page_url + `?course=${encodeURIComponent(entry.course_name)}`, '_blank');
+          const target = result.page_url + `?course=${encodeURIComponent(entry.course_name)}`;
+          window.open(
+            typeof window.classShowStudentUrl === 'function'
+              ? window.classShowStudentUrl(target)
+              : target,
+            '_blank'
+          );
         }
       } catch (error) {
         toast(error.message, 'error');
@@ -2134,12 +2157,17 @@
     }
 
     function openManagedCourse(encodedCourseName) {
-      location.href = 'course.html?course=' + encodedCourseName;
+      location.href = typeof window.classShowStudentUrl === 'function'
+        ? window.classShowStudentUrl('/course.html?course=' + encodedCourseName)
+        : ('course.html?course=' + encodedCourseName);
     }
 
     function openRegisteredEntry(entryPath, encodedCourseName) {
       const joiner = String(entryPath || '').includes('?') ? '&' : '?';
-      location.href = String(entryPath || '') + joiner + 'course=' + encodedCourseName;
+      const target = String(entryPath || '') + joiner + 'course=' + encodedCourseName;
+      location.href = typeof window.classShowStudentUrl === 'function'
+        ? window.classShowStudentUrl(target)
+        : target;
     }
 
     document.getElementById('registryEditorForm').addEventListener('submit', saveRegistryEntry);

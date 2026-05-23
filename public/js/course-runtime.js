@@ -1,4 +1,10 @@
 (function initCourseRuntime() {
+  function studentUrl(path = '') {
+    return typeof window.classShowStudentUrl === 'function'
+      ? window.classShowStudentUrl(path)
+      : path;
+  }
+
   function getCourseParam() {
     return (new URLSearchParams(location.search).get('course') || '').trim();
   }
@@ -35,11 +41,11 @@
 
   function openPortal(courseName = '') {
     const target = courseName || getCourseParam() || '';
-    location.href = '/course.html?course=' + encodeURIComponent(target);
+    location.href = studentUrl('/course.html?course=' + encodeURIComponent(target));
   }
 
   function openIndex() {
-    location.href = '/index.html';
+    location.href = studentUrl('/index.html');
   }
 
   window.ClassShowCourseRuntime = {

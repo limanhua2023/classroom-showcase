@@ -9,6 +9,18 @@
   const ECON_SESSION_KEY_PREFIX = 'econCourse_v117_';
   const LOCAL_STUDY_STATS_KEY = 'econCourse_v117_self_study_stats';
   const LOCAL_STUDY_MAX_DELTA_SECONDS = 90;
+  function studentUrl(path = '') {
+    return typeof window.classShowStudentUrl === 'function'
+      ? window.classShowStudentUrl(path)
+      : path;
+  }
+
+  function backendUrl(path = '') {
+    return typeof window.classShowBackendUrl === 'function'
+      ? window.classShowBackendUrl(path)
+      : path;
+  }
+
   const REMOTE_SNAPSHOT_KEYS = [
     'learningMode',
     'currentLesson',
@@ -223,14 +235,14 @@
         window.ClassShowCourseRuntime.openPortal(COURSE_NAME);
         return;
       }
-      location.href = `/course.html?course=${encodeURIComponent(COURSE_NAME)}`;
+      location.href = studentUrl(`/course.html?course=${encodeURIComponent(COURSE_NAME)}`);
     });
     document.getElementById('classshowEconIndexBtn').addEventListener('click', () => {
       if (window.ClassShowCourseRuntime && typeof window.ClassShowCourseRuntime.openIndex === 'function') {
         window.ClassShowCourseRuntime.openIndex();
         return;
       }
-      location.href = '/index.html';
+      location.href = studentUrl('/index.html');
     });
     document.getElementById('classshowEconThemeBtn').addEventListener('click', () => {
       if (typeof window.toggleTheme === 'function') {
@@ -238,7 +250,7 @@
       }
     });
     document.getElementById('classshowEconTeacherBtn').addEventListener('click', () => {
-      location.href = '/teacher-dashboard.html';
+      location.href = backendUrl('/teacher-dashboard.html');
     });
     if (typeof window.updateThemeButtons === 'function') {
       const activeTheme = document.documentElement.getAttribute('data-theme') || 'dark';

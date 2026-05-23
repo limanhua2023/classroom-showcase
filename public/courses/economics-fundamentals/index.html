@@ -5966,7 +5966,12 @@ window.EconCourseApp = {
         if (k && k.startsWith(prefix)) toRemove.push(k);
       }
       toRemove.forEach(k => localStorage.removeItem(k));
-      sessionStorage.clear();
+      const sessionKeys = [];
+      for (let i = 0; i < sessionStorage.length; i++) {
+        const k = sessionStorage.key(i);
+        if (k && (k.startsWith(prefix) || k === 'econ_username')) sessionKeys.push(k);
+      }
+      sessionKeys.forEach(k => sessionStorage.removeItem(k));
       alert('✅ 学习记录已重置，页面即将重新加载...');
       window.location.reload();
     }
@@ -13355,6 +13360,9 @@ document.addEventListener('keydown', (e) => {
 
 <canvas id="particles-canvas"></canvas>
 
+  <script>window.CLASSSHOW_SURFACE = 'student';</script>
+  <script src="/js/deployment-config.js"></script>
+  <script src="/js/app-config.js"></script>
   <script src="/js/api.js"></script>
   <script src="/js/course-runtime.js"></script>
   <script src="/js/economics-course-adapter.js"></script>

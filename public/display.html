@@ -244,6 +244,9 @@
   <button class="spotlight-close" id="spotlightClose" onclick="closeSpotlight()">✕</button>
 
   <script src="https://cdn.jsdelivr.net/npm/canvas-confetti@1.6.0/dist/confetti.browser.min.js"></script>
+  <script>window.CLASSSHOW_SURFACE = 'student';</script>
+  <script src="js/deployment-config.js"></script>
+  <script src="js/app-config.js"></script>
   <script src="js/api.js"></script>
   <script>
     let actId = sessionStorage.getItem('classshow_activity_id');
@@ -467,7 +470,9 @@
 
         // Load QR once
         if (document.getElementById('qrContainer').style.display === 'none' && (act && act.invite_code)) {
-          const url = location.origin + '/index.html?code=' + act.invite_code;
+          const url = typeof window.classShowStudentUrl === 'function'
+            ? window.classShowStudentUrl('/index.html?code=' + act.invite_code)
+            : (location.origin + '/index.html?code=' + act.invite_code);
           api('/qrcode?text=' + encodeURIComponent(url)).then(res => {
             if (res.url) {
               document.getElementById('qrImg').src = res.url;
@@ -781,7 +786,9 @@
 
     function renderFeedbackComposer() {
       const container = document.getElementById('feedbackComposer');
-      const loginUrl = 'index.html' + ((act && act.invite_code) ? ('?code=' + encodeURIComponent(act.invite_code)) : '');
+      const loginUrl = typeof window.classShowStudentUrl === 'function'
+        ? window.classShowStudentUrl('/index.html' + ((act && act.invite_code) ? ('?code=' + encodeURIComponent(act.invite_code)) : ''))
+        : ('index.html' + ((act && act.invite_code) ? ('?code=' + encodeURIComponent(act.invite_code)) : ''));
       if (teacherMode) {
         container.innerHTML = '<div class="feedback-guest-box">当前是教师展示模式。学生登录后可以在此实名提交信息反馈，老师可直接按姓名和学号核对。</div>';
         return;
@@ -972,7 +979,9 @@
 
     async function renderSpotlightActions(work) {
       const box = document.getElementById('spotActionBox');
-      const loginUrl = 'index.html' + ((act && act.invite_code) ? ('?code=' + encodeURIComponent(act.invite_code)) : '');
+      const loginUrl = typeof window.classShowStudentUrl === 'function'
+        ? window.classShowStudentUrl('/index.html' + ((act && act.invite_code) ? ('?code=' + encodeURIComponent(act.invite_code)) : ''))
+        : ('index.html' + ((act && act.invite_code) ? ('?code=' + encodeURIComponent(act.invite_code)) : ''));
 
       if (teacherMode) {
         box.innerHTML = '<div class="spotlight-action-title">教师展示模式</div><div class="spotlight-action-hint">当前大屏用于展示，教师端不参与评分或评论。</div>';

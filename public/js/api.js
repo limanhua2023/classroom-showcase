@@ -1,5 +1,12 @@
-const API = '/api';
+const API = (window.ClassShowAppConfig && window.ClassShowAppConfig.apiBase) || '/api';
 const APP_TIME_ZONE = 'Asia/Bangkok';
+
+function resolveApiUrl(path = '') {
+  if (typeof window.classShowApiUrl === 'function') {
+    return window.classShowApiUrl(path);
+  }
+  return API + path;
+}
 
 async function readApiErrorMessage(res, fallback = '') {
   const contentType = String(res.headers.get('content-type') || '').toLowerCase();
@@ -37,7 +44,7 @@ async function api(path, opts = {}) {
     } catch {}
   }
 
-  const res = await fetch(API + path, { ...opts, headers });
+  const res = await fetch(resolveApiUrl(path), { ...opts, headers });
   if (!res.ok) {
     throw new Error(await readApiErrorMessage(res));
   }
@@ -58,7 +65,7 @@ async function uploadMedia(file) {
   const headers = {};
   if (user.token) headers['x-user-token'] = user.token;
 
-  const res = await fetch(API + '/upload', { method: 'POST', body: fd, headers });
+  const res = await fetch(resolveApiUrl('/upload'), { method: 'POST', body: fd, headers });
   if (!res.ok) {
     throw new Error(await readApiErrorMessage(res, '上传失败'));
   }
