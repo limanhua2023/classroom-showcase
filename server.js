@@ -58,8 +58,10 @@ const VIDEO_AUDIO_BITRATE = '96k';
 const VIDEO_TRANSCODE_THREADS = Math.max(1, Number(process.env.VIDEO_TRANSCODE_THREADS || 1));
 const VIDEO_MAXRATE = '1600k';
 const COURSE_REGISTRY_FILE = path.join(__dirname, 'data', 'course-registry.json');
+const COURSE_TEACHER_ASSET_DIR = path.join(__dirname, 'data', 'course-teacher-assets');
 const COURSE_REGISTRY_STORAGE_PATH = 'system/course-registry.json';
 const COURSE_REGISTRY_CACHE_TTL_MS = 30 * 1000;
+const COURSE_RUNTIME_PROGRESS_SNAPSHOT_MAX_BYTES = Math.max(16 * 1024, Number(process.env.COURSE_RUNTIME_PROGRESS_SNAPSHOT_MAX_BYTES || 128 * 1024));
 const MEDIA_MANIFEST_FOLDER = 'manifests';
 const MEDIA_THUMBNAIL_FOLDER = 'thumbs';
 const STORAGE_TRASH_FOLDER = 'trash';
@@ -2493,7 +2495,8 @@ function normalizeLocalBackupStatus(raw = null) {
     tables: {
       activities: Math.max(0, Number(tables.activities || 0)),
       submissions: Math.max(0, Number(tables.submissions || 0)),
-      student_learning_sessions: Math.max(0, Number(tables.student_learning_sessions || 0))
+      student_learning_sessions: Math.max(0, Number(tables.student_learning_sessions || 0)),
+      student_course_runtime_progress: Math.max(0, Number(tables.student_course_runtime_progress || 0))
     },
     course_count: Math.max(0, Number(raw.course_count || report.course_count || 0)),
     storage_failures: storageFailures.slice(0, 5).map(item => ({
@@ -5280,6 +5283,21 @@ app.use(cors());
 app.use(express.json({ limit: '10mb' }));
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 app.use(express.static(path.join(__dirname, 'public')));
+app.get(['/portal', '/portal/'], (_req, res) => {
+  res.redirect(302, '/index.html');
+});
+app.get(['/teacher', '/teacher/'], (_req, res) => {
+  res.redirect(302, '/teacher-login.html');
+});
+app.get(['/admin', '/admin/', '/super-admin', '/super-admin/'], (_req, res) => {
+  res.redirect(302, '/super-admin.html');
+});
+app.get(['/course/economics', '/course/economics/'], (_req, res) => {
+  res.redirect(302, `/course.html?course=${encodeURIComponent('经济学基础课程')}`);
+});
+app.get(['/economics', '/economics/', '/econ', '/econ/'], (_req, res) => {
+  res.redirect(302, '/courses/economics-fundamentals/');
+});
 
 app.get('/api/health', async (_req, res) => {
   const startedAt = Date.now();
@@ -5669,6 +5687,88 @@ function isLearningSchemaError(message = '') {
   return /student_learning_sessions|active_seconds|session_token|schema cache|does not exist/i.test(String(message || ''));
 }
 
+function isCourseRuntimeSchemaError(message = '') {
+  return /student_course_runtime_progress|course_slug|progress_percent|snapshot|client_updated_at|schema cache|does not exist/i.test(String(message || ''));
+}
+
+function courseRuntimeSchemaNotReadyMessage() {
+  return 'Course runtime progress schema is not ready for the API layer yet. Run upgrade_v5.sql, then refresh Supabase schema cache (or wait for it to propagate).';
+}
+
+function normalizeOptionalIsoString(input) {
+  const value = String(input || '').trim();
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
+function normalizePositiveInteger(input, max = 100000) {
+  const value = Number(input);
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(max, Math.round(value)));
+}
+
+function normalizeBoundedNumber(input, min = 0, max = 100) {
+  const value = Number(input);
+  if (!Number.isFinite(value)) return min;
+  return Math.max(min, Math.min(max, Math.round(value * 100) / 100));
+}
+
+function sanitizeCourseRuntimeSnapshot(snapshot) {
+  if (!snapshot || typeof snapshot !== 'object' || Array.isArray(snapshot)) {
+    return {};
+  }
+  const serialized = JSON.stringify(snapshot);
+  if (Buffer.byteLength(serialized, 'utf8') > COURSE_RUNTIME_PROGRESS_SNAPSHOT_MAX_BYTES) {
+    throw new Error(`Course runtime snapshot is too large. Keep it under ${COURSE_RUNTIME_PROGRESS_SNAPSHOT_MAX_BYTES} bytes.`);
+  }
+  return JSON.parse(serialized);
+}
+
+function normalizeCourseRuntimeProgressPayload(input = {}) {
+  return {
+    runtime_version: sanitizeText(input.runtime_version, 80) || '',
+    learning_mode: sanitizeText(input.learning_mode, 40) || 'selflearn',
+    current_chapter: normalizePositiveInteger(input.current_chapter, 10000),
+    current_lesson: normalizePositiveInteger(input.current_lesson, 10000),
+    current_stage: sanitizeText(input.current_stage, 80) || '',
+    progress_percent: normalizeBoundedNumber(input.progress_percent, 0, 100),
+    completed_chapters: normalizePositiveInteger(input.completed_chapters, 10000),
+    total_chapters: normalizePositiveInteger(input.total_chapters, 10000),
+    xp: normalizePositiveInteger(input.xp, 100000000),
+    active: !(input.active === false || String(input.active || '').trim().toLowerCase() === 'false'),
+    last_event: sanitizeText(input.last_event, 120) || '',
+    page_path: sanitizeText(input.page_path, 240) || '',
+    client_updated_at: normalizeOptionalIsoString(input.client_updated_at),
+    snapshot: sanitizeCourseRuntimeSnapshot(input.snapshot)
+  };
+}
+
+async function ensureActivityMatchesCourseSlug(activityId, courseSlug) {
+  if (!activityId || !courseSlug) {
+    return { ok: false, status: 400, error: 'Missing activity_id or course_slug' };
+  }
+
+  const registry = await getCourseRegistry();
+  const entry = registry.courses.find(item =>
+    item.is_active !== false && item.slug === normalizeCourseSlug(courseSlug)
+  );
+  if (!entry) return { ok: false, status: 404, error: 'Course not found' };
+
+  const { data: activity, error } = await supabase.from('activities')
+    .select('id,course_name')
+    .eq('id', activityId)
+    .single();
+  if (error || !activity) return { ok: false, status: 404, error: 'Activity not found' };
+
+  if (normalizePortalCourseName(activity.course_name) !== normalizePortalCourseName(entry.course_name)) {
+    return { ok: false, status: 403, error: 'Course/activity mismatch' };
+  }
+
+  return { ok: true, course: entry, activity };
+}
+
 function learningMinutes(seconds = 0) {
   return Math.round((Number(seconds || 0) / 60) * 10) / 10;
 }
@@ -5838,9 +5938,23 @@ async function buildLearningEngagementSummary(activityId, viewerUserId = null) {
     };
   });
 
-  const rankedIndividuals = rankLearningRows(individualRows, 'active_seconds');
+  const rankedIndividuals = rankLearningRows(
+    individualRows.map(row => ({ ...row })),
+    'active_seconds'
+  );
+  const rankedByEngagement = rankLearningRows(
+    individualRows.map(row => ({ ...row })),
+    'engagement_score'
+  );
+  const recentActiveWindowMs = Math.max(2 * 60 * 1000, LEARNING_HEARTBEAT_MAX_DELTA_SECONDS * 1000);
+  const recentActiveThreshold = Date.now() - recentActiveWindowMs;
+  const recentlyActiveCount = individualRows.filter(row => {
+    if (!row.last_seen_at) return false;
+    const seenAt = new Date(row.last_seen_at).getTime();
+    return Number.isFinite(seenAt) && seenAt >= recentActiveThreshold;
+  }).length;
   const groupMap = new Map();
-  rankedIndividuals.forEach(row => {
+  individualRows.forEach(row => {
     const groupKey = `${row.class_name || '未分班'}::${row.group_name || '未分组'}`;
     if (!groupMap.has(groupKey)) {
       groupMap.set(groupKey, {
@@ -5889,11 +6003,14 @@ async function buildLearningEngagementSummary(activityId, viewerUserId = null) {
     generated_at: new Date().toISOString(),
     my: me,
     leaderboard: rankedIndividuals.slice(0, LEARNING_LEADERBOARD_LIMIT),
+    engagement_leaderboard: rankedByEngagement.slice(0, LEARNING_LEADERBOARD_LIMIT),
     group_leaderboard: rankedGroups.slice(0, LEARNING_LEADERBOARD_LIMIT),
     totals: {
       active_seconds: rankedIndividuals.reduce((sum, row) => sum + Number(row.active_seconds || 0), 0),
       active_minutes: learningMinutes(rankedIndividuals.reduce((sum, row) => sum + Number(row.active_seconds || 0), 0)),
       tracked_students: rankedIndividuals.filter(row => Number(row.active_seconds || 0) > 0).length,
+      recently_active_count: recentlyActiveCount,
+      recently_active_window_seconds: Math.round(recentActiveWindowMs / 1000),
       student_count: rankedIndividuals.length,
       group_count: rankedGroups.length
     }
@@ -5907,11 +6024,14 @@ function emptyLearningEngagementSummary(error = null) {
     generated_at: new Date().toISOString(),
     my: null,
     leaderboard: [],
+    engagement_leaderboard: [],
     group_leaderboard: [],
     totals: {
       active_seconds: 0,
       active_minutes: 0,
       tracked_students: 0,
+      recently_active_count: 0,
+      recently_active_window_seconds: Math.round(Math.max(2 * 60 * 1000, LEARNING_HEARTBEAT_MAX_DELTA_SECONDS * 1000) / 1000),
       student_count: 0,
       group_count: 0
     }
@@ -5922,22 +6042,39 @@ const PORTAL_ACTIVITY_FIELDS = 'id,course_name,class_name,activity_name,descript
 const PORTAL_SUBMISSION_FIELDS = 'activity_id,media_type,upload_time,status';
 const PORTAL_SUBMISSION_LEGACY_FIELDS = 'activity_id,upload_time';
 const PORTAL_USER_FIELDS = 'activity_id,student_id';
-const PORTAL_DEFAULT_COURSES = ['AI学习课程'];
+const PORTAL_DEFAULT_COURSES = ['经济学基础课程', 'AI学习课程'];
 const DEFAULT_COURSE_REGISTRY = {
-  version: 1,
-  updated_at: '2026-05-14T00:00:00.000Z',
+  version: 3,
+  updated_at: '2026-05-23T00:30:00.000Z',
   courses: [
+    {
+      slug: 'economics-fundamentals',
+      course_name: '经济学基础课程',
+      short_name: '经济学基础',
+      audience: '大一新生',
+      visual_style: '学术感，图表感，讨论感',
+      description: '经济学基础课程总入口。作为第一门接入课程页，继续复用统一身份、邀请码、评分、反馈、备份与归档体系。',
+      integration_status: 'ready',
+      entry_path: '/courses/economics-fundamentals/',
+      module_key: 'economics-fundamentals-v1',
+      portal_default: true,
+      launch_ready: true,
+      supports_activity_context: true,
+      supports_shared_identity: true,
+      supports_invite_codes: true
+    },
     {
       slug: 'ai-learning',
       course_name: 'AI学习课程',
       short_name: 'AI学习',
-      audience: '大一新生',
-      visual_style: '科技感，竞赛感',
-      description: 'AI学习课程总入口。未来的 AI 专属课程网页将直接挂载到该路由下。',
+      audience: '后续第二阶段课程',
+      visual_style: '科技感，项目感',
+      description: 'AI学习课程预留为第二门对接课程。正式内容将在经济学基础课程之后逐步接入。',
       integration_status: 'planned',
       entry_path: '/courses/ai-learning/',
       module_key: 'ai-learning-v1',
-      portal_default: true,
+      is_active: false,
+      portal_default: false,
       launch_ready: false,
       supports_activity_context: true,
       supports_shared_identity: true,
@@ -5990,6 +6127,24 @@ function courseEntryPublicFilePath(entryPath) {
 function courseEntryPathExists(entryPath) {
   const filePath = courseEntryPublicFilePath(entryPath);
   return !!filePath && fs.existsSync(filePath);
+}
+
+function courseTeacherSupplementFilePath(courseSlug) {
+  const slug = normalizeCourseSlug(courseSlug);
+  return path.join(COURSE_TEACHER_ASSET_DIR, `${slug}-supplement.json`);
+}
+
+function loadCourseTeacherSupplement(courseSlug) {
+  const filePath = courseTeacherSupplementFilePath(courseSlug);
+  if (!fs.existsSync(filePath)) return null;
+  const raw = fs.readFileSync(filePath, 'utf8');
+  const parsed = JSON.parse(raw);
+  const stat = fs.statSync(filePath);
+  return {
+    slug: normalizeCourseSlug(courseSlug),
+    updated_at: stat?.mtime ? stat.mtime.toISOString() : null,
+    supplement: parsed
+  };
 }
 
 function normalizeIntegrationStatus(value) {
@@ -6760,6 +6915,31 @@ app.get('/api/portal/course-registry', async (req, res) => {
       return res.json({ course: entry });
     }
     res.json({ version: registry.version, updated_at: registry.updated_at, courses: publicCourses });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/teacher/course-assets/:slug/supplement', teacherAuth, async (req, res) => {
+  try {
+    const activityId = String(req.query.activity_id ?? '').trim();
+    const courseSlug = normalizeCourseSlug(req.params.slug);
+    const auth = await ensureTeacherCanAccessActivity(req, activityId);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const courseMatch = await ensureActivityMatchesCourseSlug(activityId, courseSlug);
+    if (!courseMatch.ok) return res.status(courseMatch.status).json({ error: courseMatch.error });
+
+    const supplement = loadCourseTeacherSupplement(courseSlug);
+    if (!supplement) {
+      return res.status(404).json({ error: 'Teacher supplement not found' });
+    }
+
+    res.json({
+      course: courseMatch.course,
+      updated_at: supplement.updated_at,
+      supplement: supplement.supplement
+    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -8062,13 +8242,113 @@ app.get('/api/student/learning/summary', async (req, res) => {
     res.json(summary);
   } catch (e) {
     if (isLearningSchemaError(e.message)) {
-      return res.json(emptyLearningEngagementSummary('Learning session schema is not ready. Run upgrade_v4.sql first.'));
+      return res.json(emptyLearningEngagementSummary('Learning session schema is not ready. Run upgrade_v5.sql first, then refresh the Supabase schema cache if needed.'));
     }
     res.status(500).json({ error: e.message });
   }
 });
 
 // ─── COMMENTS ───
+app.get('/api/student/course-runtime/progress', async (req, res) => {
+  try {
+    const activityId = String(req.query.activity_id ?? '').trim();
+    const userId = String(req.query.user_id ?? '').trim();
+    const courseSlug = normalizeCourseSlug(req.query.course_slug);
+    if (!activityId || !userId || !courseSlug) {
+      return res.status(400).json({ error: 'Missing activity_id, user_id, or course_slug' });
+    }
+
+    const auth = await validateStudentToken({
+      token: req.headers['x-user-token'],
+      userId,
+      activityId
+    });
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const courseMatch = await ensureActivityMatchesCourseSlug(activityId, courseSlug);
+    if (!courseMatch.ok) return res.status(courseMatch.status).json({ error: courseMatch.error });
+
+    const { data, error } = await supabase.from('student_course_runtime_progress')
+      .select('activity_id,user_id,course_slug,runtime_version,learning_mode,current_chapter,current_lesson,current_stage,progress_percent,completed_chapters,total_chapters,xp,active,last_event,page_path,client_updated_at,snapshot,created_at,updated_at,last_seen_at')
+      .eq('activity_id', activityId)
+      .eq('user_id', userId)
+      .eq('course_slug', courseSlug)
+      .maybeSingle();
+
+    if (error) {
+      if (isCourseRuntimeSchemaError(error.message)) {
+        return res.json({ ok: false, schema_ready: false, error: courseRuntimeSchemaNotReadyMessage(), progress: null });
+      }
+      throw error;
+    }
+
+    res.json({ ok: true, schema_ready: true, progress: data || null });
+  } catch (e) {
+    if (isCourseRuntimeSchemaError(e.message)) {
+      return res.json({ ok: false, schema_ready: false, error: courseRuntimeSchemaNotReadyMessage(), progress: null });
+    }
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/student/course-runtime/progress', studentAuth, async (req, res) => {
+  try {
+    const activityId = String(req.body.activity_id ?? '').trim();
+    const userId = String(req.body.user_id ?? '').trim();
+    const courseSlug = normalizeCourseSlug(req.body.course_slug);
+    if (!activityId || !userId || !courseSlug) {
+      return res.status(400).json({ error: 'Missing activity_id, user_id, or course_slug' });
+    }
+
+    const courseMatch = await ensureActivityMatchesCourseSlug(activityId, courseSlug);
+    if (!courseMatch.ok) return res.status(courseMatch.status).json({ error: courseMatch.error });
+
+    const normalized = normalizeCourseRuntimeProgressPayload(req.body);
+    const nowIso = new Date().toISOString();
+
+    const { data, error } = await supabase.from('student_course_runtime_progress')
+      .upsert([{
+        activity_id: activityId,
+        user_id: userId,
+        course_slug: courseSlug,
+        runtime_version: normalized.runtime_version,
+        learning_mode: normalized.learning_mode,
+        current_chapter: normalized.current_chapter,
+        current_lesson: normalized.current_lesson,
+        current_stage: normalized.current_stage,
+        progress_percent: normalized.progress_percent,
+        completed_chapters: normalized.completed_chapters,
+        total_chapters: normalized.total_chapters,
+        xp: normalized.xp,
+        active: normalized.active,
+        last_event: normalized.last_event,
+        page_path: normalized.page_path,
+        client_updated_at: normalized.client_updated_at,
+        snapshot: normalized.snapshot,
+        updated_at: nowIso,
+        last_seen_at: nowIso
+      }], {
+        onConflict: 'activity_id,user_id,course_slug'
+      })
+      .select('activity_id,user_id,course_slug,runtime_version,learning_mode,current_chapter,current_lesson,current_stage,progress_percent,completed_chapters,total_chapters,xp,active,last_event,page_path,client_updated_at,snapshot,created_at,updated_at,last_seen_at')
+      .single();
+
+    if (error) {
+      if (isCourseRuntimeSchemaError(error.message)) {
+        return res.json({ ok: false, schema_ready: false, error: courseRuntimeSchemaNotReadyMessage(), progress: null });
+      }
+      throw error;
+    }
+
+    res.json({ ok: true, schema_ready: true, progress: data || null });
+  } catch (e) {
+    if (isCourseRuntimeSchemaError(e.message)) {
+      return res.json({ ok: false, schema_ready: false, error: courseRuntimeSchemaNotReadyMessage(), progress: null });
+    }
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/comments', studentAuth, async (req, res) => {
   try {
     const { activity_id, submission_id, user_id, content } = req.body;

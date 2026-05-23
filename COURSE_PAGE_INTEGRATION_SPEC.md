@@ -58,6 +58,12 @@
    - `/index.html`
 
 ## First Dedicated Course Slot
+- Course: `经济学基础课程`
+- Slug: `economics-fundamentals`
+- Route: `/courses/economics-fundamentals/`
+- Module key: `economics-fundamentals-v1`
+
+## Second Planned Slot
 - Course: `AI学习课程`
 - Slug: `ai-learning`
 - Route: `/courses/ai-learning/`

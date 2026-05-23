@@ -19,8 +19,8 @@
     <section class="course-hero">
       <div class="course-hero-copy">
         <div class="brand-kicker">COURSE ARENA</div>
-        <h1 id="courseTitle">AI学习课程</h1>
-        <p id="courseSubtitle">面向大一新生的科技感、竞赛感作品展示场。每位学生跨课程保持同一身份，不同课程使用不同邀请码。</p>
+        <h1 id="courseTitle">经济学基础课程</h1>
+        <p id="courseSubtitle">这里汇集课程活动、作品展示与课程专页入口。学生身份跨课程共享，邀请码按课程和活动继续隔离。</p>
         <div class="course-hero-actions">
           <button class="btn btn-primary" onclick="focusInviteBox()">输入邀请码进入</button>
           <button class="btn btn-secondary" id="courseDedicatedBtn" style="display:none;" onclick="openDedicatedCoursePage()">打开课程专页</button>
@@ -61,7 +61,7 @@
 
     <section class="course-identity-note">
       <strong>身份规则：</strong>
-      同一学生、同一学号在所有课程中使用同一个学习身份；课程之间通过不同邀请码隔离，便于后续接入 AI、经济学、数学等课程页面。
+      同一学生、同一学号在所有课程中使用同一个学习身份；课程之间通过不同邀请码隔离，便于后续逐步接入经济学基础、AI 学习、数学与统计、英语等课程页面。
       <span id="courseIntegrationLine" style="display:block;margin-top:8px;"></span>
     </section>
 
@@ -73,7 +73,7 @@
   <script src="js/api.js"></script>
   <script>
     const params = new URLSearchParams(location.search);
-    const courseName = (params.get('course') || 'AI学习课程').trim();
+    const courseName = (params.get('course') || '经济学基础课程').trim();
     let currentCourse = null;
     let activities = [];
 
@@ -102,7 +102,7 @@
       document.getElementById('courseSubmissionCount').textContent = Number(course.submission_count || 0);
       document.getElementById('courseVideoCount').textContent = Number(course.video_count || 0);
       document.getElementById('courseSubtitle').textContent = integration.description
-        || '面向大一新生的科技感、竞赛感作品展示场。每位学生跨课程保持同一身份，不同课程使用不同邀请码。';
+        || '这里汇集课程活动、作品展示与课程专页入口。学生身份跨课程共享，邀请码按课程和活动继续隔离。';
       const latest = course.latest_upload_at || course.latest_activity_at;
       document.getElementById('courseUpdatedAt').textContent = latest
         ? `最近更新：${formatBangkokTime(latest, { withSeconds: false })}`

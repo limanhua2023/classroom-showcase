@@ -28,7 +28,7 @@
         <p>这里统一维护课程注册表、总门户展示顺序、课程专页挂载状态和后续课程接入规范。教师后台继续按活动维度管理，超级管理员只管理课程层。</p>
         <div class="course-hero-actions">
           <button class="btn btn-primary" onclick="loadOverview()">刷新总览</button>
-          <button class="btn btn-secondary" onclick="location.href='course.html?course=' + encodeURIComponent('AI学习课程')">打开 AI 课程页</button>
+          <button id="superFeaturedCourseButton" class="btn btn-secondary" type="button" onclick="openFeaturedCourse()" hidden>打开首门课程页</button>
         </div>
       </div>
       <div class="course-scoreboard" aria-label="超级管理员统计">
@@ -283,23 +283,23 @@
         <div class="course-editor-grid">
           <div class="form-group">
             <label for="registryCourseName">课程名称</label>
-            <input id="registryCourseName" type="text" maxlength="120" placeholder="例如：AI学习课程">
+            <input id="registryCourseName" type="text" maxlength="120" placeholder="例如：经济学基础课程">
           </div>
           <div class="form-group">
             <label for="registryShortName">短名称</label>
-            <input id="registryShortName" type="text" maxlength="80" placeholder="例如：AI学习">
+            <input id="registryShortName" type="text" maxlength="80" placeholder="例如：经济学基础">
           </div>
           <div class="form-group">
             <label for="registrySlug">课程 slug</label>
-            <input id="registrySlug" type="text" maxlength="60" placeholder="例如：ai-learning">
+            <input id="registrySlug" type="text" maxlength="60" placeholder="例如：economics-fundamentals">
           </div>
           <div class="form-group">
             <label for="registryModuleKey">模块标识</label>
-            <input id="registryModuleKey" type="text" maxlength="80" placeholder="例如：ai-learning-v1">
+            <input id="registryModuleKey" type="text" maxlength="80" placeholder="例如：economics-fundamentals-v1">
           </div>
           <div class="form-group">
             <label for="registryEntryPath">课程入口路径</label>
-            <input id="registryEntryPath" type="text" maxlength="160" placeholder="/courses/ai-learning/">
+            <input id="registryEntryPath" type="text" maxlength="160" placeholder="/courses/economics-fundamentals/">
             <div class="form-hint">必须以 <code>/</code> 开头，建议统一落在 <code>/courses/&lt;slug&gt;/</code>。</div>
           </div>
           <div class="form-group">
@@ -536,6 +536,7 @@
     }
 
     function renderOverviewBlocks() {
+      syncFeaturedCourseButton();
       renderOverviewSummary();
       renderBackupRecoveryOverviewPanel();
       renderHotStorageGauge();
@@ -552,6 +553,7 @@
     }
 
     function renderOpsOverviewBlocks() {
+      syncFeaturedCourseButton();
       renderOverviewHealthLine();
       renderBackupRecoveryOverviewPanel();
       renderHotStorageGauge();
@@ -587,6 +589,35 @@
           btn.textContent = originalText;
         }
       }
+    }
+
+    function getPrimaryRegistryCourse() {
+      const registryCourses = overview?.registry?.courses || [];
+      return registryCourses.find(entry => entry.is_active !== false && entry.portal_default !== false)
+        || registryCourses.find(entry => entry.is_active !== false)
+        || registryCourses[0]
+        || null;
+    }
+
+    function syncFeaturedCourseButton() {
+      const button = document.getElementById('superFeaturedCourseButton');
+      if (!button) return;
+      const course = getPrimaryRegistryCourse();
+      if (!course?.course_name) {
+        button.hidden = true;
+        button.dataset.courseName = '';
+        return;
+      }
+      button.hidden = false;
+      button.dataset.courseName = course.course_name;
+      button.textContent = `打开首门课程页 · ${course.short_name || course.course_name}`;
+    }
+
+    function openFeaturedCourse() {
+      const button = document.getElementById('superFeaturedCourseButton');
+      const courseName = String(button?.dataset.courseName || '').trim();
+      if (!courseName) return toast('当前还没有可打开的课程注册项', 'error');
+      location.href = 'course.html?course=' + encodeURIComponent(courseName);
     }
 
     function formatArchiveGaugeGb(bytes) {
@@ -1056,6 +1087,7 @@
       statsEl.innerHTML = [
         ['Activities', tables.activities || 0],
         ['Submissions', tables.submissions || 0],
+        ['Runtime progress', tables.student_course_runtime_progress || 0],
         ['Downloaded', storage.downloaded_count || 0],
         ['Failed', storage.failed_count || 0]
       ].map(item => `

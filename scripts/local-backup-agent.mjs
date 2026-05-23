@@ -482,7 +482,7 @@ function enrichSubmissionForBackup(config, submission) {
   };
 }
 
-function buildCourseCatalog(activities, submissions, learningSessions) {
+function buildCourseCatalog(activities, submissions, learningSessions, courseRuntimeProgress) {
   const map = new Map();
   for (const activity of activities) {
     const courseName = String(activity.course_name || '').trim() || 'Uncategorized';
@@ -492,6 +492,7 @@ function buildCourseCatalog(activities, submissions, learningSessions) {
         activity_count: 0,
         submission_count: 0,
         learning_session_count: 0,
+        runtime_progress_count: 0,
         invite_codes: []
       });
     }
@@ -510,6 +511,12 @@ function buildCourseCatalog(activities, submissions, learningSessions) {
     if (!activity) continue;
     const entry = map.get(String(activity.course_name || '').trim() || 'Uncategorized');
     if (entry) entry.learning_session_count += 1;
+  }
+  for (const item of courseRuntimeProgress) {
+    const activity = activities.find(row => row.id === item.activity_id);
+    if (!activity) continue;
+    const entry = map.get(String(activity.course_name || '').trim() || 'Uncategorized');
+    if (entry) entry.runtime_progress_count += 1;
   }
   return [...map.values()].sort((left, right) => left.course_name.localeCompare(right.course_name));
 }
@@ -540,7 +547,8 @@ function buildActivitySnapshot(config, activity, context) {
     comments: context.comments.filter(item => item.activity_id === activityId || submissionIdSet.has(item.submission_id) || userIdSet.has(item.user_id)),
     views: context.views.filter(item => item.activity_id === activityId || submissionIdSet.has(item.submission_id)),
     activity_feedback_likes: context.feedbackLikes.filter(item => item.activity_id === activityId),
-    student_learning_sessions: context.learningSessions.filter(item => item.activity_id === activityId)
+    student_learning_sessions: context.learningSessions.filter(item => item.activity_id === activityId),
+    student_course_runtime_progress: context.courseRuntimeProgress.filter(item => item.activity_id === activityId)
   };
 }
 
@@ -624,7 +632,8 @@ async function runBackupOnce(config) {
       comments,
       views,
       feedbackLikes,
-      learningSessions
+      learningSessions,
+      courseRuntimeProgress
     ] = await Promise.all([
       fetchRowsByActivityIds(client, 'users', activityIds),
       fetchOptionalRowsByActivityIds(client, 'student_roster', activityIds),
@@ -633,11 +642,12 @@ async function runBackupOnce(config) {
       fetchOptionalRowsByActivityIds(client, 'comments', activityIds),
       fetchOptionalRowsByActivityIds(client, 'views', activityIds),
       fetchOptionalRowsByActivityIds(client, 'activity_feedback_likes', activityIds),
-      fetchOptionalRowsByActivityIds(client, 'student_learning_sessions', activityIds)
+      fetchOptionalRowsByActivityIds(client, 'student_learning_sessions', activityIds),
+      fetchOptionalRowsByActivityIds(client, 'student_course_runtime_progress', activityIds)
     ]);
 
     const generatedAt = new Date().toISOString();
-    const courseCatalog = buildCourseCatalog(activities, submissions, learningSessions);
+    const courseCatalog = buildCourseCatalog(activities, submissions, learningSessions, courseRuntimeProgress);
 
     writeJson(path.join(config.metadataRoot, 'activities.json'), activities);
     writeJson(path.join(config.metadataRoot, 'users.json'), users);
@@ -648,6 +658,7 @@ async function runBackupOnce(config) {
     writeJson(path.join(config.metadataRoot, 'views.json'), views);
     writeJson(path.join(config.metadataRoot, 'activity_feedback_likes.json'), feedbackLikes);
     writeJson(path.join(config.metadataRoot, 'student_learning_sessions.json'), learningSessions);
+    writeJson(path.join(config.metadataRoot, 'student_course_runtime_progress.json'), courseRuntimeProgress);
     writeJson(path.join(config.metadataRoot, 'course_catalog.json'), courseCatalog);
 
     const activityIndex = [];
@@ -664,7 +675,8 @@ async function runBackupOnce(config) {
         comments,
         views,
         feedbackLikes,
-        learningSessions
+        learningSessions,
+        courseRuntimeProgress
       });
       writeJson(path.join(outputDir, 'snapshot.json'), snapshot);
       activityIndex.push({
@@ -708,7 +720,8 @@ async function runBackupOnce(config) {
         comments: comments.length,
         views: views.length,
         activity_feedback_likes: feedbackLikes.length,
-        student_learning_sessions: learningSessions.length
+        student_learning_sessions: learningSessions.length,
+        student_course_runtime_progress: courseRuntimeProgress.length
       },
       course_count: courseCatalog.length
     };
@@ -766,7 +779,8 @@ async function runBackupOnce(config) {
       tables: {
         activities: 0,
         submissions: 0,
-        student_learning_sessions: 0
+        student_learning_sessions: 0,
+        student_course_runtime_progress: 0
       },
       storage_failures: []
     });

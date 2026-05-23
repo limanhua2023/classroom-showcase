@@ -71,6 +71,114 @@
       border-color: rgba(239, 68, 68, 0.2);
       color: #b91c1c;
     }
+    .learning-monitor-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+    .learning-monitor-card {
+      padding: 14px 16px;
+      border-radius: 18px;
+      background: linear-gradient(180deg, rgba(37, 99, 235, 0.08), rgba(15, 23, 42, 0.03));
+      border: 1px solid rgba(37, 99, 235, 0.12);
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.42);
+    }
+    .learning-monitor-card strong {
+      display: block;
+      font-size: 1.3rem;
+      line-height: 1.15;
+      font-weight: 900;
+      color: var(--text-main);
+    }
+    .learning-monitor-card span {
+      display: block;
+      margin-top: 4px;
+      font-size: 0.82rem;
+      font-weight: 800;
+      color: #1d4ed8;
+    }
+    .learning-monitor-card small {
+      display: block;
+      margin-top: 6px;
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      line-height: 1.55;
+    }
+    .learning-monitor-footnote {
+      margin-top: 12px;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      line-height: 1.65;
+    }
+    .learning-list-head {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .learning-rank {
+      width: 34px;
+      height: 34px;
+      border-radius: 12px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(15, 23, 42, 0.07);
+      color: var(--text-main);
+      font-size: 0.8rem;
+      font-weight: 900;
+      flex: 0 0 auto;
+    }
+    .learning-rank.top-1 {
+      background: rgba(245, 158, 11, 0.16);
+      color: #b45309;
+    }
+    .learning-rank.top-2 {
+      background: rgba(100, 116, 139, 0.18);
+      color: #334155;
+    }
+    .learning-rank.top-3 {
+      background: rgba(249, 115, 22, 0.16);
+      color: #c2410c;
+    }
+    .learning-status-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 800;
+      margin-top: 8px;
+      background: rgba(148, 163, 184, 0.14);
+      color: #475569;
+    }
+    .learning-status-chip::before {
+      content: "";
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      opacity: 0.85;
+    }
+    .learning-status-chip.online {
+      background: rgba(34, 197, 94, 0.14);
+      color: #15803d;
+    }
+    .learning-status-chip.idle {
+      background: rgba(245, 158, 11, 0.14);
+      color: #b45309;
+    }
+    .learning-status-chip.offline {
+      background: rgba(148, 163, 184, 0.14);
+      color: #475569;
+    }
+    .learning-list-note {
+      margin-top: 4px;
+      color: var(--text-light);
+      font-size: 0.76rem;
+      line-height: 1.55;
+    }
     .archive-gauge-layout {
       display: grid;
       grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
@@ -272,6 +380,19 @@
       font-weight: 900;
       line-height: 1;
       flex: 0 0 auto;
+    }
+    @media (max-width: 1180px) {
+      .learning-monitor-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
+    }
+    @media (max-width: 640px) {
+      .learning-monitor-grid {
+        grid-template-columns: 1fr;
+      }
+      .learning-list-head {
+        align-items: flex-start;
+      }
     }
     .teacher-backup-status-strip {
       position: sticky;
@@ -1468,6 +1589,65 @@
         </div>
       </div>
 
+      <div class="dashboard-panel">
+        <div class="dashboard-panel-body">
+          <div class="dashboard-panel-head">
+            <div>
+              <div class="dashboard-panel-title">学习监控</div>
+              <div class="dashboard-panel-note">把学习时长、最近在线状态和课堂互动强度汇总成老师可直接查看的学习榜与活跃榜。</div>
+            </div>
+            <div class="card-badge" id="learningMonitorBadge">正在读取学习数据...</div>
+          </div>
+          <div id="learningMonitorSummary">
+            <div class="dashboard-panel-note">正在读取学习数据...</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="dashboard-three-col" style="grid-column: span 12;">
+        <div class="dashboard-panel">
+          <div class="dashboard-panel-body">
+            <div class="dashboard-panel-head">
+              <div>
+                <div class="dashboard-panel-title">在线学习榜</div>
+                <div class="dashboard-panel-note">按累计在线学习时长排序，优先看谁真的在学。</div>
+              </div>
+            </div>
+            <div class="dashboard-list" id="learningDurationList">
+              <div class="dashboard-panel-note">正在读取学习榜...</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="dashboard-panel">
+          <div class="dashboard-panel-body">
+            <div class="dashboard-panel-head">
+              <div>
+                <div class="dashboard-panel-title">综合活跃榜</div>
+                <div class="dashboard-panel-note">学习时长、作品、评分、评论和浏览行为综合成活跃分。</div>
+              </div>
+            </div>
+            <div class="dashboard-list" id="learningEngagementList">
+              <div class="dashboard-panel-note">正在读取活跃榜...</div>
+            </div>
+          </div>
+        </div>
+
+        <div class="dashboard-panel">
+          <div class="dashboard-panel-body">
+            <div class="dashboard-panel-head">
+              <div>
+                <div class="dashboard-panel-title">小组学习力榜</div>
+                <div class="dashboard-panel-note">把班级 / 小组的学习强度聚合出来，方便课堂编组对比。</div>
+              </div>
+            </div>
+            <div class="dashboard-list" id="learningGroupList">
+              <div class="dashboard-panel-note">正在读取小组榜...</div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="dashboard-two-col" style="grid-column: span 12;">
         <div class="dashboard-panel">
           <div class="dashboard-panel-body">
@@ -1780,6 +1960,247 @@
           <div class="dashboard-metric-meta">${escapeHtml(item[2])}</div>
         </div>
       `).join('');
+    }
+
+    function formatLearningMinutes(value) {
+      const minutes = Number(value || 0);
+      if (!Number.isFinite(minutes) || minutes <= 0) return '0 分钟';
+      if (minutes >= 60 * 24) {
+        const days = Math.floor(minutes / (60 * 24));
+        const hours = Math.round((minutes % (60 * 24)) / 60);
+        return hours > 0 ? `${days} 天 ${hours} 小时` : `${days} 天`;
+      }
+      if (minutes >= 60) {
+        const hours = Math.floor(minutes / 60);
+        const remaining = Math.round(minutes % 60);
+        return remaining > 0 ? `${hours} 小时 ${remaining} 分钟` : `${hours} 小时`;
+      }
+      return `${Math.max(1, Math.round(minutes))} 分钟`;
+    }
+
+    function formatLearningScore(value) {
+      const score = Number(value || 0);
+      if (!Number.isFinite(score) || score <= 0) return '0';
+      return score % 1 === 0 ? String(score.toFixed(0)) : score.toFixed(1);
+    }
+
+    function getLearningWindowSeconds(learning) {
+      const seconds = Number(learning?.totals?.recently_active_window_seconds || 0);
+      return Number.isFinite(seconds) && seconds > 0 ? seconds : 120;
+    }
+
+    function isLearningRecentlyActive(lastSeenAt, windowSeconds = getLearningWindowSeconds(dashboardSummary?.learning_engagement)) {
+      if (!lastSeenAt) return false;
+      const seenAt = new Date(lastSeenAt).getTime();
+      if (!Number.isFinite(seenAt)) return false;
+      return Date.now() - seenAt <= windowSeconds * 1000;
+    }
+
+    function formatLastSeenLabel(lastSeenAt, windowSeconds = getLearningWindowSeconds(dashboardSummary?.learning_engagement)) {
+      if (!lastSeenAt) return '尚未产生学习心跳';
+      const seenAt = new Date(lastSeenAt).getTime();
+      if (!Number.isFinite(seenAt)) return '最近在线时间未知';
+      const diffSeconds = Math.max(0, Math.round((Date.now() - seenAt) / 1000));
+      if (diffSeconds <= windowSeconds) return '最近在线';
+      if (diffSeconds < 60) return `${diffSeconds} 秒前在线`;
+      const diffMinutes = Math.round(diffSeconds / 60);
+      if (diffMinutes < 60) return `${diffMinutes} 分钟前在线`;
+      const diffHours = Math.round(diffMinutes / 60);
+      if (diffHours < 24) return `${diffHours} 小时前在线`;
+      const diffDays = Math.round(diffHours / 24);
+      return `${diffDays} 天前在线`;
+    }
+
+    function getLearningStatusMeta(lastSeenAt, windowSeconds = getLearningWindowSeconds(dashboardSummary?.learning_engagement)) {
+      if (!lastSeenAt) return { label: '未开始', className: 'offline' };
+      const seenAt = new Date(lastSeenAt).getTime();
+      if (!Number.isFinite(seenAt)) return { label: '状态未知', className: 'offline' };
+      const diffSeconds = Math.max(0, Math.round((Date.now() - seenAt) / 1000));
+      if (diffSeconds <= windowSeconds) return { label: '最近在线', className: 'online' };
+      if (diffSeconds <= windowSeconds * 10) return { label: '稍早活跃', className: 'idle' };
+      return { label: '离线', className: 'offline' };
+    }
+
+    function renderLearningLeaderboard(targetId, rows, mode) {
+      const box = document.getElementById(targetId);
+      if (!box) return;
+      if (!rows?.length) {
+        const emptyText = mode === 'engagement'
+          ? '学生产生学习、作品、评分、评论后，这里会显示综合活跃榜。'
+          : '学生通过邀请码进入当前活动并开始学习后，这里会显示在线学习榜。';
+        box.innerHTML = `<div class="dashboard-panel-note">${escapeHtml(emptyText)}</div>`;
+        return;
+      }
+
+      box.innerHTML = rows.map((row, index) => {
+        const rank = Number(row.rank || index + 1);
+        const rankClass = rank === 1 ? 'top-1' : rank === 2 ? 'top-2' : rank === 3 ? 'top-3' : '';
+        const status = getLearningStatusMeta(row.last_seen_at);
+        const metaLine = [
+          row.student_id || '-',
+          row.class_name || '未分班',
+          row.group_name || '未分组'
+        ].join(' · ');
+        const detailLine = mode === 'engagement'
+          ? [
+              `学习 ${formatLearningMinutes(row.active_minutes)}`,
+              `作品 ${Number(row.work_count || 0)}`,
+              `评分 ${Number(row.ratings_given || 0)}`,
+              `评论 ${Number(row.comments_given || 0)}`,
+              `浏览 ${Number(row.views_given || 0)}`,
+              `作品均分 ${Number(row.received_average_score || 0).toFixed(1)}`
+            ].join(' · ')
+          : [
+              `作品 ${Number(row.work_count || 0)}`,
+              `评分 ${Number(row.ratings_given || 0)}`,
+              `评论 ${Number(row.comments_given || 0)}`,
+              `浏览 ${Number(row.views_given || 0)}`,
+              formatLastSeenLabel(row.last_seen_at)
+            ].join(' · ');
+        const sideValue = mode === 'engagement'
+          ? `${formatLearningScore(row.engagement_score)} 分`
+          : formatLearningMinutes(row.active_minutes);
+        const sideLabel = mode === 'engagement' ? '综合活跃分' : '累计在线学习';
+
+        return `
+          <div class="dashboard-list-item">
+            <div class="dashboard-list-main">
+              <div class="learning-list-head">
+                <span class="learning-rank ${rankClass}">#${rank}</span>
+                <div>
+                  <div class="dashboard-list-title">${escapeHtml(row.name || '未实名学生')}</div>
+                  <div class="dashboard-list-sub">${escapeHtml(metaLine)}</div>
+                </div>
+              </div>
+              <div class="learning-list-note">${escapeHtml(detailLine)}</div>
+            </div>
+            <div class="dashboard-list-side">
+              <strong>${escapeHtml(sideValue)}</strong>
+              <span>${escapeHtml(sideLabel)}</span>
+              <span class="learning-status-chip ${status.className}">${escapeHtml(status.label)}</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderLearningGroups(targetId, rows) {
+      const box = document.getElementById(targetId);
+      if (!box) return;
+      if (!rows?.length) {
+        box.innerHTML = '<div class="dashboard-panel-note">先导入名单并给学生分班 / 分组后，这里会显示小组学习力榜。</div>';
+        return;
+      }
+
+      box.innerHTML = rows.map((row, index) => {
+        const rank = Number(row.rank || index + 1);
+        const rankClass = rank === 1 ? 'top-1' : rank === 2 ? 'top-2' : rank === 3 ? 'top-3' : '';
+        const title = [row.class_name || '未分班', row.group_name || '未分组'].filter(Boolean).join(' · ');
+        const avgScore = Number(row.received_average_score || 0);
+        const avgEngagement = Number(row.member_count || 0) > 0
+          ? Number(row.engagement_score || 0) / Number(row.member_count || 0)
+          : 0;
+        return `
+          <div class="dashboard-list-item">
+            <div class="dashboard-list-main">
+              <div class="learning-list-head">
+                <span class="learning-rank ${rankClass}">#${rank}</span>
+                <div>
+                  <div class="dashboard-list-title">${escapeHtml(title)}</div>
+                  <div class="dashboard-list-sub">成员 ${escapeHtml(row.member_count || 0)} 人 · 累计学习 ${escapeHtml(formatLearningMinutes(row.active_minutes))}</div>
+                </div>
+              </div>
+              <div class="learning-list-note">${escapeHtml(`作品 ${Number(row.work_count || 0)} · 评分 ${Number(row.ratings_given || 0)} · 评论 ${Number(row.comments_given || 0)} · 浏览 ${Number(row.views_given || 0)} · 作品均分 ${avgScore.toFixed(1)}`)}</div>
+            </div>
+            <div class="dashboard-list-side">
+              <strong>${escapeHtml(formatLearningScore(row.engagement_score))} 分</strong>
+              <span>${escapeHtml(`人均 ${formatLearningScore(avgEngagement)} 分`)}</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderLearningMonitor(summary) {
+      const badge = document.getElementById('learningMonitorBadge');
+      const box = document.getElementById('learningMonitorSummary');
+      const learning = summary?.learning_engagement || null;
+      if (!badge || !box) return;
+
+      if (!learning) {
+        badge.textContent = '学习数据未返回';
+        box.innerHTML = '<div class="dashboard-panel-note">当前后端还没有返回学习监控数据。</div>';
+        renderLearningLeaderboard('learningDurationList', [], 'duration');
+        renderLearningLeaderboard('learningEngagementList', [], 'engagement');
+        renderLearningGroups('learningGroupList', []);
+        return;
+      }
+
+      const totals = learning.totals || {};
+      const totalMinutes = Number(totals.active_minutes || 0);
+      const trackedStudents = Number(totals.tracked_students || 0);
+      const studentCount = Number(totals.student_count || 0);
+      const groupCount = Number(totals.group_count || 0);
+      const recentlyActiveCount = Number(totals.recently_active_count || 0);
+      const windowSeconds = getLearningWindowSeconds(learning);
+      const windowMinutes = Math.max(1, Math.round(windowSeconds / 60));
+      const averageMinutes = trackedStudents > 0 ? totalMinutes / trackedStudents : 0;
+
+      if (studentCount > 0) {
+        badge.textContent = `${trackedStudents}/${studentCount} 已跟踪 · ${recentlyActiveCount} 人最近在线`;
+      } else if (learning.schema_ready === false) {
+        badge.textContent = '学习明细未初始化';
+      } else {
+        badge.textContent = '暂无学习记录';
+      }
+
+      const cards = [
+        {
+          value: formatLearningMinutes(totalMinutes),
+          label: '累计在线学习',
+          note: `当前活动共 ${studentCount} 名学生`
+        },
+        {
+          value: `${trackedStudents}/${studentCount}`,
+          label: '已跟踪学生',
+          note: trackedStudents ? '至少产生过一次学习心跳' : '还没有收到学习心跳'
+        },
+        {
+          value: String(recentlyActiveCount),
+          label: `最近 ${windowMinutes} 分钟在线`,
+          note: '可近似理解为正在学习或刚离开'
+        },
+        {
+          value: formatLearningMinutes(averageMinutes),
+          label: '人均在线学习',
+          note: `当前聚合 ${groupCount} 个班级 / 小组单元`
+        }
+      ];
+
+      const warning = learning.schema_ready === false
+        ? `<div class="storage-warning warning-attention">${escapeHtml(learning.error || '学习监控表还没有完成初始化，请先执行升级 SQL。')}</div>`
+        : '';
+
+      box.innerHTML = `
+        ${warning}
+        <div class="learning-monitor-grid">
+          ${cards.map(card => `
+            <div class="learning-monitor-card">
+              <strong>${escapeHtml(card.value)}</strong>
+              <span>${escapeHtml(card.label)}</span>
+              <small>${escapeHtml(card.note)}</small>
+            </div>
+          `).join('')}
+        </div>
+        <div class="learning-monitor-footnote">
+          这里只统计学生通过邀请码进入“当前活动”后产生的在线学习心跳与互动行为。学生如果直接打开课程页进行本机自学，不会进入本活动榜单。
+          ${learning.generated_at ? ` 数据更新时间：${escapeHtml(formatBangkokTime(learning.generated_at))}。` : ''}
+        </div>
+      `;
+
+      renderLearningLeaderboard('learningDurationList', learning.leaderboard || [], 'duration');
+      renderLearningLeaderboard('learningEngagementList', learning.engagement_leaderboard || [], 'engagement');
+      renderLearningGroups('learningGroupList', learning.group_leaderboard || []);
     }
 
     function renderStatusPills(activity) {
@@ -4636,6 +5057,7 @@
         syncSessionActivity(summary.activity || {});
         renderMeta(summary.activity || {});
         renderMetricGrid(summary);
+        renderLearningMonitor(summary);
         renderStatusPills(summary.activity || {});
         renderControls(summary.activity || {});
         renderStorage(summary);

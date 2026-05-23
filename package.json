@@ -6,6 +6,8 @@
   "scripts": {
     "build": "echo 'No build needed'",
     "start": "node server.js",
+    "course:economics:import": "node scripts/import-economics-course.mjs",
+    "audit:public": "node scripts/check-public-readiness.mjs",
     "google-drive:oauth": "node scripts/google-drive-oauth-token.mjs",
     "ops:pressure": "node scripts/ops-pressure-test.mjs",
     "backup:local": "node scripts/local-backup-agent.mjs --once",
