@@ -1,43 +1,46 @@
 # Economics Public Audit 2026-05-23
 
-## Command
+## Final Status
+
+- Public route audit: `11/11 passed`
+- Cloud learning smoke test: `passed`
+- Render live commit verified: `ec96e79`
+
+## Public Audit Command
 
 ```powershell
 npm run audit:public -- https://classroom-showcase.onrender.com
-node scripts/check-public-readiness.mjs http://127.0.0.1:3105
 ```
 
-## Local Latest Code
+Latest result:
 
-Base URL: `http://127.0.0.1:3105`
+- `GET /api/health`: pass
+- student portal shell: pass
+- economics course portal shell: pass
+- course registry economics entry: pass
+- dedicated economics page: pass
+- `/economics`: pass
+- `/course/economics`: pass
+- `/teacher`: pass
+- teacher dashboard shell with learning monitor panel: pass
+- `/admin`: pass
+- super-admin shell with economics integration markers: pass
 
-- Result: `11/11 passed`
-- Interpretation:
-  - latest economics route is mounted
-  - short aliases are mounted
-  - teacher dashboard contains learning monitor panel
-  - super-admin shell contains economics course integration
+## Cloud Learning Smoke Test
 
-## Current Render Public Site
+```powershell
+npm run smoke:cloud:learning -- https://classroom-showcase.onrender.com
+```
 
-Base URL: `https://classroom-showcase.onrender.com`
+Latest result:
 
-- Result: `2/11 passed`
-- Passed:
-  - `GET /api/health`
-  - `GET /api/portal/course-registry`
-- Failed:
-  - student portal still does not show economics-first content
-  - course portal still does not show economics-first content
-  - dedicated economics page returns `404`
-  - short aliases `/economics`, `/course/economics`, `/teacher`, `/admin` are not deployed
-  - teacher dashboard shell does not contain learning monitor panel
-  - super-admin shell does not contain economics integration markers
+- temporary economics activity created successfully
+- teacher login succeeded
+- temporary student joined successfully
+- two learning heartbeats succeeded
+- teacher dashboard summary returned tracked student and recent activity
+- temporary smoke activity cleaned successfully
 
 ## Meaning
 
-Production data and registry are already aware of the economics course, but the public Render site is still serving an older frontend/backend build. The next required action is deployment of the latest `main` build to Render.
-
-## Release Gate
-
-Do not announce the economics course public URL until the Render audit reaches `11/11 passed`.
+The economics course is now publicly reachable on the current Render deployment, and the teacher-side learning monitoring chain is working on the live site.
