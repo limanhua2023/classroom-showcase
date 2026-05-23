@@ -212,6 +212,7 @@
       <div class="classshow-econ-actions">
         <button type="button" class="primary" id="classshowEconPortalBtn">返回课程总页</button>
         <button type="button" id="classshowEconIndexBtn">总门户</button>
+        <button type="button" id="classshowEconThemeBtn">亮色</button>
         <button type="button" id="classshowEconTeacherBtn" style="display:none;">教师后台</button>
       </div>
     `;
@@ -231,9 +232,18 @@
       }
       location.href = '/index.html';
     });
+    document.getElementById('classshowEconThemeBtn').addEventListener('click', () => {
+      if (typeof window.toggleTheme === 'function') {
+        window.toggleTheme();
+      }
+    });
     document.getElementById('classshowEconTeacherBtn').addEventListener('click', () => {
       location.href = '/teacher-dashboard.html';
     });
+    if (typeof window.updateThemeButtons === 'function') {
+      const activeTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+      window.updateThemeButtons(activeTheme);
+    }
   }
 
   function updateBridgeShell() {

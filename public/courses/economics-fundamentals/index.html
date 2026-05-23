@@ -405,8 +405,6 @@ body.low-perf * {
   background: rgba(3, 10, 22, 0.96);
   border-top: 1px solid var(--border-color);
   display: none;
-  justify-content: space-around;
-  align-items: center;
   z-index: 999;
   backdrop-filter: blur(10px);
 }
@@ -417,14 +415,15 @@ body.low-perf * {
   display: flex;
   flex-direction: column;
   align-items: center;
+  justify-content: center;
   gap: 2px;
   color: var(--text-muted);
   font-size: 10px;
   cursor: pointer;
   background: none;
   border: none;
-  padding: 6px;
-  min-width: 55px;
+  padding: 4px 2px;
+  min-width: 0;
   min-height: 44px;
   transition: var(--transition);
 }
@@ -435,9 +434,47 @@ body.low-perf * {
   font-size: 18px;
 }
 
+.mobile-theme-fab {
+  position: fixed;
+  right: 16px;
+  bottom: 76px;
+  z-index: 100000;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 52px;
+  min-height: 52px;
+  padding: 0 14px;
+  border-radius: 999px;
+  border: 1px solid var(--border-color);
+  background: rgba(3, 10, 22, 0.92);
+  color: var(--gold);
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.24);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  font-size: 13px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+[data-theme="light"] .mobile-theme-fab {
+  background: rgba(255, 255, 255, 0.94);
+}
+
+.mobile-theme-fab:hover {
+  background: var(--gold);
+  color: #030a16;
+}
+
 @media (max-width: 768px) {
   .mobile-tab-bar {
-    display: flex;
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    align-items: center;
+  }
+  .mobile-theme-fab {
+    display: inline-flex;
   }
   body {
     padding-bottom: 70px !important;
@@ -446,6 +483,26 @@ body.low-perf * {
     bottom: 70px;
     width: calc(100% - 40px);
     left: 20px;
+  }
+  #mnav {
+    flex-wrap: wrap;
+  }
+  .mtabs {
+    flex: 1 1 100%;
+    max-width: none;
+    padding-right: 10px;
+  }
+  #low-perf-btn,
+  #teacher-btn {
+    display: none !important;
+  }
+  #theme-btn {
+    margin-left: auto;
+    padding: 10px 16px;
+    font-size: 12px;
+    border-left: none;
+    border-top: 1px solid var(--border-color);
+    border-radius: 0 0 0 12px;
   }
 }
 
@@ -6747,7 +6804,7 @@ const MODULES = [
 ];
 
 // ── 章节数据对象 ──
-const C = {};
+const C = window.C || (window.C = {});
 
 // ── v1.17.4 本地存储 Progress 键 ──
 const PK = 'econCourse_v117_state';
@@ -10494,15 +10551,27 @@ function renderAdvanced() {
 }
 
 // ── 主题与初始化 ──
+function updateThemeButtons(theme) {
+  const nextLabel = theme === 'light' ? '🌙 暗色' : '☀️ 亮色';
+  const nextShortLabel = theme === 'light' ? '🌙 暗' : '☀️ 亮';
+  const btn = document.getElementById('theme-btn');
+  const mobileBtn = document.getElementById('theme-btn-mobile');
+  const bridgeBtn = document.getElementById('classshowEconThemeBtn');
+  const mobileTabIcon = document.getElementById('m-theme-icon');
+  const mobileTabLabel = document.getElementById('m-theme-label');
+  if (btn) btn.textContent = nextLabel;
+  if (mobileBtn) mobileBtn.textContent = nextShortLabel;
+  if (bridgeBtn) bridgeBtn.textContent = nextLabel;
+  if (mobileTabIcon) mobileTabIcon.textContent = theme === 'light' ? '🌙' : '☀️';
+  if (mobileTabLabel) mobileTabLabel.textContent = theme === 'light' ? '暗色' : '亮色';
+}
+
 function toggleTheme() {
   const html = document.documentElement;
   const next = html.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
   html.setAttribute('data-theme', next);
   localStorage.setItem('econCourse_v117_theme', next);
-  
-  const btn = document.getElementById('theme-btn');
-  if (btn) btn.textContent = next === 'light' ? '🌙 暗色' : '☀️ 亮色';
-  
+  updateThemeButtons(next);
   drawActiveModel();
 }
 
@@ -13130,8 +13199,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const savedTheme = localStorage.getItem('econCourse_v115_theme')
     || localStorage.getItem('econCourse_v113_theme') || 'dark';
   document.documentElement.setAttribute('data-theme', savedTheme);
-  const btn = document.getElementById('theme-btn');
-  if (btn) btn.textContent = savedTheme === 'light' ? '🌙 暗色' : '☀️ 亮色';
+  updateThemeButtons(savedTheme);
 
   EconCourseApp.init();
   initTicker();
@@ -13277,15 +13345,13 @@ document.addEventListener('keydown', (e) => {
     <span class="mobile-tab-icon">🔬</span>
     <span>实验</span>
   </button>
-  <button class="mobile-tab-item" id="m-tab-wrongs" onclick="openWrongNotebook()" style="min-height:44px;">
-    <span class="mobile-tab-icon">❌</span>
-    <span>错题</span>
-  </button>
-  <button class="mobile-tab-item" id="m-tab-feedback" onclick="openStudentFeedback()" style="min-height:44px;">
-    <span class="mobile-tab-icon">💬</span>
-    <span>留言</span>
+  <button class="mobile-tab-item" id="m-tab-theme" onclick="toggleTheme()" style="min-height:44px;">
+    <span class="mobile-tab-icon" id="m-theme-icon">☀️</span>
+    <span id="m-theme-label">亮色</span>
   </button>
 </div>
+
+<button id="theme-btn-mobile" class="mobile-theme-fab" onclick="toggleTheme()" title="Toggle theme">Light</button>
 
 <canvas id="particles-canvas"></canvas>
 
