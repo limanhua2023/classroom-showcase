@@ -33,6 +33,12 @@ npm run audit:public -- https://classroom-showcase.onrender.com
    - open economics course page from the activity context
    - verify learning heartbeat reaches teacher dashboard learning panel
 
+Or use the automated smoke test after exporting production cleanup credentials into the shell:
+
+```powershell
+npm run smoke:cloud:learning -- https://classroom-showcase.onrender.com
+```
+
 ## What Must Be True Before Calling It Publicly Ready
 
 - `https://.../courses/economics-fundamentals/` returns `200`

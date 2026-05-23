@@ -5818,20 +5818,32 @@ async function buildLearningEngagementSummary(activityId, viewerUserId = null) {
   if (usersResult.error) throw usersResult.error;
   if (submissionsResult.error) throw submissionsResult.error;
   const submissionIds = (submissionsResult.data || []).map(item => item.id).filter(Boolean);
-  if (ratingsResult.error && /activity_id/i.test(ratingsResult.error.message || '') && submissionIds.length) {
-    ratingsResult = await supabase.from('ratings')
-      .select('id,submission_id,rater_user_id,score')
-      .in('submission_id', submissionIds);
+  if (ratingsResult.error && /activity_id/i.test(ratingsResult.error.message || '')) {
+    if (submissionIds.length) {
+      ratingsResult = await supabase.from('ratings')
+        .select('id,submission_id,rater_user_id,score')
+        .in('submission_id', submissionIds);
+    } else {
+      ratingsResult = { data: [], error: null };
+    }
   }
-  if (commentsResult.error && /activity_id/i.test(commentsResult.error.message || '') && submissionIds.length) {
-    commentsResult = await supabase.from('comments')
-      .select('id,submission_id,user_id,content')
-      .in('submission_id', submissionIds);
+  if (commentsResult.error && /activity_id/i.test(commentsResult.error.message || '')) {
+    if (submissionIds.length) {
+      commentsResult = await supabase.from('comments')
+        .select('id,submission_id,user_id,content')
+        .in('submission_id', submissionIds);
+    } else {
+      commentsResult = { data: [], error: null };
+    }
   }
-  if (viewsResult.error && /activity_id/i.test(viewsResult.error.message || '') && submissionIds.length) {
-    viewsResult = await supabase.from('views')
-      .select('id,submission_id,viewer_user_id,is_valid')
-      .in('submission_id', submissionIds);
+  if (viewsResult.error && /activity_id/i.test(viewsResult.error.message || '')) {
+    if (submissionIds.length) {
+      viewsResult = await supabase.from('views')
+        .select('id,submission_id,viewer_user_id,is_valid')
+        .in('submission_id', submissionIds);
+    } else {
+      viewsResult = { data: [], error: null };
+    }
   }
   if (ratingsResult.error) throw ratingsResult.error;
   if (viewsResult.error) throw viewsResult.error;
