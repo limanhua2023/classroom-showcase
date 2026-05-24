@@ -173,6 +173,34 @@
       background: rgba(148, 163, 184, 0.14);
       color: #475569;
     }
+    .save-status-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 800;
+      margin-top: 8px;
+      background: rgba(148, 163, 184, 0.14);
+      color: #475569;
+    }
+    .save-status-chip.pending {
+      background: rgba(245, 158, 11, 0.14);
+      color: #b45309;
+    }
+    .save-status-chip.saved {
+      background: rgba(34, 197, 94, 0.14);
+      color: #15803d;
+    }
+    .save-status-chip.started {
+      background: rgba(59, 130, 246, 0.12);
+      color: #1d4ed8;
+    }
+    .save-status-chip.never {
+      background: rgba(148, 163, 184, 0.14);
+      color: #475569;
+    }
     .learning-list-note {
       margin-top: 4px;
       color: var(--text-light);
@@ -2044,6 +2072,29 @@
       return { label: '离线', className: 'offline' };
     }
 
+    function formatLastSaveLabel(lastSavedAt) {
+      if (!lastSavedAt) return '尚未保存';
+      return `上次保存 ${formatBangkokTime(lastSavedAt)}`;
+    }
+
+    function getSaveStateMeta(row) {
+      const state = String(row?.save_state || '').trim().toLowerCase();
+      if (state === 'pending') {
+        const pendingSeconds = Number(row?.pending_local_seconds || 0);
+        return {
+          label: pendingSeconds > 0 ? `待保存 ${formatLearningMinutes(Math.max(1, pendingSeconds / 60))}` : '待保存',
+          className: 'pending'
+        };
+      }
+      if (state === 'saved') {
+        return { label: '已保存', className: 'saved' };
+      }
+      if (state === 'started') {
+        return { label: '已进入未保存', className: 'started' };
+      }
+      return { label: '未开始', className: 'never' };
+    }
+
     function renderLearningLeaderboard(targetId, rows, mode) {
       const box = document.getElementById(targetId);
       if (!box) return;
@@ -2059,6 +2110,7 @@
         const rank = Number(row.rank || index + 1);
         const rankClass = rank === 1 ? 'top-1' : rank === 2 ? 'top-2' : rank === 3 ? 'top-3' : '';
         const status = getLearningStatusMeta(row.last_seen_at);
+        const saveState = getSaveStateMeta(row);
         const metaLine = [
           row.student_id || '-',
           row.class_name || '未分班',
@@ -2078,6 +2130,9 @@
               `评分 ${Number(row.ratings_given || 0)}`,
               `评论 ${Number(row.comments_given || 0)}`,
               `浏览 ${Number(row.views_given || 0)}`,
+              row.current_chapter ? `当前 Ch${row.current_chapter}` : '未进入章节',
+              row.progress_percent ? `进度 ${Math.round(Number(row.progress_percent || 0))}%` : '进度未保存',
+              formatLastSaveLabel(row.last_saved_at),
               formatLastSeenLabel(row.last_seen_at)
             ].join(' · ');
         const sideValue = mode === 'engagement'
@@ -2101,6 +2156,7 @@
               <strong>${escapeHtml(sideValue)}</strong>
               <span>${escapeHtml(sideLabel)}</span>
               <span class="learning-status-chip ${status.className}">${escapeHtml(status.label)}</span>
+              <span class="save-status-chip ${saveState.className}">${escapeHtml(saveState.label)}</span>
             </div>
           </div>
         `;
@@ -2165,12 +2221,13 @@
       const studentCount = Number(totals.student_count || 0);
       const groupCount = Number(totals.group_count || 0);
       const recentlyActiveCount = Number(totals.recently_active_count || 0);
+      const pendingSaveCount = Number(totals.pending_save_count || 0);
       const windowSeconds = getLearningWindowSeconds(learning);
       const windowMinutes = Math.max(1, Math.round(windowSeconds / 60));
       const averageMinutes = trackedStudents > 0 ? totalMinutes / trackedStudents : 0;
 
       if (studentCount > 0) {
-        badge.textContent = `${trackedStudents}/${studentCount} 已跟踪 · ${recentlyActiveCount} 人最近在线`;
+        badge.textContent = `${trackedStudents}/${studentCount} 已跟踪 · ${recentlyActiveCount} 人最近在线 · ${pendingSaveCount} 人待保存`;
       } else if (learning.schema_ready === false) {
         badge.textContent = '学习明细未初始化';
       } else {
@@ -2192,6 +2249,11 @@
           value: String(recentlyActiveCount),
           label: `最近 ${windowMinutes} 分钟在线`,
           note: '可近似理解为正在学习或刚离开'
+        },
+        {
+          value: String(pendingSaveCount),
+          label: '待保存学生',
+          note: '已进入课程但本地学习记录还没写入云端'
         },
         {
           value: formatLearningMinutes(averageMinutes),

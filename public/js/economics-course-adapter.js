@@ -99,6 +99,7 @@
     localStudySessionToken: '',
     localStudy: readLocalStudyStats(initialContext),
     progressCheckpoint: readLocalProgressCheckpoint(initialContext),
+    lastPresenceSignature: '',
     progressDirty: false
   };
   runtime.localStudySessionToken = getLearningSessionToken();
@@ -1082,7 +1083,48 @@ function updateBridgeShell() {
     runtime.syncLabel = `已累计 ${formatStudyDuration(pendingSeconds)} 未保存`;
     runtime.syncLevel = 'warn';
     updateBridgeShell();
+    reportLearningPresenceStatus({
+      pendingSave: true,
+      pendingLocalSeconds: pendingSeconds,
+      active: !document.hidden,
+      lastPromptAt: nextStats.last_prompt_at,
+      force: true
+    }).catch(() => {});
     notify(`已累计 ${formatStudyDuration(pendingSeconds)} 未保存，点击顶部“保存记录”同步到云端。`, 'error');
+  }
+
+  async function reportLearningPresenceStatus({
+    pendingSave = false,
+    pendingLocalSeconds = 0,
+    active = true,
+    lastPromptAt = null,
+    force = false
+  } = {}) {
+    if (!hasLoggedInStudent()) return false;
+    const stats = runtime.localStudy || readLocalStudyStats(runtime.context);
+    const payload = {
+      activity_id: runtime.context.activity_id,
+      user_id: runtime.context.user.id,
+      course_slug: COURSE_SLUG,
+      pending_save: !!pendingSave,
+      pending_local_seconds: Math.max(0, Math.round(pendingLocalSeconds)),
+      active: active !== false,
+      page_path: location.pathname,
+      last_local_update_at: stats.last_seen_at || new Date().toISOString(),
+      last_prompt_at: lastPromptAt || stats.last_prompt_at || null
+    };
+    const signature = JSON.stringify(payload);
+    if (!force && runtime.lastPresenceSignature === signature) return true;
+    runtime.lastPresenceSignature = signature;
+    try {
+      await api('/student/learning/presence', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      });
+      return true;
+    } catch (error) {
+      return false;
+    }
   }
 
   async function saveStudyCheckpoint(reason, options = {}) {
@@ -1147,6 +1189,12 @@ function updateBridgeShell() {
 
       runtime.syncLabel = '学习记录已保存到云端';
       runtime.syncLevel = 'ok';
+      await reportLearningPresenceStatus({
+        pendingSave: false,
+        pendingLocalSeconds: 0,
+        active: typeof options.active === 'boolean' ? options.active : !document.hidden,
+        force: true
+      });
       updateBridgeShell();
       if (options.manual) notify('本次学习记录已保存。', 'success');
       return true;
@@ -1173,6 +1221,12 @@ function updateBridgeShell() {
     if (hasLoggedInStudent()) {
       runtime.syncLabel = '本地已开始记录，等待保存到云端';
       runtime.syncLevel = 'warn';
+      reportLearningPresenceStatus({
+        pendingSave: false,
+        pendingLocalSeconds: pendingCloudSaveSeconds(runtime.localStudy),
+        active: !document.hidden,
+        force: true
+      }).catch(() => {});
     } else {
       runtime.syncLabel = '本地自学记录中';
       runtime.syncLevel = document.hidden ? 'warn' : 'ok';

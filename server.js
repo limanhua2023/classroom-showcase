@@ -53,6 +53,7 @@ const LEARNING_HEARTBEAT_MAX_DELTA_SECONDS = Math.max(30, Number(process.env.LEA
 const LEARNING_CHECKPOINT_MAX_DELTA_SECONDS = Math.max(5 * 60, Number(process.env.LEARNING_CHECKPOINT_MAX_DELTA_SECONDS || 10 * 60));
 const LEARNING_RECENT_ACTIVE_WINDOW_SECONDS = Math.max(5 * 60, Number(process.env.LEARNING_RECENT_ACTIVE_WINDOW_SECONDS || 15 * 60));
 const LEARNING_LEADERBOARD_LIMIT = Math.max(5, Number(process.env.LEARNING_LEADERBOARD_LIMIT || 12));
+const LEARNING_PENDING_STATUS_TTL_SECONDS = Math.max(5 * 60, Number(process.env.LEARNING_PENDING_STATUS_TTL_SECONDS || 20 * 60));
 const BANGKOK_UTC_OFFSET_MS = 7 * 60 * 60 * 1000;
 const WITHDRAWN_FEEDBACK_PREFIX = '__WITHDRAWN__::';
 const TMP_UPLOAD_MAX_AGE_MS = 6 * 60 * 60 * 1000;
@@ -6524,6 +6525,70 @@ function normalizeCourseRuntimeProgressPayload(input = {}) {
   };
 }
 
+const learningPresenceState = new Map();
+
+function buildLearningPresenceKey(activityId, userId, courseSlug = '') {
+  return `${String(activityId || '').trim()}::${String(userId || '').trim()}::${normalizeCourseSlug(courseSlug) || 'course'}`;
+}
+
+function pruneLearningPresenceState(now = Date.now()) {
+  const ttlMs = LEARNING_PENDING_STATUS_TTL_SECONDS * 1000;
+  for (const [key, value] of learningPresenceState.entries()) {
+    const updatedAtMs = value?.updated_at ? new Date(value.updated_at).getTime() : 0;
+    if (!Number.isFinite(updatedAtMs) || updatedAtMs <= 0 || now - updatedAtMs > ttlMs) {
+      learningPresenceState.delete(key);
+    }
+  }
+}
+
+function storeLearningPresenceStatus({
+  activityId,
+  userId,
+  courseSlug,
+  pendingSave = false,
+  pendingLocalSeconds = 0,
+  active = true,
+  pagePath = '',
+  lastLocalUpdateAt = null,
+  lastPromptAt = null
+} = {}) {
+  if (!activityId || !userId || !courseSlug) return null;
+  const nowIso = new Date().toISOString();
+  const record = {
+    activity_id: String(activityId || '').trim(),
+    user_id: String(userId || '').trim(),
+    course_slug: normalizeCourseSlug(courseSlug),
+    pending_save: !!pendingSave,
+    pending_local_seconds: normalizePositiveInteger(pendingLocalSeconds, 24 * 60 * 60),
+    active: active !== false,
+    page_path: sanitizeText(pagePath, 240) || '',
+    last_local_update_at: normalizeOptionalIsoString(lastLocalUpdateAt),
+    last_prompt_at: normalizeOptionalIsoString(lastPromptAt),
+    updated_at: nowIso
+  };
+  learningPresenceState.set(buildLearningPresenceKey(record.activity_id, record.user_id, record.course_slug), record);
+  pruneLearningPresenceState();
+  return record;
+}
+
+function getActivityLearningPresenceByUser(activityId) {
+  pruneLearningPresenceState();
+  const result = new Map();
+  const activityKey = String(activityId || '').trim();
+  for (const value of learningPresenceState.values()) {
+    if (!value || String(value.activity_id || '') !== activityKey) continue;
+    const userKey = String(value.user_id || '');
+    if (!userKey) continue;
+    const existing = result.get(userKey);
+    const valueUpdatedMs = value.updated_at ? new Date(value.updated_at).getTime() : 0;
+    const existingUpdatedMs = existing?.updated_at ? new Date(existing.updated_at).getTime() : 0;
+    if (!existing || (value.pending_save && !existing.pending_save) || valueUpdatedMs > existingUpdatedMs) {
+      result.set(userKey, value);
+    }
+  }
+  return result;
+}
+
 async function ensureActivityMatchesCourseSlug(activityId, courseSlug) {
   if (!activityId || !courseSlug) {
     return { ok: false, status: 400, error: 'Missing activity_id or course_slug' };
@@ -6568,6 +6633,7 @@ async function buildLearningEngagementSummary(activityId, viewerUserId = null) {
   let [
     usersResult,
     sessionsResult,
+    progressResult,
     submissionsResult,
     ratingsResult,
     commentsResult,
@@ -6577,7 +6643,10 @@ async function buildLearningEngagementSummary(activityId, viewerUserId = null) {
       .select('id,name,student_id,class_name,group_name,created_at')
       .eq('activity_id', activityId),
     supabase.from('student_learning_sessions')
-      .select('user_id,active_seconds,last_seen_at')
+      .select('user_id,active_seconds,last_seen_at,updated_at')
+      .eq('activity_id', activityId),
+    supabase.from('student_course_runtime_progress')
+      .select('user_id,current_chapter,current_lesson,current_stage,progress_percent,updated_at,client_updated_at,last_event')
       .eq('activity_id', activityId),
     supabase.from('submissions')
       .select('id,user_id,average_rating,rating_count,view_count,status')
@@ -6638,6 +6707,17 @@ async function buildLearningEngagementSummary(activityId, viewerUserId = null) {
     }
   }
 
+  let progressSchemaReady = true;
+  let progressRows = progressResult.data || [];
+  if (progressResult.error) {
+    if (isCourseRuntimeSchemaError(progressResult.error.message)) {
+      progressSchemaReady = false;
+      progressRows = [];
+    } else {
+      throw progressResult.error;
+    }
+  }
+
   const users = usersResult.data || [];
   const submissions = submissionsResult.data || [];
   const ratings = ratingsResult.data || [];
@@ -6646,13 +6726,31 @@ async function buildLearningEngagementSummary(activityId, viewerUserId = null) {
 
   const secondsByUser = new Map();
   const lastSeenByUser = new Map();
+  const lastSavedByUser = new Map();
   sessions.forEach(row => {
     const key = String(row.user_id || '');
     if (!key) return;
     secondsByUser.set(key, (secondsByUser.get(key) || 0) + Number(row.active_seconds || 0));
     const seenAt = row.last_seen_at ? new Date(row.last_seen_at).getTime() : 0;
     if (seenAt > (lastSeenByUser.get(key) || 0)) lastSeenByUser.set(key, seenAt);
+    const savedAt = row.updated_at ? new Date(row.updated_at).getTime() : seenAt;
+    if (savedAt > (lastSavedByUser.get(key) || 0)) lastSavedByUser.set(key, savedAt);
   });
+
+  const progressByUser = new Map();
+  progressRows.forEach(row => {
+    const key = String(row.user_id || '');
+    if (!key) return;
+    const updatedAtMs = row.updated_at ? new Date(row.updated_at).getTime() : 0;
+    const existing = progressByUser.get(key);
+    const existingUpdatedAtMs = existing?.updated_at ? new Date(existing.updated_at).getTime() : 0;
+    if (!existing || updatedAtMs >= existingUpdatedAtMs) {
+      progressByUser.set(key, row);
+    }
+    if (updatedAtMs > (lastSavedByUser.get(key) || 0)) lastSavedByUser.set(key, updatedAtMs);
+  });
+
+  const presenceByUser = getActivityLearningPresenceByUser(activityId);
 
   const workCountByUser = new Map();
   const receivedRatingCountByUser = new Map();
@@ -6694,6 +6792,8 @@ async function buildLearningEngagementSummary(activityId, viewerUserId = null) {
 
   const individualRows = users.map(user => {
     const key = String(user.id || '');
+    const progress = progressByUser.get(key) || null;
+    const presence = presenceByUser.get(key) || null;
     const activeSeconds = Number(secondsByUser.get(key) || 0);
     const ratingCount = Number(receivedRatingCountByUser.get(key) || 0);
     const scoreSum = Number(receivedScoreSumByUser.get(key) || 0);
@@ -6702,6 +6802,9 @@ async function buildLearningEngagementSummary(activityId, viewerUserId = null) {
     const ratingsGiven = Number(givenRatingsByUser.get(key) || 0);
     const commentsGiven = Number(givenCommentsByUser.get(key) || 0);
     const viewsGiven = Number(validViewsByUser.get(key) || 0);
+    const lastSavedAtMs = Number(lastSavedByUser.get(key) || 0);
+    const pendingSave = !!(presence && presence.pending_save);
+    const pendingLocalSeconds = Number(presence?.pending_local_seconds || 0);
     const engagementScore = Math.round((
       learningMinutes(activeSeconds) +
       workCount * 25 +
@@ -6719,13 +6822,24 @@ async function buildLearningEngagementSummary(activityId, viewerUserId = null) {
       active_seconds: activeSeconds,
       active_minutes: learningMinutes(activeSeconds),
       last_seen_at: lastSeenByUser.get(key) ? new Date(lastSeenByUser.get(key)).toISOString() : null,
+      last_saved_at: lastSavedAtMs ? new Date(lastSavedAtMs).toISOString() : null,
+      last_progress_saved_at: progress?.updated_at || null,
+      current_chapter: Number(progress?.current_chapter || 0) || null,
+      current_lesson: Number(progress?.current_lesson || 0) || null,
+      current_stage: progress?.current_stage || '',
+      progress_percent: Number(progress?.progress_percent || 0) || 0,
+      progress_last_event: progress?.last_event || '',
+      pending_save: pendingSave,
+      pending_local_seconds: pendingLocalSeconds,
+      last_presence_at: presence?.updated_at || null,
       work_count: workCount,
       ratings_given: ratingsGiven,
       comments_given: commentsGiven,
       views_given: viewsGiven,
       received_rating_count: ratingCount,
       received_average_score: averageReceivedScore,
-      engagement_score: engagementScore
+      engagement_score: engagementScore,
+      save_state: pendingSave ? 'pending' : (lastSavedAtMs ? 'saved' : (presence ? 'started' : 'never'))
     };
   });
 
@@ -6791,6 +6905,7 @@ async function buildLearningEngagementSummary(activityId, viewerUserId = null) {
 
   return {
     schema_ready: schemaReady,
+    progress_schema_ready: progressSchemaReady,
     generated_at: new Date().toISOString(),
     my: me,
     leaderboard: rankedIndividuals.slice(0, LEARNING_LEADERBOARD_LIMIT),
@@ -6801,6 +6916,7 @@ async function buildLearningEngagementSummary(activityId, viewerUserId = null) {
       active_minutes: learningMinutes(rankedIndividuals.reduce((sum, row) => sum + Number(row.active_seconds || 0), 0)),
       tracked_students: rankedIndividuals.filter(row => Number(row.active_seconds || 0) > 0).length,
       recently_active_count: recentlyActiveCount,
+      pending_save_count: rankedIndividuals.filter(row => row.pending_save).length,
       recently_active_window_seconds: Math.round(recentActiveWindowMs / 1000),
       student_count: rankedIndividuals.length,
       group_count: rankedGroups.length
@@ -6811,6 +6927,7 @@ async function buildLearningEngagementSummary(activityId, viewerUserId = null) {
 function emptyLearningEngagementSummary(error = null) {
   return {
     schema_ready: false,
+    progress_schema_ready: false,
     error: error ? String(error.message || error) : null,
     generated_at: new Date().toISOString(),
     my: null,
@@ -6822,6 +6939,7 @@ function emptyLearningEngagementSummary(error = null) {
       active_minutes: 0,
       tracked_students: 0,
       recently_active_count: 0,
+      pending_save_count: 0,
       recently_active_window_seconds: Math.round(Math.max(2 * 60 * 1000, LEARNING_RECENT_ACTIVE_WINDOW_SECONDS * 1000) / 1000),
       student_count: 0,
       group_count: 0
@@ -8975,6 +9093,36 @@ app.get('/api/ratings/my', async (req, res) => {
 });
 
 // ─── STUDENT LEARNING ENGAGEMENT ───
+app.post('/api/student/learning/presence', studentAuth, async (req, res) => {
+  try {
+    const activityId = String(req.body.activity_id ?? '').trim();
+    const userId = String(req.body.user_id ?? '').trim();
+    const courseSlug = normalizeCourseSlug(req.body.course_slug);
+    if (!activityId || !userId || !courseSlug) {
+      return res.status(400).json({ error: 'Missing activity_id, user_id, or course_slug' });
+    }
+
+    const courseMatch = await ensureActivityMatchesCourseSlug(activityId, courseSlug);
+    if (!courseMatch.ok) return res.status(courseMatch.status).json({ error: courseMatch.error });
+
+    const record = storeLearningPresenceStatus({
+      activityId,
+      userId,
+      courseSlug,
+      pendingSave: req.body.pending_save === true || String(req.body.pending_save || '').trim().toLowerCase() === 'true',
+      pendingLocalSeconds: req.body.pending_local_seconds,
+      active: !(req.body.active === false || String(req.body.active || '').trim().toLowerCase() === 'false'),
+      pagePath: req.body.page_path || '',
+      lastLocalUpdateAt: req.body.last_local_update_at,
+      lastPromptAt: req.body.last_prompt_at
+    });
+
+    return res.json({ ok: true, status: record });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.post('/api/student/learning/heartbeat', studentAuth, async (req, res) => {
   try {
     const activityId = String(req.body.activity_id ?? '').trim();
