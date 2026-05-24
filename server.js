@@ -7330,10 +7330,26 @@ function normalizeOptionalSlugKey(value) {
 function findCourseRegistryIndex(courses = [], { courseName = '', slug = '' } = {}) {
   const courseKey = normalizeOptionalCourseKey(courseName);
   const slugKey = normalizeOptionalSlugKey(slug);
-  return courses.findIndex(entry => (
-    (courseKey && normalizePortalCourseName(entry.course_name) === courseKey)
-    || (slugKey && entry.slug === slugKey)
-  ));
+  if (courseKey) {
+    const exactNameMatches = courses
+      .map((entry, index) => ({ entry, index }))
+      .filter(({ entry }) => normalizePortalCourseName(entry.course_name) === courseKey);
+    if (slugKey) {
+      const exactNameAndSlugMatch = exactNameMatches.find(({ entry }) => entry.slug === slugKey);
+      if (exactNameAndSlugMatch) return exactNameAndSlugMatch.index;
+    }
+    if (exactNameMatches.length === 1) return exactNameMatches[0].index;
+    if (exactNameMatches.length > 1 && !slugKey) return exactNameMatches[0].index;
+  }
+
+  if (slugKey) {
+    const slugMatches = courses
+      .map((entry, index) => ({ entry, index }))
+      .filter(({ entry }) => entry.slug === slugKey);
+    if (slugMatches.length === 1) return slugMatches[0].index;
+  }
+
+  return -1;
 }
 
 function reorderCourseRegistryEntries(courses = [], orderedSlugs = []) {
