@@ -4,6 +4,37 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
 <title>经济学基础 · 曼昆互动精讲 v1.17.4 最终发布版</title>
+<style>
+html[data-classshow-locked="1"] body {
+  visibility: hidden;
+}
+html[data-classshow-locked="1"] body.classshow-auth-ready {
+  visibility: visible;
+}
+</style>
+<script>
+(() => {
+  try {
+    const expectedCourseName = '经济学基础课程';
+    const activityRaw = sessionStorage.getItem('classshow_activity');
+    const activity = activityRaw ? JSON.parse(activityRaw) : null;
+    const activityId = sessionStorage.getItem('classshow_activity_id');
+    const userRaw = sessionStorage.getItem('classshow_user');
+    const user = userRaw ? JSON.parse(userRaw) : null;
+    const isGuest = sessionStorage.getItem('classshow_guest') === '1';
+    const hasTeacher = !!sessionStorage.getItem('teacherToken') && !!activityId;
+    const hasSuperAdmin = !!sessionStorage.getItem('superAdminToken');
+    const activityCourseName = String(activity && activity.course_name || '').trim();
+    const courseMatched = !activityCourseName || activityCourseName === expectedCourseName;
+    const hasStudent = !!activityId && !!user && !!user.id && !isGuest && courseMatched;
+    if (!(hasStudent || (hasTeacher && courseMatched) || hasSuperAdmin)) {
+      document.documentElement.setAttribute('data-classshow-locked', '1');
+    }
+  } catch {
+    document.documentElement.setAttribute('data-classshow-locked', '1');
+  }
+})();
+</script>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;600;800&family=Noto+Sans+SC:wght@400;700;900&display=swap" rel="stylesheet">
 <style>
 /* ── 全局设计系统 ── */

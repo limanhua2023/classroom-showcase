@@ -93,6 +93,8 @@
 
   forceLocalAiMode();
   injectBridgeStyles();
+  if (!ensureCourseAccess()) return;
+  unlockCourseSurface();
   injectBridgeShell();
   hideTeacherEntrypoints();
   patchCourseBridge();
@@ -121,6 +123,93 @@
     const style = document.createElement('style');
     style.id = 'classshow-econ-bridge-style';
     style.textContent = `
+      body.classshow-econ-locked > *:not(#classshow-econ-auth-gate) {
+        display: none !important;
+      }
+      #classshow-econ-auth-gate {
+        position: fixed;
+        inset: 0;
+        z-index: 12000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 24px;
+        background:
+          radial-gradient(circle at top left, rgba(245, 158, 11, 0.18), transparent 34%),
+          radial-gradient(circle at bottom right, rgba(59, 130, 246, 0.16), transparent 32%),
+          rgba(3, 10, 22, 0.94);
+        font: 14px/1.6 "Noto Sans SC", "Segoe UI", sans-serif;
+      }
+      .classshow-econ-auth-card {
+        width: min(720px, 100%);
+        padding: 30px;
+        border-radius: 28px;
+        color: #f8fafc;
+        background: linear-gradient(145deg, rgba(12, 22, 39, 0.96), rgba(20, 32, 54, 0.92));
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        box-shadow: 0 28px 80px rgba(2, 8, 23, 0.48);
+      }
+      .classshow-econ-auth-card h1 {
+        margin: 0 0 12px;
+        font-size: clamp(28px, 5vw, 44px);
+        line-height: 1.08;
+      }
+      .classshow-econ-auth-card p {
+        margin: 0;
+        color: rgba(226, 232, 240, 0.92);
+      }
+      .classshow-econ-auth-kicker {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 18px;
+        padding: 6px 12px;
+        border-radius: 999px;
+        color: #fde68a;
+        background: rgba(245, 158, 11, 0.14);
+        border: 1px solid rgba(245, 158, 11, 0.28);
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.08em;
+      }
+      .classshow-econ-auth-note {
+        margin-top: 18px;
+        padding: 16px 18px;
+        border-radius: 18px;
+        background: rgba(255, 255, 255, 0.05);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+      }
+      .classshow-econ-auth-note strong {
+        display: block;
+        margin-bottom: 6px;
+        font-size: 13px;
+      }
+      .classshow-econ-auth-actions {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 24px;
+      }
+      .classshow-econ-auth-actions a {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 44px;
+        padding: 0 18px;
+        border-radius: 12px;
+        text-decoration: none;
+        font-weight: 800;
+      }
+      .classshow-econ-auth-actions a.primary {
+        color: #fff7ed;
+        background: linear-gradient(135deg, #f59e0b, #c2410c);
+        box-shadow: 0 14px 30px rgba(245, 158, 11, 0.24);
+      }
+      .classshow-econ-auth-actions a.secondary {
+        color: #e2e8f0;
+        background: rgba(255, 255, 255, 0.06);
+        border: 1px solid rgba(255, 255, 255, 0.12);
+      }
       #classshow-econ-bridge {
         position: fixed;
         top: 12px;
@@ -195,6 +284,13 @@
         border-color: rgba(245, 158, 11, 0.45);
       }
       @media (max-width: 860px) {
+        #classshow-econ-auth-gate {
+          padding: 16px;
+        }
+        .classshow-econ-auth-card {
+          padding: 22px 18px;
+          border-radius: 22px;
+        }
         #classshow-econ-bridge {
           flex-direction: column;
           align-items: stretch;
@@ -208,6 +304,94 @@
       }
     `;
     document.head.appendChild(style);
+  }
+
+  function unlockCourseSurface() {
+    document.documentElement.removeAttribute('data-classshow-locked');
+    if (document.body) {
+      document.body.classList.add('classshow-auth-ready');
+      document.body.classList.remove('classshow-econ-locked');
+    }
+  }
+
+  function ensureCourseAccess() {
+    const access = getAccessState();
+    if (access.allowed) {
+      if (document.body) document.body.classList.remove('classshow-econ-locked');
+      return true;
+    }
+    injectAccessGate(access);
+    document.documentElement.removeAttribute('data-classshow-locked');
+    if (document.body) document.body.classList.add('classshow-econ-locked', 'classshow-auth-ready');
+    return false;
+  }
+
+  function injectAccessGate(access) {
+    if (document.getElementById('classshow-econ-auth-gate')) return;
+    const gate = document.createElement('section');
+    gate.id = 'classshow-econ-auth-gate';
+    gate.setAttribute('role', 'dialog');
+    gate.setAttribute('aria-modal', 'true');
+
+    const primaryAction = buildPrimaryAccessAction(access);
+    const helperCopy = access.courseMatched === false && access.activityCourseName
+      ? `当前会话绑定的是《${escapeText(access.activityCourseName)}》活动，请从正确课程入口重新进入。`
+      : access.activityReady
+        ? '当前活动已绑定成功，请先完成学生实名登录，再进入课程学习。'
+        : '请先输入本课程的邀请码，再完成学生登录。';
+
+    gate.innerHTML = `
+      <div class="classshow-econ-auth-card">
+        <div class="classshow-econ-auth-kicker">STUDENT LOGIN REQUIRED</div>
+        <h1>登录后才能进入经济学基础课程</h1>
+        <p>为了准确记录学习时长、学习进度和具体学生身份，本课程仅向已登录学生开放。登录后，系统才会把学习记录绑定到正确学生名下。</p>
+        <div class="classshow-econ-auth-note">
+          <strong>${escapeText(access.isGuest ? '当前是访客模式' : '当前尚未完成学生登录')}</strong>
+          <span>${escapeText(helperCopy)}</span>
+        </div>
+        <div class="classshow-econ-auth-actions">
+          <a class="primary" href="${escapeText(primaryAction.href)}">${escapeText(primaryAction.label)}</a>
+          <a class="secondary" href="${escapeText(studentUrl(`/course.html?course=${encodeURIComponent(COURSE_NAME)}`))}">返回课程总页</a>
+          <a class="secondary" href="${escapeText(studentUrl('/index.html'))}">去总门户</a>
+          <a class="secondary" href="${escapeText(backendUrl('/teacher-login.html'))}">教师入口</a>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(gate);
+  }
+
+  function buildPrimaryAccessAction(access) {
+    if (access.activityReady && access.courseMatched !== false) {
+      return {
+        href: studentUrl(`/student-register.html?next=${encodeURIComponent(currentStudentPath())}`),
+        label: access.isGuest ? '退出访客并实名登录' : '继续学生登录'
+      };
+    }
+    return {
+      href: studentUrl(`/course.html?course=${encodeURIComponent(COURSE_NAME)}`),
+      label: '输入邀请码进入'
+    };
+  }
+
+  function currentStudentPath() {
+    return `${location.pathname}${location.search}${location.hash}`;
+  }
+
+  function getAccessState() {
+    const activityCourseName = String(runtime.context.activity && runtime.context.activity.course_name || '').trim();
+    const activityReady = !!runtime.context.activity_id;
+    const courseMatched = !activityCourseName || normalizeCourseName(activityCourseName) === normalizeCourseName(COURSE_NAME);
+    return {
+      allowed: hasSuperAdminSession() || (hasTeacherSession() && courseMatched) || (hasLoggedInStudent() && courseMatched),
+      activityReady,
+      courseMatched,
+      activityCourseName,
+      isGuest: runtime.context.is_guest === true
+    };
+  }
+
+  function normalizeCourseName(value) {
+    return String(value || '').trim().toLowerCase();
   }
 
   function injectBridgeShell() {
@@ -321,6 +505,64 @@
       && !!runtime.context.user.id
       && !runtime.context.is_guest
       && !runtime.context.user._guest;
+  }
+
+  function hasSuperAdminSession() {
+    return !!sessionStorage.getItem('superAdminToken');
+  }
+
+  function hasPreviewAccess() {
+    return hasTeacherSession() || hasSuperAdminSession();
+  }
+
+  function updateBridgeShell() {
+    const identityEl = document.getElementById('classshowEconIdentity');
+    const chipsEl = document.getElementById('classshowEconChips');
+    const syncEl = document.getElementById('classshowEconSync');
+    const teacherBtn = document.getElementById('classshowEconTeacherBtn');
+    if (!identityEl || !chipsEl || !syncEl || !teacherBtn) return;
+
+    const activityName = runtime.context.activity && runtime.context.activity.activity_name
+      ? runtime.context.activity.activity_name
+      : '当前未绑定活动';
+    const userName = runtime.context.user && runtime.context.user.name
+      ? runtime.context.user.name
+      : hasTeacherSession()
+        ? '教师预览'
+      : hasSuperAdminSession()
+        ? '超级管理员预览'
+      : (runtime.context.is_guest ? '访客' : '未登录');
+    identityEl.textContent = `${userName} · ${activityName}`;
+
+    const chips = [];
+    chips.push(renderChip(
+      runtime.context.activity_id ? '活动上下文已连接' : '未绑定活动',
+      runtime.context.activity_id ? 'ok' : 'warn'
+    ));
+    if (hasLoggedInStudent()) {
+      chips.push(renderChip(`本机累计 ${formatStudyDuration(localStudyTotalSeconds())}`, 'ok'));
+      chips.push(renderChip('学习时长回传中', 'ok'));
+    } else if (hasPreviewAccess()) {
+      chips.push(renderChip(hasTeacherSession() ? '教师预览' : '超级管理员预览', 'warn'));
+      chips.push(renderChip('预览模式不记录学生学习数据', 'warn'));
+    } else if (runtime.context.is_guest) {
+      chips.push(renderChip('访客模式不记录个人进度', 'warn'));
+    } else {
+      chips.push(renderChip('未登录，保留本地记录', 'warn'));
+      chips.push(renderChip(localStudyIsActive() ? '当前学习中' : '当前未学习', localStudyIsActive() ? 'ok' : 'warn'));
+    }
+    if (runtime.teacherReady) {
+      chips.push(renderChip('教师补充数据已解锁', 'ok'));
+    } else if (runtime.teacherLoading) {
+      chips.push(renderChip('教师补充数据加载中', 'warn'));
+    } else if (hasTeacherSession()) {
+      chips.push(renderChip('教师权限待验证', 'warn'));
+    }
+
+    chipsEl.innerHTML = chips.join('');
+    syncEl.textContent = `进度同步：${runtime.syncLabel}`;
+    syncEl.className = `classshow-econ-bridge-sync level-${runtime.syncLevel}`;
+    teacherBtn.style.display = hasTeacherSession() ? '' : 'none';
   }
 
   function hideTeacherEntrypoints() {
@@ -662,6 +904,12 @@
   }
 
   function startLearningHeartbeat() {
+    if (hasPreviewAccess()) {
+      runtime.syncLabel = '预览模式不记录学生学习时长';
+      runtime.syncLevel = 'warn';
+      updateBridgeShell();
+      return;
+    }
     recordLocalStudy('page_open', { startSession: true });
 
     const send = active => {

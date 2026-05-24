@@ -1,5 +1,8 @@
 (function initCourseEngine() {
   const params = new URLSearchParams(location.search);
+  const COURSE_NAME_BY_SLUG = {
+    'economics-fundamentals': '经济学基础课程'
+  };
   const state = {
     slug: '',
     manifest: null,
@@ -17,6 +20,13 @@
     state.slug = (params.get('slug') || '').trim();
     if (!state.slug) {
       renderFatal('缺少课程 slug，无法加载课程包。');
+      return;
+    }
+
+    const context = readRuntimeContext();
+    const access = getAccessState(context);
+    if (!access.allowed) {
+      renderAuthGate(access);
       return;
     }
 
@@ -337,6 +347,105 @@
 
   function renderChip(label, tone = 'neutral') {
     return `<span class="player-chip ${escapeHtmlSafe(tone)}">${escapeHtmlSafe(label)}</span>`;
+  }
+
+  function renderAuthGate(access) {
+    const courseName = getExpectedCourseName();
+    const primaryAction = buildPrimaryAccessAction(access, courseName);
+    const statusLabel = access.courseMatched === false && access.activityCourseName
+      ? `当前会话绑定的是《${access.activityCourseName}》活动，请回到正确课程入口后再登录。`
+      : access.activityReady
+        ? '当前活动已绑定成功，请先完成学生实名登录。'
+        : '请先输入邀请码并完成学生登录，再进入课程模块版。';
+
+    document.title = `${courseName || '课程模块播放器'} - 需要登录`;
+    els.courseTitle.textContent = courseName || '课程内容需要登录';
+    els.courseDescription.textContent = '模块版播放器只向已登录学生开放，这样系统才能正确记录学习时长、学习进度和学生身份。';
+    els.contextChips.innerHTML = [
+      renderChip(access.isGuest ? '访客模式' : '未登录', 'warning'),
+      renderChip('学生登录后解锁课程内容', 'warning')
+    ].join('');
+    els.sidebarMeta.innerHTML = [
+      renderMetaRow('当前课程', courseName || state.slug),
+      renderMetaRow('活动状态', access.activityReady ? '已绑定活动' : '未绑定活动'),
+      renderMetaRow('访问要求', '学生实名登录')
+    ].join('');
+    els.moduleCount.textContent = '0';
+    els.moduleList.innerHTML = '<div class="player-empty-state">登录后会在这里显示课程模块目录。</div>';
+    els.moduleTitle.textContent = courseName || '课程内容需要登录';
+    els.moduleSummary.textContent = '登录后，系统才会把学习时长、进度和模块完成情况绑定到正确学生名下。';
+    els.moduleMeta.innerHTML = '';
+    els.moduleStatus.textContent = '当前尚未完成学生登录';
+    els.prevButton.disabled = true;
+    els.nextButton.disabled = true;
+    els.moduleBody.innerHTML = `
+      <section class="player-panel">
+        <h3>登录后才能进入课程</h3>
+        <p>${escapeHtmlSafe(statusLabel)}</p>
+        <div class="player-quiz-actions" style="margin-top:16px;flex-wrap:wrap;">
+          <a class="btn btn-primary" href="${escapeHtmlSafe(primaryAction.href)}">${escapeHtmlSafe(primaryAction.label)}</a>
+          <a class="btn btn-secondary" href="${escapeHtmlSafe(studentUrl(`/course.html?course=${encodeURIComponent(courseName || '')}`))}">返回课程总页</a>
+          <a class="btn btn-secondary" href="${escapeHtmlSafe(studentUrl('/index.html'))}">去总门户</a>
+        </div>
+      </section>
+    `;
+  }
+
+  function buildPrimaryAccessAction(access, courseName) {
+    if (access.activityReady && access.courseMatched !== false) {
+      return {
+        href: studentUrl(`/student-register.html?next=${encodeURIComponent(currentStudentPath())}`),
+        label: access.isGuest ? '退出访客并实名登录' : '继续学生登录'
+      };
+    }
+    const fallbackCourseName = courseName || getExpectedCourseName();
+    return {
+      href: fallbackCourseName
+        ? studentUrl(`/course.html?course=${encodeURIComponent(fallbackCourseName)}`)
+        : studentUrl('/index.html'),
+      label: '输入邀请码进入'
+    };
+  }
+
+  function currentStudentPath() {
+    return `${location.pathname}${location.search}${location.hash}`;
+  }
+
+  function getAccessState(context) {
+    const activityCourseName = String(context.activity && context.activity.course_name || '').trim();
+    const courseName = getExpectedCourseName();
+    const courseMatched = !courseName || !activityCourseName || normalizeCourseName(activityCourseName) === normalizeCourseName(courseName);
+    return {
+      allowed: hasSuperAdminSession() || (hasTeacherSession(context) && courseMatched) || (hasLoggedInStudent(context) && courseMatched),
+      activityReady: !!context.activity_id,
+      courseMatched,
+      activityCourseName,
+      isGuest: context.is_guest === true
+    };
+  }
+
+  function getExpectedCourseName() {
+    return COURSE_NAME_BY_SLUG[state.slug] || '';
+  }
+
+  function hasTeacherSession(context) {
+    return !!sessionStorage.getItem('teacherToken') && !!context.activity_id;
+  }
+
+  function hasSuperAdminSession() {
+    return !!sessionStorage.getItem('superAdminToken');
+  }
+
+  function hasLoggedInStudent(context) {
+    return !!context.activity_id
+      && !!context.user
+      && !!context.user.id
+      && !context.is_guest
+      && !context.user._guest;
+  }
+
+  function normalizeCourseName(value) {
+    return String(value || '').trim().toLowerCase();
   }
 
   function readRuntimeContext() {

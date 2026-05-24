@@ -54,6 +54,7 @@
   <script src="js/api.js"></script>
   <script>
     const actId = getActivityId();
+    const nextTarget = resolveNextTarget(new URLSearchParams(location.search).get('next'));
     if (!actId) location.href = 'index.html';
 
     const act = JSON.parse(sessionStorage.getItem('classshow_activity') || '{}');
@@ -74,6 +75,7 @@
 
     const existing = getSession();
     if (existing) {
+      sessionStorage.removeItem('classshow_guest');
       document.getElementById('name').value = existing.name || '';
       document.getElementById('studentId').value = existing.student_id || '';
       document.getElementById('className').value = existing.class_name || '';
@@ -98,10 +100,22 @@
           method: 'POST',
           body: JSON.stringify(payload)
         });
+        sessionStorage.removeItem('classshow_guest');
         setSession(user);
-        location.href = 'student-gallery.html';
+        location.href = nextTarget;
       } catch (err) {
         toast('进入失败: ' + err.message, 'error');
+      }
+    }
+
+    function resolveNextTarget(rawValue) {
+      if (!rawValue) return 'student-gallery.html';
+      try {
+        const nextUrl = new URL(String(rawValue), location.origin);
+        if (nextUrl.origin !== location.origin) return 'student-gallery.html';
+        return `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}` || 'student-gallery.html';
+      } catch {
+        return 'student-gallery.html';
       }
     }
   </script>
