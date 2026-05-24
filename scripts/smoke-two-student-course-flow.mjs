@@ -238,6 +238,68 @@ async function main() {
   const sourceGuard = await checkSourceGuard();
   const deployedGuard = await checkDeployedGuard();
 
+  console.log('Re-opening showcase and testing upload path...');
+  const reopenedActivity = await api(BACKEND_BASE, `/api/activities/${activity.id}`, {
+    method: 'PUT',
+    headers: {
+      'x-teacher-auth': teacherToken
+    },
+    body: JSON.stringify({
+      upload_open: true
+    })
+  });
+
+  const tinyPng = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+p2uoAAAAASUVORK5CYII=',
+    'base64'
+  );
+  const mediaForm = new FormData();
+  mediaForm.append('image', new Blob([tinyPng], { type: 'image/png' }), 'smoke.png');
+  mediaForm.append('user_id', registered[0].id);
+  mediaForm.append('activity_id', activity.id);
+
+  const uploadResponse = await fetch(`${BACKEND_BASE}/api/upload`, {
+    method: 'POST',
+    headers: {
+      'x-user-token': registered[0].token
+    },
+    body: mediaForm
+  });
+  const uploadPayload = await uploadResponse.json();
+  if (!uploadResponse.ok) {
+    fail(`Upload smoke failed: ${uploadPayload?.error || uploadResponse.statusText}`);
+  }
+
+  const createdSubmission = await api(BACKEND_BASE, '/api/submissions', {
+    method: 'POST',
+    headers: {
+      'x-user-token': registered[0].token
+    },
+    body: JSON.stringify({
+      activity_id: activity.id,
+      user_id: registered[0].id,
+      title: '自动烟测作品',
+      description: '自动上传验证',
+      image_url: uploadPayload.url,
+      storage_path: uploadPayload.path,
+      media_size: uploadPayload.size,
+      thumbnail_url: uploadPayload.thumbnail_url,
+      thumbnail_path: uploadPayload.thumbnail_path,
+      original_media_size: uploadPayload.original_size || uploadPayload.size,
+      compressed: uploadPayload.compressed,
+      saved_bytes: uploadPayload.saved_bytes,
+      saved_percent: uploadPayload.saved_percent,
+      transcode_status: uploadPayload.transcode_status,
+      media_changed: true
+    })
+  });
+
+  const visibleWorksForStudentB = await api(BACKEND_BASE, `/api/submissions?activity_id=${encodeURIComponent(activity.id)}&viewer_user_id=${encodeURIComponent(registered[1].id)}`, {
+    headers: {
+      'x-user-token': registered[1].token
+    }
+  });
+
   const learningRows = teacherSummary?.learning_engagement?.leaderboard || [];
   const studentNames = new Set(registered.map(user => String(user.name)));
   const seenNames = new Set(learningRows.map(row => String(row.name || '')));
@@ -267,6 +329,9 @@ async function main() {
       active_minutes: row.active_minutes,
       rank: row.rank
     })),
+    reopened_upload_open: reopenedActivity.upload_open,
+    upload_submission_id: createdSubmission.id,
+    student_b_visible_work_count: Array.isArray(visibleWorksForStudentB) ? visibleWorksForStudentB.length : 0,
     course_runtime_schema_ready: courseRuntimeReady,
     source_showcase_guard: sourceGuard,
     deployed_showcase_guard: deployedGuard
