@@ -143,10 +143,16 @@
   <script src="js/api.js"></script>
   <script src="js/learning.js"></script>
   <script>
+    (async function initStudentUpload() {
     const user = getSession();
     const actId = getActivityId();
-    if (!user || !actId) location.href = 'index.html';
+    if (!user || !actId) {
+      location.href = 'index.html';
+      return;
+    }
 
+    const act = JSON.parse(sessionStorage.getItem('classshow_activity') || '{}');
+    if (await ensureActivityShowcaseAccessAllowed(act)) return;
     const params = new URLSearchParams(location.search);
     const forceNew = params.get('new') === '1';
     const editId = forceNew ? null : params.get('id');
@@ -345,6 +351,7 @@
     }
 
     init();
+    })();
   </script>
 </body>
 </html>

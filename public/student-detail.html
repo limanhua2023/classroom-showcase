@@ -170,11 +170,16 @@
   <script src="js/api.js"></script>
   <script src="js/learning.js"></script>
   <script>
+    (async function initStudentDetail() {
     const user = getSessionOrGuest();
     const actId = getActivityId();
-    if (!user || !actId) location.href = 'index.html';
+    if (!user || !actId) {
+      location.href = 'index.html';
+      return;
+    }
 
     const act = JSON.parse(sessionStorage.getItem('classshow_activity') || '{}');
+    if (await ensureActivityShowcaseAccessAllowed(act)) return;
     const guest = isGuest();
     const sid = new URLSearchParams(location.search).get('id');
     let currentRating = 0;
@@ -381,6 +386,7 @@
     }
 
     load();
+    })();
   </script>
 </body>
 </html>

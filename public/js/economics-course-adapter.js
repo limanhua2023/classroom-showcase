@@ -307,6 +307,9 @@
   }
 
   function unlockCourseSurface() {
+    if (typeof setActivityEntryPath === 'function') {
+      setActivityEntryPath(currentStudentPath());
+    }
     document.documentElement.removeAttribute('data-classshow-locked');
     if (document.body) {
       document.body.classList.add('classshow-auth-ready');

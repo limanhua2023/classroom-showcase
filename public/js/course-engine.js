@@ -29,6 +29,9 @@
       renderAuthGate(access);
       return;
     }
+    if (typeof setActivityEntryPath === 'function') {
+      setActivityEntryPath(currentStudentPath());
+    }
 
     try {
       state.manifest = await fetchJson(studentUrl(`/course-packs/${encodeURIComponent(state.slug)}/manifest.json`));

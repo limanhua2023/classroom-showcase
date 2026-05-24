@@ -144,6 +144,19 @@ function setActivityId(id) {
   sessionStorage.setItem('classshow_activity_id', id);
 }
 
+function setActivityEntryPath(path) {
+  if (path) sessionStorage.setItem('classshow_activity_entry_path', String(path));
+  else sessionStorage.removeItem('classshow_activity_entry_path');
+}
+
+function getActivityEntryPath() {
+  return sessionStorage.getItem('classshow_activity_entry_path') || '';
+}
+
+function clearActivityEntryPath() {
+  sessionStorage.removeItem('classshow_activity_entry_path');
+}
+
 function setPostLoginTarget(path) {
   if (path) sessionStorage.setItem('classshow_post_login_target', String(path));
   else sessionStorage.removeItem('classshow_post_login_target');
@@ -166,6 +179,32 @@ async function resolveCourseEntryPath(courseName) {
   } catch {
     return '';
   }
+}
+
+function normalizeRelativeStudentPath(path) {
+  if (!path) return '';
+  try {
+    const nextUrl = new URL(String(path), location.origin);
+    if (nextUrl.origin !== location.origin) return '';
+    return `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}` || '';
+  } catch {
+    return '';
+  }
+}
+
+async function ensureActivityShowcaseAccessAllowed(activity) {
+  if (!activity || activity.upload_open !== false) return false;
+  let target = normalizeRelativeStudentPath(getActivityEntryPath());
+  if (!target && activity.course_name) {
+    target = normalizeRelativeStudentPath(await resolveCourseEntryPath(activity.course_name));
+  }
+  if (!target) return false;
+  setActivityEntryPath(target);
+  if (`${location.pathname}${location.search}${location.hash}` !== target) {
+    location.replace(target);
+    return true;
+  }
+  return false;
 }
 
 function escapeHtml(value) {

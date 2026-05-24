@@ -128,6 +128,7 @@
         setActivityId(activity.id);
         sessionStorage.setItem('classshow_activity', JSON.stringify(activity));
         const nextPath = await resolveActivityStudentTarget(activity);
+        if (typeof setActivityEntryPath === 'function') setActivityEntryPath(nextPath);
         if (typeof setPostLoginTarget === 'function') setPostLoginTarget(nextPath);
         location.href = nextPath
           ? `student-register.html?next=${encodeURIComponent(nextPath)}`
@@ -143,9 +144,11 @@
       try {
         const activity = await api('/activities/code/' + code);
         if (typeof clearPostLoginTarget === 'function') clearPostLoginTarget();
+        const nextPath = await resolveActivityStudentTarget(activity);
+        if (typeof setActivityEntryPath === 'function') setActivityEntryPath(nextPath);
         setGuestSession(activity);
         toast('已切换为访客模式', 'success');
-        setTimeout(() => { location.href = 'student-gallery.html'; }, 500);
+        setTimeout(() => { location.href = nextPath || 'student-gallery.html'; }, 500);
       } catch (e) {
         toast('邀请码无效，请检查后重试', 'error');
       }

@@ -110,7 +110,9 @@
     }
 
     function resolveNextTarget(rawValue) {
-      const candidate = rawValue || (typeof getPostLoginTarget === 'function' ? getPostLoginTarget() : '');
+      const candidate = rawValue
+        || (typeof getPostLoginTarget === 'function' ? getPostLoginTarget() : '')
+        || (typeof getActivityEntryPath === 'function' ? getActivityEntryPath() : '');
       if (!candidate) return 'student-gallery.html';
       try {
         const nextUrl = new URL(String(candidate), location.origin);

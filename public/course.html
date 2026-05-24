@@ -182,6 +182,7 @@
         setActivityId(activity.id);
         sessionStorage.setItem('classshow_activity', JSON.stringify(activity));
         const nextPath = await resolveActivityStudentTarget(activity);
+        if (typeof setActivityEntryPath === 'function') setActivityEntryPath(nextPath);
         if (typeof setPostLoginTarget === 'function') setPostLoginTarget(nextPath);
         location.href = nextPath
           ? `student-register.html?next=${encodeURIComponent(nextPath)}`
@@ -197,8 +198,10 @@
       try {
         const activity = await api('/activities/code/' + encodeURIComponent(code));
         if (typeof clearPostLoginTarget === 'function') clearPostLoginTarget();
+        const nextPath = await resolveActivityStudentTarget(activity);
+        if (typeof setActivityEntryPath === 'function') setActivityEntryPath(nextPath);
         setGuestSession(activity);
-        location.href = 'student-gallery.html';
+        location.href = nextPath || 'student-gallery.html';
       } catch (e) {
         toast('访客入口不可用，请刷新后重试', 'error');
       }
