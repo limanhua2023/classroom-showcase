@@ -13507,6 +13507,456 @@ document.addEventListener('keydown', (e) => {
   }
 </script>
 
+<script>
+  (() => {
+    const MODULE_FLAG_MAP = {
+      M2: 'economics_unlock_m2',
+      M3: 'economics_unlock_m3',
+      M4: 'economics_unlock_m4',
+      M5: 'economics_unlock_m5'
+    };
+
+    const MODULE_PREREQUISITES = {
+      M2: [1, 2, 3],
+      M3: [4, 5, 6],
+      M4: [7, 8, 10],
+      M5: [13, 14]
+    };
+
+    const MODULE_COLORS = {
+      M1: '#F59E0B',
+      M2: '#0D9488',
+      M3: '#3B82F6',
+      M4: '#8B5CF6',
+      M5: '#EC4899'
+    };
+
+    const originalRChi = typeof window.rChi === 'function' ? window.rChi : null;
+    const originalTogCh = typeof window.togCh === 'function' ? window.togCh : null;
+    const originalScrollMod = typeof window.scrollMod === 'function' ? window.scrollMod : null;
+    const originalJumpToChapter = typeof window.jumpToChapter === 'function' ? window.jumpToChapter : null;
+    const originalRenderIndex = typeof window.renderIndex === 'function' ? window.renderIndex : null;
+    const originalRProg = typeof window.rProg === 'function' ? window.rProg : null;
+    let lastModuleAccessSignature = '';
+
+    injectEconomicsLockStyles();
+
+    function injectEconomicsLockStyles() {
+      if (document.getElementById('econ-module-lock-style')) return;
+      const style = document.createElement('style');
+      style.id = 'econ-module-lock-style';
+      style.textContent = `
+        .mod-card-locked {
+          opacity: 0.72;
+          cursor: not-allowed;
+          border-style: dashed !important;
+          background: rgba(15, 23, 42, 0.58);
+        }
+        .mod-card-lock-copy {
+          margin-top: 10px;
+          font-size: 12px;
+          line-height: 1.5;
+          color: var(--text-dim);
+        }
+        .mod-card-lock-chip {
+          display: inline-flex;
+          align-items: center;
+          gap: 6px;
+          margin-top: 8px;
+          padding: 5px 10px;
+          border-radius: 999px;
+          background: rgba(248, 113, 113, 0.12);
+          color: #fca5a5;
+          font-size: 11px;
+          font-weight: 800;
+        }
+        .mtab-locked {
+          opacity: 0.58;
+          cursor: not-allowed;
+          border-style: dashed;
+        }
+        .sec-wrap-locked {
+          border-style: dashed;
+        }
+        .sec-lock-note {
+          margin: 12px 0 16px;
+          padding: 12px 14px;
+          border-radius: 14px;
+          background: rgba(15, 23, 42, 0.48);
+          border: 1px dashed rgba(248, 113, 113, 0.36);
+          color: var(--text-muted);
+          font-size: 13px;
+          line-height: 1.6;
+        }
+        .sec-lock-note strong {
+          display: block;
+          margin-bottom: 4px;
+          color: #fca5a5;
+        }
+        .chi-locked {
+          opacity: 0.78;
+          border-style: dashed;
+        }
+        .chi-locked .chi-hd {
+          cursor: not-allowed;
+        }
+        .chi-lock-copy {
+          margin-top: 8px;
+          font-size: 12px;
+          color: var(--text-dim);
+          line-height: 1.55;
+        }
+        .idx-ch.locked {
+          opacity: 0.62;
+          cursor: not-allowed;
+          border-style: dashed;
+        }
+        .lesson-row.lesson-row-locked {
+          opacity: 0.62;
+          cursor: not-allowed;
+          border-style: dashed;
+        }
+      `;
+      document.head.appendChild(style);
+    }
+
+    function readActivityConfig() {
+      try {
+        const raw = sessionStorage.getItem('classshow_activity');
+        return raw ? JSON.parse(raw) : null;
+      } catch {
+        return null;
+      }
+    }
+
+    function getModuleMeta(moduleId) {
+      return Array.isArray(window.MODULES || MODULES)
+        ? (window.MODULES || MODULES).find(moduleMeta => moduleMeta.id === moduleId) || null
+        : null;
+    }
+
+    function hasPreviewPrivileges() {
+      const hasTeacher = !!sessionStorage.getItem('teacherToken') && !!sessionStorage.getItem('classshow_activity_id');
+      const hasSuperAdmin = !!sessionStorage.getItem('superAdminToken');
+      return hasTeacher || hasSuperAdmin;
+    }
+
+    function getModuleByChapter(chId) {
+      return Array.isArray(window.MODULES || MODULES)
+        ? (window.MODULES || MODULES).find(moduleMeta => Array.isArray(moduleMeta.chs) && moduleMeta.chs.includes(Number(chId))) || null
+        : null;
+    }
+
+    function getQuizQuestionCount(chId) {
+      const source = window.C || {};
+      const chapter = source[String(chId)] || source[chId];
+      return Array.isArray(chapter?.quiz) ? chapter.quiz.length : 0;
+    }
+
+    function readCourseProgress() {
+      try {
+        return typeof lp === 'function' ? (lp() || {}) : {};
+      } catch {
+        return {};
+      }
+    }
+
+    function isChapterQuizPerfect(chId) {
+      const total = getQuizQuestionCount(chId);
+      if (!total) return false;
+      const progress = readCourseProgress();
+      const chapterProgress = progress.chapterProgress?.[chId] || {};
+      const bestScore = Number(chapterProgress.bestScore || 0);
+      const currentScore = Number(progress.scores?.[chId] || 0);
+      return Math.max(bestScore, currentScore) >= total;
+    }
+
+    function getModuleAccess(moduleId) {
+      const moduleMeta = getModuleMeta(moduleId);
+      if (!moduleMeta) {
+        return { unlocked: true, teacherUnlocked: false, studentUnlocked: false, prerequisiteChapters: [] };
+      }
+      if (hasPreviewPrivileges()) {
+        return { unlocked: true, teacherUnlocked: true, studentUnlocked: true, prerequisiteChapters: [] };
+      }
+      if (moduleId === 'M1') {
+        return { unlocked: true, teacherUnlocked: true, studentUnlocked: true, prerequisiteChapters: [] };
+      }
+
+      const prerequisiteChapters = MODULE_PREREQUISITES[moduleId] || [];
+      const activity = readActivityConfig();
+      const flagKey = MODULE_FLAG_MAP[moduleId];
+      const teacherUnlocked = !!(flagKey && activity && activity[flagKey]);
+      const studentUnlocked = prerequisiteChapters.length > 0 && prerequisiteChapters.every(isChapterQuizPerfect);
+      return {
+        unlocked: teacherUnlocked || studentUnlocked,
+        teacherUnlocked,
+        studentUnlocked,
+        prerequisiteChapters
+      };
+    }
+
+    function getModuleLockMessage(moduleId) {
+      const moduleMeta = getModuleMeta(moduleId);
+      if (!moduleMeta) return '当前模块暂未开放。';
+      const access = getModuleAccess(moduleId);
+      if (access.unlocked) return '';
+      const chapterList = (access.prerequisiteChapters || []).map(chId => `Ch${chId}`).join('、');
+      return `当前【${moduleMeta.name}】暂未开放。\n\n开放方式：\n1. 由教师后台手动开启本模块；\n2. 学生先完成 ${chapterList} 的全部随堂测验，且每章都满分，系统才会自动解锁。`;
+    }
+
+    function buildModuleAccessSignature() {
+      const modules = window.MODULES || MODULES || [];
+      return modules.map(moduleMeta => `${moduleMeta.id}:${getModuleAccess(moduleMeta.id).unlocked ? '1' : '0'}`).join('|');
+    }
+
+    function showLockedModuleMessage(moduleId) {
+      window.alert(getModuleLockMessage(moduleId));
+      return false;
+    }
+
+    function ensureModuleUnlocked(moduleId, options = {}) {
+      const access = getModuleAccess(moduleId);
+      if (access.unlocked) return true;
+      if (!options.silent) showLockedModuleMessage(moduleId);
+      return false;
+    }
+
+    function ensureChapterUnlocked(chId, options = {}) {
+      const moduleMeta = getModuleByChapter(chId);
+      if (!moduleMeta) return true;
+      return ensureModuleUnlocked(moduleMeta.id, options);
+    }
+
+    function formatModuleUnlockHint(moduleId) {
+      const moduleMeta = getModuleMeta(moduleId);
+      const access = getModuleAccess(moduleId);
+      if (!moduleMeta) return '';
+      if (access.teacherUnlocked) return '教师已在后台直接开放本模块。';
+      if (access.studentUnlocked) return '你已满足前置满分条件，本模块已自动解锁。';
+      const chapterList = (access.prerequisiteChapters || []).map(chId => `Ch${chId}`).join('、');
+      return `需教师在后台开启，或先满分完成 ${chapterList} 的全部随堂测验。`;
+    }
+
+    window.showEconomicsModuleLock = showLockedModuleMessage;
+
+    window.rMods = function patchedRenderModules() {
+      const modules = window.MODULES || MODULES;
+      document.getElementById('mod-grid').innerHTML = modules.map(moduleMeta => {
+        const doneCount = moduleMeta.chs.filter(chId => isDone(chId, 'view')).length;
+        const progressPct = Math.round(doneCount / moduleMeta.chs.length * 100);
+        if (!isModuleCardReady(moduleMeta)) {
+          return `
+            <div class="mod-card mod-card-soon" style="border-color:${moduleMeta.color}18; opacity:0.5; cursor:default;">
+              <div class="mod-icon" style="filter:grayscale(0.5)">${moduleMeta.icon}</div>
+              <div class="mod-name" style="color:${moduleMeta.color}">${moduleMeta.name}</div>
+              <div class="mod-desc">${moduleMeta.desc}</div>
+              <div class="mod-meta" style="color:var(--text-dim)">🔎 内容准备中 · ${moduleMeta.time}</div>
+              <div class="mod-pb"><div class="mod-pf" style="width:0%;background:${moduleMeta.color}"></div></div>
+            </div>`;
+        }
+
+        const access = getModuleAccess(moduleMeta.id);
+        if (!access.unlocked) {
+          return `
+            <div class="mod-card mod-card-locked" onclick="showEconomicsModuleLock('${moduleMeta.id}')" style="border-color:${moduleMeta.color}35">
+              <div class="mod-icon" style="filter:grayscale(0.25)">${moduleMeta.icon}</div>
+              <div class="mod-name" style="color:${moduleMeta.color}">${moduleMeta.name}</div>
+              <div class="mod-desc">${moduleMeta.desc}</div>
+              <div class="mod-meta">🔒 当前锁定 · ${moduleMeta.time}</div>
+              <div class="mod-pb"><div class="mod-pf" style="width:0%;background:${moduleMeta.color}"></div></div>
+              <div class="mod-card-lock-chip">需教师开启或前置章节满分解锁</div>
+              <div class="mod-card-lock-copy">${formatModuleUnlockHint(moduleMeta.id)}</div>
+            </div>`;
+        }
+
+        return `
+          <div class="mod-card" onclick="scrollMod('${moduleMeta.id}')" style="border-color:${moduleMeta.color}35">
+            <div class="mod-icon">${moduleMeta.icon}</div>
+            <div class="mod-name" style="color:${moduleMeta.color}">${moduleMeta.name}</div>
+            <div class="mod-desc">${moduleMeta.desc}</div>
+            <div class="mod-meta">⏱️ ${moduleMeta.time} · ${doneCount}/${moduleMeta.chs.length} 章已完成</div>
+            <div class="mod-pb"><div class="mod-pf" style="width:${progressPct}%;background:${moduleMeta.color}"></div></div>
+          </div>`;
+      }).join('');
+    };
+
+    window.rTabs = function patchedRenderModuleTabs() {
+      const modules = window.MODULES || MODULES;
+      document.getElementById('mtabs-el').innerHTML = modules.map(moduleMeta => {
+        const access = getModuleAccess(moduleMeta.id);
+        return `
+          <button class="mtab ${access.unlocked ? '' : 'mtab-locked'}" id="tab-${moduleMeta.id}" onclick="${access.unlocked ? `scrollMod('${moduleMeta.id}')` : `showEconomicsModuleLock('${moduleMeta.id}')`}">
+            ${moduleMeta.icon} ${moduleMeta.name}${access.unlocked ? '' : ' · 锁定'}
+          </button>
+        `;
+      }).join('');
+    };
+
+    window.scrollMod = function patchedScrollModule(moduleId) {
+      if (String(moduleId || '').startsWith('M') && !ensureModuleUnlocked(moduleId)) {
+        return false;
+      }
+      return originalScrollMod ? originalScrollMod(moduleId) : false;
+    };
+
+    window.rChi = function patchedRenderChapterItem(chId, color) {
+      if (ensureChapterUnlocked(chId, { silent: true })) {
+        return originalRChi ? originalRChi(chId, color) : '';
+      }
+
+      const chapterMap = window.C || {};
+      const chapter = chapterMap[String(chId)] || chapterMap[chId] || {};
+      const moduleMeta = getModuleByChapter(chId);
+      return `
+        <div class="chi chi-locked" id="chi-${chId}">
+          <div class="chi-hd" onclick="showEconomicsModuleLock('${moduleMeta ? moduleMeta.id : ''}')">
+            <div class="chi-num" style="background:${color}15;color:${color}">Ch${chId}</div>
+            <div class="chi-info">
+              <div class="chi-ttl">${chapter.title || `第${chId}章`}</div>
+              <div class="chi-en">${chapter.en || 'Locked chapter'}</div>
+            </div>
+            <div class="chi-right">
+              <span class="chi-badge new">🔒 未解锁</span>
+              <span class="chi-arr">→</span>
+            </div>
+          </div>
+          <div class="chi-lock-copy">${formatModuleUnlockHint(moduleMeta ? moduleMeta.id : '')}</div>
+        </div>
+      `;
+    };
+
+    window.rSecs = function patchedRenderSections() {
+      const modules = window.MODULES || MODULES;
+      document.getElementById('ch-sections').innerHTML = modules.map(moduleMeta => {
+        const access = getModuleAccess(moduleMeta.id);
+        const color = MODULE_COLORS[moduleMeta.id] || moduleMeta.color || '#94a3b8';
+        return `
+          <div class="sec-wrap ${access.unlocked ? '' : 'sec-wrap-locked'}" id="${moduleMeta.id}">
+            <div class="sec-hd">
+              <h2 class="sec-title">${moduleMeta.icon} ${moduleMeta.name}</h2>
+              <span class="sec-badge" style="border-color:${color}40;color:${color}">${moduleMeta.chs.length}章精讲</span>
+            </div>
+            <p class="sec-desc">${moduleMeta.desc}</p>
+            ${access.unlocked ? '' : `<div class="sec-lock-note"><strong>当前锁定</strong><span>${formatModuleUnlockHint(moduleMeta.id)}</span></div>`}
+            <div class="ch-list">${moduleMeta.chs.map(chId => window.rChi(chId, color)).join('')}</div>
+          </div>`;
+      }).join('');
+    };
+
+    window.togCh = function patchedToggleChapter(chId) {
+      if (!ensureChapterUnlocked(chId)) return false;
+      return originalTogCh ? originalTogCh(chId) : false;
+    };
+
+    window.jumpToChapter = function patchedJumpToChapter(chId, tab) {
+      if (!ensureChapterUnlocked(chId)) return false;
+      return originalJumpToChapter ? originalJumpToChapter(chId, tab) : false;
+    };
+
+    window.renderIndex = function patchedRenderIndex() {
+      const el = document.getElementById('idx-sect');
+      if (!el) return;
+      const modules = window.MODULES || MODULES;
+      el.innerHTML = `
+        <div class="idx-wrap">
+          <div class="idx-hd"><span class="idx-title">🧭 核心课程导航目录</span><span class="idx-sub">精讲16章核心模块 · 点击快速穿梭</span></div>
+          <div class="idx-grid">
+            ${modules.map(moduleMeta => {
+              const access = getModuleAccess(moduleMeta.id);
+              return `
+                <div class="idx-mod">
+                  <div class="idx-mod-hd" style="color:${moduleMeta.color}">${moduleMeta.icon} ${moduleMeta.name}${access.unlocked ? '' : ' · 锁定'}</div>
+                  ${moduleMeta.chs.map(chId => {
+                    const chapterMap = window.C || {};
+                    const chapter = chapterMap[String(chId)] || chapterMap[chId];
+                    if (!chapter) return '';
+                    if (!ensureChapterUnlocked(chId, { silent: true })) {
+                      return `
+                        <div class="idx-ch locked" onclick="showEconomicsModuleLock('${moduleMeta.id}')">
+                          <span class="idx-icon">🔒</span>Ch${chId} · ${chapter.title}
+                        </div>
+                      `;
+                    }
+                    const done = isDone(chId, 'quiz');
+                    const viewed = isDone(chId, 'view');
+                    return `
+                      <div class="idx-ch ${done ? 'dn' : viewed ? 'vw' : ''}" onclick="jumpToChapter(${chId})">
+                        <span class="idx-icon">${done ? '✓' : viewed ? '◔' : '○'}</span>Ch${chId} · ${chapter.title}
+                      </div>
+                    `;
+                  }).join('')}
+                </div>
+              `;
+            }).join('')}
+          </div>
+        </div>
+      `;
+    };
+
+    window.renderLessonMap = function renderLessonMapWithLocks() {
+      const el = document.getElementById('lesson-map-body');
+      if (!el || typeof lp !== 'function' || !Array.isArray(window.LESSONS_15 || LESSONS_15)) return;
+      const progress = lp();
+      const source = window.LESSONS_15 || LESSONS_15;
+      const cards = source.map(lesson => {
+        const chapterIds = lesson.ch.match(/\d+/g)?.map(Number) || [];
+        const allDone = chapterIds.length > 0 && chapterIds.every(chId => progress.done[chId] && progress.done[chId].quiz);
+        const anyDone = chapterIds.some(chId => progress.done[chId] && progress.done[chId].view);
+        const status = allDone ? '已完成' : anyDone ? '学习中' : '待开始';
+        const targetChapter = chapterIds[0];
+        const unlocked = !targetChapter || ensureChapterUnlocked(targetChapter, { silent: true });
+        const action = unlocked
+          ? (targetChapter ? `jumpToChapter(${targetChapter})` : `scrollMod('M1')`)
+          : `showEconomicsModuleLock('${(getModuleByChapter(targetChapter) || {}).id || ''}')`;
+        return `
+          <div class="lesson-row ${unlocked ? '' : 'lesson-row-locked'}" onclick="${action}" title="第${lesson.num}次课：${lesson.title}">
+            <div class="lesson-row-head">
+              <div class="lesson-num" style="background:${lesson.color}18;color:${lesson.color}">第${lesson.num}课</div>
+              <span class="lesson-type-badge ${lesson.badge}">${unlocked ? lesson.type : '锁定'}</span>
+            </div>
+            <div class="lesson-row-main">
+              <div class="lesson-title">${lesson.title}</div>
+              <div class="lesson-meta">
+                <span class="lesson-meta-chip">${lesson.ch}</span>
+                <span class="lesson-meta-chip">${unlocked ? status : '未解锁'}</span>
+              </div>
+            </div>
+          </div>`;
+      }).join('');
+      el.innerHTML = `<div class="lesson-map-grid">${cards}</div>`;
+    };
+
+    window.refreshEconomicsModuleLocks = function refreshEconomicsModuleLocks(options = {}) {
+      const skipIndex = !!options.skipIndex;
+      const forceSections = !!options.forceSections;
+      const nextSignature = buildModuleAccessSignature();
+      if (typeof window.rMods === 'function') window.rMods();
+      if (typeof window.rTabs === 'function') window.rTabs();
+      if (typeof window.rSecs === 'function' && (forceSections || nextSignature !== lastModuleAccessSignature)) {
+        window.rSecs();
+        lastModuleAccessSignature = nextSignature;
+      }
+      if (!skipIndex && typeof window.renderIndex === 'function') window.renderIndex();
+      if (typeof window.renderLessonMap === 'function') window.renderLessonMap();
+    };
+
+    window.rProg = function patchedRefreshProgress() {
+      if (originalRProg) originalRProg();
+      window.refreshEconomicsModuleLocks({ skipIndex: true });
+    };
+
+    window.addEventListener('classshow:econ-activity-refreshed', () => {
+      window.refreshEconomicsModuleLocks({ forceSections: true });
+    });
+
+    if (originalRenderIndex) {
+      window.renderIndex();
+    }
+    window.refreshEconomicsModuleLocks({ forceSections: true });
+  })();
+</script>
+
   <script>window.CLASSSHOW_SURFACE = 'student';</script>
   <script src="/js/deployment-config.js"></script>
   <script src="/js/app-config.js"></script>

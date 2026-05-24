@@ -1812,7 +1812,7 @@
     let lastLocalBackupAlertKey = '';
     let pendingQuarantinePurgePreview = null;
 
-    const toggleMeta = {
+    const baseToggleMeta = {
       upload_open: { label: '上传入口', note: '控制学生是否还能继续上传或替换作品。' },
       voting_open: { label: '评分入口', note: '控制学生能否给非本人作品评分。' },
       comments_open: { label: '评论入口', note: '控制作品详情页和大屏点评功能。' },
@@ -1820,6 +1820,24 @@
       roster_enabled: { label: '名单限制', note: '学生必须是教师导入名单中的实名用户。' },
       pin_required: { label: 'PIN 登录', note: '如后续启用 PIN，可做更强身份约束。' }
     };
+
+    const economicsToggleMeta = {
+      economics_unlock_m2: { label: '开放模块二', note: '教师强制开放“市场供求”，学生无需先满分通关模块一。' },
+      economics_unlock_m3: { label: '开放模块三', note: '教师强制开放“效率与福利”，可跳过前置模块满分要求。' },
+      economics_unlock_m4: { label: '开放模块四', note: '教师强制开放“厂商行为”，允许学生直接进入对应章节。' },
+      economics_unlock_m5: { label: '开放模块五', note: '教师强制开放“宏观基础”，允许学生直接进入宏观章节。' }
+    };
+
+    function isEconomicsActivity(activity) {
+      const courseName = String(activity?.course_name || '').trim();
+      return courseName === '经济学基础课程' || courseName.includes('经济学基础');
+    }
+
+    function getToggleMeta(activity) {
+      return isEconomicsActivity(activity)
+        ? { ...baseToggleMeta, ...economicsToggleMeta }
+        : baseToggleMeta;
+    }
 
     function logout() {
       sessionStorage.clear();
@@ -2209,17 +2227,18 @@
     }
 
     function renderStatusPills(activity) {
-      const keys = ['upload_open', 'voting_open', 'comments_open', 'show_live_ranking', 'roster_enabled', 'pin_required'];
+      const meta = getToggleMeta(activity);
+      const keys = Object.keys(meta);
       document.getElementById('statusPills').innerHTML = keys.map(key => `
         <span class="dashboard-pill ${activity[key] ? 'on' : 'off'}">
-          <span>${escapeHtml(toggleMeta[key].label)}</span>
+          <span>${escapeHtml(meta[key].label)}</span>
           <strong>${activity[key] ? '开启' : '关闭'}</strong>
         </span>
       `).join('');
     }
 
     function renderControls(activity) {
-      document.getElementById('controlGrid').innerHTML = Object.entries(toggleMeta).map(([key, meta]) => `
+      document.getElementById('controlGrid').innerHTML = Object.entries(getToggleMeta(activity)).map(([key, meta]) => `
         <div class="control-tile">
           <strong>${escapeHtml(meta.label)}</strong>
           <span>${escapeHtml(meta.note)}</span>
@@ -5096,6 +5115,7 @@
 
     async function toggleSetting(key) {
       const activity = dashboardSummary?.activity || act;
+      const toggleDefinitions = getToggleMeta(activity);
       const nextValue = !activity[key];
       try {
         await api('/activities/' + actId, {
@@ -5103,7 +5123,7 @@
           body: JSON.stringify({ [key]: nextValue })
         });
         await reloadDashboard();
-        toast(`${toggleMeta[key].label}已${nextValue ? '开启' : '关闭'}`, 'success');
+        toast(`${toggleDefinitions[key].label}已${nextValue ? '开启' : '关闭'}`, 'success');
       } catch (e) {
         toast('切换失败：' + e.message, 'error');
       }

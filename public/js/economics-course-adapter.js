@@ -100,6 +100,7 @@
   patchCourseBridge();
   patchAiControls();
   patchAppRuntime();
+  syncActivityContextFromBackend();
   scheduleTeacherBootstrap();
   scheduleRemoteHydration();
   startLearningHeartbeat();
@@ -536,6 +537,40 @@
 
   function hasPreviewAccess() {
     return hasTeacherSession() || hasSuperAdminSession();
+  }
+
+  async function syncActivityContextFromBackend() {
+    const inviteCode = String(runtime.context.activity && runtime.context.activity.invite_code || '').trim();
+    if (!inviteCode || typeof api !== 'function') {
+      if (typeof window.refreshEconomicsModuleLocks === 'function') {
+        window.refreshEconomicsModuleLocks();
+      }
+      return;
+    }
+
+    try {
+      const latest = await api(`/activities/code/${encodeURIComponent(inviteCode)}`);
+      if (!latest || !latest.id) return;
+      runtime.context = {
+        ...runtime.context,
+        activity: latest,
+        activity_id: runtime.context.activity_id || latest.id || ''
+      };
+      sessionStorage.setItem('classshow_activity', JSON.stringify(latest));
+      if (typeof setActivityId === 'function' && latest.id) {
+        setActivityId(latest.id);
+      }
+      window.dispatchEvent(new CustomEvent('classshow:econ-activity-refreshed', {
+        detail: latest
+      }));
+    } catch (error) {
+      console.warn('Failed to refresh economics activity context:', error);
+    } finally {
+      if (typeof window.refreshEconomicsModuleLocks === 'function') {
+        window.refreshEconomicsModuleLocks();
+      }
+      updateBridgeShell();
+    }
   }
 
   function updateBridgeShell() {

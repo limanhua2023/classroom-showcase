@@ -557,6 +557,10 @@ function sanitizeActivity(activity) {
   const { teacher_password, ...safe } = activity;
   safe.roster_enabled = !!safe.roster_enabled;
   safe.pin_required = !!safe.pin_required;
+  safe.economics_unlock_m2 = !!safe.economics_unlock_m2;
+  safe.economics_unlock_m3 = !!safe.economics_unlock_m3;
+  safe.economics_unlock_m4 = !!safe.economics_unlock_m4;
+  safe.economics_unlock_m5 = !!safe.economics_unlock_m5;
   safe.feedback_daily_limit = normalizeFeedbackDailyLimit(safe.feedback_daily_limit);
   safe.archive_after_days = normalizeArchiveAfterDays(safe.archive_after_days);
   safe.archive_delete_primary_after_success = normalizeArchiveDeletePrimary(safe.archive_delete_primary_after_success);
@@ -4163,14 +4167,14 @@ function normalizeRosterRows(rows, defaultClassName = '') {
     .filter(row => row.name && row.student_id);
 }
 
-const ACTIVITY_PUBLIC_FIELDS = 'id,course_name,class_name,activity_name,description,invite_code,upload_open,voting_open,comments_open,show_live_ranking,roster_enabled,pin_required,feedback_daily_limit,archive_after_days,archive_delete_primary_after_success,quarantine_retention_days,created_at';
+const ACTIVITY_PUBLIC_FIELDS = 'id,course_name,class_name,activity_name,description,invite_code,upload_open,voting_open,comments_open,show_live_ranking,roster_enabled,pin_required,economics_unlock_m2,economics_unlock_m3,economics_unlock_m4,economics_unlock_m5,feedback_daily_limit,archive_after_days,archive_delete_primary_after_success,quarantine_retention_days,created_at';
 const ACTIVITY_LEGACY_FIELDS = 'id,course_name,class_name,activity_name,description,invite_code,upload_open,voting_open,comments_open,show_live_ranking,created_at';
 const QUARANTINED_SUBMISSION_FIELDS = 'id,title,description,image_url,storage_path,media_type,media_size,upload_time,view_count,rating_count,average_rating,composite_score,status,quarantined_at,user_id,activity_id,users(name,student_id,class_name,group_name)';
 const QUARANTINED_SUBMISSION_LEGACY_FIELDS = 'id,title,description,image_url,storage_path,media_type,media_size,upload_time,view_count,rating_count,average_rating,composite_score,status,user_id,activity_id,users(name,student_id,class_name,group_name)';
 
 async function fetchActivityById(activityId) {
   let result = await supabase.from('activities').select(ACTIVITY_PUBLIC_FIELDS).eq('id', activityId).single();
-  if (result.error && /roster_enabled|pin_required|comments_open|feedback_daily_limit|archive_after_days|archive_delete_primary_after_success|quarantine_retention_days/i.test(result.error.message || '')) {
+  if (result.error && /roster_enabled|pin_required|comments_open|economics_unlock_m2|economics_unlock_m3|economics_unlock_m4|economics_unlock_m5|feedback_daily_limit|archive_after_days|archive_delete_primary_after_success|quarantine_retention_days/i.test(result.error.message || '')) {
     result = await supabase.from('activities').select(ACTIVITY_LEGACY_FIELDS).eq('id', activityId).single();
   }
   if (result.data) result.data = sanitizeActivity(result.data);
@@ -4180,7 +4184,7 @@ async function fetchActivityById(activityId) {
 async function fetchActivityByCode(code) {
   const normalized = normalizeInviteCode(code);
   let result = await supabase.from('activities').select(ACTIVITY_PUBLIC_FIELDS).eq('invite_code', normalized).single();
-  if (result.error && /roster_enabled|pin_required|comments_open|feedback_daily_limit|archive_after_days|archive_delete_primary_after_success|quarantine_retention_days/i.test(result.error.message || '')) {
+  if (result.error && /roster_enabled|pin_required|comments_open|economics_unlock_m2|economics_unlock_m3|economics_unlock_m4|economics_unlock_m5|feedback_daily_limit|archive_after_days|archive_delete_primary_after_success|quarantine_retention_days/i.test(result.error.message || '')) {
     result = await supabase.from('activities').select(ACTIVITY_LEGACY_FIELDS).eq('invite_code', normalized).single();
   }
   if (result.data) result.data = sanitizeActivity(result.data);
@@ -7792,7 +7796,24 @@ app.put('/api/activities/:id', teacherAuth, async (req, res) => {
     const auth = await ensureTeacherCanAccessActivity(req, req.params.id);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
 
-    const allowed = ['upload_open', 'voting_open', 'comments_open', 'show_live_ranking', 'roster_enabled', 'pin_required', 'description', 'activity_name', 'feedback_daily_limit', 'archive_after_days', 'archive_delete_primary_after_success', 'quarantine_retention_days'];
+    const allowed = [
+      'upload_open',
+      'voting_open',
+      'comments_open',
+      'show_live_ranking',
+      'roster_enabled',
+      'pin_required',
+      'economics_unlock_m2',
+      'economics_unlock_m3',
+      'economics_unlock_m4',
+      'economics_unlock_m5',
+      'description',
+      'activity_name',
+      'feedback_daily_limit',
+      'archive_after_days',
+      'archive_delete_primary_after_success',
+      'quarantine_retention_days'
+    ];
     const payload = {};
     for (const key of allowed) {
       if (!(key in req.body)) continue;
@@ -7805,6 +7826,9 @@ app.put('/api/activities/:id', teacherAuth, async (req, res) => {
     }
 
     const { data, error } = await supabase.from('activities').update(payload).eq('id', req.params.id).select().single();
+    if (error && /economics_unlock_m2|economics_unlock_m3|economics_unlock_m4|economics_unlock_m5/i.test(error.message || '')) {
+      return res.status(500).json({ error: 'Economics module unlock schema is not ready. Run upgrade_v6.sql first.' });
+    }
     if (error && /feedback_daily_limit|archive_after_days|archive_delete_primary_after_success|quarantine_retention_days/i.test(error.message || '')) {
       return res.status(500).json({ error: 'Archive or feedback schema is not ready. Run upgrade_v4.sql first.' });
     }
