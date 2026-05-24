@@ -136,6 +136,8 @@ const OPS_SNAPSHOT_LIST_TTL_MS = 60 * 1000;
 const OPS_HEAVY_QUERY_CACHE_TTL_MS = Math.max(5 * 1000, Number(process.env.OPS_HEAVY_QUERY_CACHE_TTL_MS || 30 * 1000));
 const TASK_STUCK_GRACE_MS = 5 * 60 * 1000;
 const QUARANTINED_MISSING_MEDIA_STATUS = 'quarantined_missing_media';
+const EGRESS_PROFILE_RECENT_EVENT_LIMIT = Math.max(20, Number(process.env.EGRESS_PROFILE_RECENT_EVENT_LIMIT || 60));
+const EGRESS_PROFILE_META_STRING_LIMIT = Math.max(32, Number(process.env.EGRESS_PROFILE_META_STRING_LIMIT || 120));
 
 function normalizeOrigin(value = '') {
   const input = String(value || '').trim();
@@ -1078,10 +1080,261 @@ let googleDriveDestinationInfoExpiresAt = 0;
 let s3ArchiveClient = null;
 const archiveSnapshotListCache = new Map();
 const publicOpsHealthCache = new Map();
+const egressTelemetryMetrics = new Map();
+const egressTelemetryRecentEvents = [];
+const egressTelemetryStartedAt = new Date().toISOString();
 const backgroundTaskState = {
   transcode: createTaskHealthState('transcode', TRANSCODE_LOOP_INTERVAL_MS, ASYNC_VIDEO_TRANSCODE),
   archive: createTaskHealthState('archive', ARCHIVE_LOOP_INTERVAL_MS, getArchiveProviderInfo().configured)
 };
+
+function trimEgressMetaString(value = '') {
+  return String(value || '').trim().slice(0, EGRESS_PROFILE_META_STRING_LIMIT);
+}
+
+function sanitizeEgressMetaValue(key, value) {
+  if (value == null) return null;
+  if (typeof value === 'number') return Number.isFinite(value) ? value : null;
+  if (typeof value === 'boolean') return value;
+  if (value instanceof Date) return value.toISOString();
+  if (Array.isArray(value)) {
+    const items = value
+      .slice(0, 5)
+      .map(item => sanitizeEgressMetaValue(key, item))
+      .filter(item => item != null);
+    return items.length ? items : null;
+  }
+  if (typeof value === 'string') {
+    const raw = value.trim();
+    if (!raw) return null;
+    if (/url|origin|host/i.test(key)) {
+      try {
+        const parsed = new URL(raw);
+        return trimEgressMetaString(`${parsed.origin}${parsed.pathname === '/' ? '' : parsed.pathname}`);
+      } catch {
+        return trimEgressMetaString(raw.replace(/\?.*$/, ''));
+      }
+    }
+    if (/path|key/i.test(key)) {
+      return trimEgressMetaString(raw.replace(/\\/g, '/'));
+    }
+    return trimEgressMetaString(raw);
+  }
+  return null;
+}
+
+function sanitizeEgressMeta(meta = {}) {
+  const sanitized = {};
+  for (const [key, value] of Object.entries(meta || {})) {
+    const normalized = sanitizeEgressMetaValue(key, value);
+    if (normalized != null && normalized !== '') sanitized[key] = normalized;
+  }
+  return sanitized;
+}
+
+function recordEgressMetric(category, action, options = {}) {
+  const normalizedCategory = trimEgressMetaString(category || 'unknown').toLowerCase();
+  const normalizedAction = trimEgressMetaString(action || 'unknown').toLowerCase();
+  const key = `${normalizedCategory}:${normalizedAction}`;
+  const nowIso = new Date().toISOString();
+  const durationMs = Math.max(0, Number(options.durationMs || 0));
+  const bytes = Math.max(0, Number(options.bytes || 0));
+  const objectCount = Math.max(0, Number(options.objectCount || 0));
+  const rowCount = Math.max(0, Number(options.rowCount || 0));
+  const pageCount = Math.max(0, Number(options.pageCount || 0));
+  const ok = options.ok !== false;
+  const meta = sanitizeEgressMeta(options.meta || {});
+  const current = egressTelemetryMetrics.get(key) || {
+    category: normalizedCategory,
+    action: normalizedAction,
+    count: 0,
+    error_count: 0,
+    total_duration_ms: 0,
+    max_duration_ms: 0,
+    total_bytes: 0,
+    total_object_count: 0,
+    total_row_count: 0,
+    total_page_count: 0,
+    last_at: null,
+    last_duration_ms: 0,
+    last_ok: true,
+    last_error: null,
+    sample_meta: null
+  };
+  current.count += 1;
+  if (!ok) current.error_count += 1;
+  current.total_duration_ms += durationMs;
+  current.max_duration_ms = Math.max(current.max_duration_ms, durationMs);
+  current.total_bytes += bytes;
+  current.total_object_count += objectCount;
+  current.total_row_count += rowCount;
+  current.total_page_count += pageCount;
+  current.last_at = nowIso;
+  current.last_duration_ms = durationMs;
+  current.last_ok = ok;
+  current.last_error = ok ? null : trimEgressMetaString(options.error || 'Unknown error');
+  if (Object.keys(meta).length) current.sample_meta = meta;
+  egressTelemetryMetrics.set(key, current);
+
+  egressTelemetryRecentEvents.unshift({
+    at: nowIso,
+    category: normalizedCategory,
+    action: normalizedAction,
+    ok,
+    duration_ms: durationMs,
+    bytes,
+    object_count: objectCount,
+    row_count: rowCount,
+    page_count: pageCount,
+    meta: Object.keys(meta).length ? meta : null,
+    error: ok ? null : trimEgressMetaString(options.error || 'Unknown error')
+  });
+  if (egressTelemetryRecentEvents.length > EGRESS_PROFILE_RECENT_EVENT_LIMIT) {
+    egressTelemetryRecentEvents.length = EGRESS_PROFILE_RECENT_EVENT_LIMIT;
+  }
+}
+
+function buildEgressThrottleChecklist(profile = {}) {
+  const metrics = Array.isArray(profile.metrics) ? profile.metrics : [];
+  const metricFor = (category, action) => metrics.find(item => item.category === category && item.action === action) || null;
+  const archiveScan = metricFor('archive-s3', 'full-bucket-scan');
+  const hotStorageScan = metricFor('ops-scan', 'global-hot-storage');
+  const activityStorageScan = metricFor('ops-scan', 'activity-storage');
+  const manifestReads = metricFor('primary-storage', 'json-read');
+  const remoteDownloads = metricFor('network', 'remote-buffer-download');
+  const archiveLoop = metricFor('loop', 'archive-scan');
+  const transcodeLoop = metricFor('loop', 'transcode-scan');
+  const healthEndpoint = metricFor('endpoint', 'health');
+
+  return [
+    {
+      priority: 'P1',
+      status: 'done',
+      area: 'health',
+      title: 'Public health checks stay lightweight',
+      evidence: 'Student-facing portal now uses /api/ops/public-health, and /api/health only loads archive/hot storage details on explicit full requests.'
+    },
+    {
+      priority: 'P1',
+      status: archiveScan?.count ? 'watch' : 'open',
+      area: 'archive-storage',
+      title: 'Keep full R2 bucket scans manual and infrequent',
+      evidence: archiveScan?.count
+        ? `Observed ${archiveScan.count} full archive scans touching ${archiveScan.total_object_count || 0} objects and ${formatStorageBytes(archiveScan.total_bytes || 0)}.`
+        : 'Full archive storage summary still requires ListObjectsV2 over the whole bucket when requested.',
+      action: 'Only call full archive storage summary from super-admin diagnostics. If scans remain frequent, raise ARCHIVE_STORAGE_CACHE_TTL_MS or move the summary to a scheduled snapshot.'
+    },
+    {
+      priority: 'P1',
+      status: hotStorageScan?.count ? 'watch' : 'open',
+      area: 'hot-storage',
+      title: 'Avoid rebuilding global hot storage summary on routine page loads',
+      evidence: hotStorageScan?.count
+        ? `Observed ${hotStorageScan.count} global hot storage builds across ${hotStorageScan.total_row_count || 0} submission rows and ${hotStorageScan.total_object_count || 0} storage objects.`
+        : 'Global hot storage summary still scans all submissions plus tracked storage folders when refreshed.',
+      action: 'Keep hot storage summary on admin-only routes. If usage stays high, persist a scheduled snapshot instead of recomputing on demand.'
+    },
+    {
+      priority: 'P1',
+      status: manifestReads?.count ? 'watch' : 'open',
+      area: 'manifest-io',
+      title: 'Reduce per-submission manifest reads during heavy summaries',
+      evidence: manifestReads?.count
+        ? `Primary storage JSON reads currently total ${manifestReads.count} calls.`
+        : 'Heavy storage summaries still read many manifest JSON files one by one from primary storage.',
+      action: 'Mirror frequently queried manifest fields into database columns or a precomputed ops snapshot so admin summaries stop downloading each manifest individually.'
+    },
+    {
+      priority: 'P1',
+      status: activityStorageScan?.count ? 'watch' : 'open',
+      area: 'activity-storage',
+      title: 'Keep per-activity storage diagnostics behind explicit teacher/admin actions',
+      evidence: activityStorageScan?.count
+        ? `Observed ${activityStorageScan.count} activity-level storage summaries across ${activityStorageScan.total_row_count || 0} rows.`
+        : 'Per-activity storage summary still performs broad submission and storage listing work when requested.',
+      action: 'Do not auto-refresh activity storage panels. Use manual refresh buttons and cache the result per activity.'
+    },
+    {
+      priority: 'P1',
+      status: remoteDownloads?.count ? 'watch' : 'open',
+      area: 'media-egress',
+      title: 'Minimize proxy downloads of remote media through Render',
+      evidence: remoteDownloads?.count
+        ? `Observed ${remoteDownloads.count} remote media downloads totaling ${formatStorageBytes(remoteDownloads.total_bytes || 0)}.`
+        : 'Proxy-style remote media downloads still send bytes through Render whenever restore/archive falls back to a URL fetch.',
+      action: 'Prefer direct R2 public URLs, signed URLs, or client-side fetches for restores/previews where possible instead of buffering media through the Node service.'
+    },
+    {
+      priority: 'P1',
+      status: archiveLoop?.count || transcodeLoop?.count ? 'watch' : 'open',
+      area: 'background-loops',
+      title: 'Keep idle loops sparse and candidate scans bounded',
+      evidence: `Archive idle interval is ${Math.round(ARCHIVE_IDLE_LOOP_INTERVAL_MS / 60000)} min and transcode idle interval is ${Math.round(TRANSCODE_IDLE_LOOP_INTERVAL_MS / 60000)} min.`,
+      action: 'If loop telemetry still shows frequent zero-work scans, increase idle intervals again or introduce persisted work queues so loops stop querying broad candidate sets.'
+    },
+    {
+      priority: 'P2',
+      status: healthEndpoint?.count ? 'watch' : 'open',
+      area: 'api-design',
+      title: 'Split heavy ops reports from generic backend health permanently',
+      evidence: healthEndpoint?.count
+        ? `Observed ${healthEndpoint.count} backend health requests after the lightweight split.`
+        : 'Generic backend health is still a shared entry point for multiple operational checks.',
+      action: 'Keep /api/health minimal, move all expensive storage/accounting reports to explicit super-admin endpoints, and document that contract for future course pages.'
+    }
+  ];
+}
+
+function buildEgressProfileSnapshot() {
+  const metrics = [...egressTelemetryMetrics.values()]
+    .map(item => ({
+      ...item,
+      average_duration_ms: item.count > 0 ? Math.round((item.total_duration_ms / item.count) * 10) / 10 : 0
+    }))
+    .sort((left, right) => {
+      if ((right.total_bytes || 0) !== (left.total_bytes || 0)) return (right.total_bytes || 0) - (left.total_bytes || 0);
+      if ((right.total_duration_ms || 0) !== (left.total_duration_ms || 0)) return (right.total_duration_ms || 0) - (left.total_duration_ms || 0);
+      return (right.count || 0) - (left.count || 0);
+    });
+  const totals = metrics.reduce((acc, item) => {
+    acc.metric_count += 1;
+    acc.operations += Number(item.count || 0);
+    acc.errors += Number(item.error_count || 0);
+    acc.total_duration_ms += Number(item.total_duration_ms || 0);
+    acc.total_bytes += Number(item.total_bytes || 0);
+    acc.total_object_count += Number(item.total_object_count || 0);
+    acc.total_row_count += Number(item.total_row_count || 0);
+    acc.total_page_count += Number(item.total_page_count || 0);
+    return acc;
+  }, {
+    metric_count: 0,
+    operations: 0,
+    errors: 0,
+    total_duration_ms: 0,
+    total_bytes: 0,
+    total_object_count: 0,
+    total_row_count: 0,
+    total_page_count: 0
+  });
+  const snapshot = {
+    started_at: egressTelemetryStartedAt,
+    generated_at: new Date().toISOString(),
+    settings: {
+      public_ops_health_cache_ttl_ms: PORTAL_PUBLIC_OPS_HEALTH_CACHE_TTL_MS,
+      ops_heavy_query_cache_ttl_ms: OPS_HEAVY_QUERY_CACHE_TTL_MS,
+      archive_storage_cache_ttl_ms: ARCHIVE_STORAGE_CACHE_TTL_MS,
+      transcode_loop_interval_ms: TRANSCODE_LOOP_INTERVAL_MS,
+      transcode_idle_loop_interval_ms: TRANSCODE_IDLE_LOOP_INTERVAL_MS,
+      archive_loop_interval_ms: ARCHIVE_LOOP_INTERVAL_MS,
+      archive_idle_loop_interval_ms: ARCHIVE_IDLE_LOOP_INTERVAL_MS
+    },
+    totals,
+    metrics,
+    recent_events: egressTelemetryRecentEvents.slice(0, EGRESS_PROFILE_RECENT_EVENT_LIMIT)
+  };
+  snapshot.throttle_checklist = buildEgressThrottleChecklist(snapshot);
+  return snapshot;
+}
 
 function submissionManifestNotFound(error) {
   const message = String(error?.message || error || '');
@@ -1202,6 +1455,8 @@ async function replaceBufferInPrimaryStorage(storagePath, buffer, contentType) {
 async function readJsonDocumentFromPrimaryStorage(storagePath) {
   const bucket = getSubmissionsStorageBucket();
   if (!bucket) return null;
+  const startedAt = Date.now();
+  let rawBytes = 0;
   try {
     const { data, error } = await bucket.download(storagePath);
     if (error) {
@@ -1209,9 +1464,25 @@ async function readJsonDocumentFromPrimaryStorage(storagePath) {
       throw error;
     }
     const raw = await data.text();
+    rawBytes = Buffer.byteLength(raw, 'utf8');
+    recordEgressMetric('primary-storage', 'json-read', {
+      durationMs: Date.now() - startedAt,
+      bytes: rawBytes,
+      meta: {
+        path: storagePath,
+        found: !!raw.trim()
+      }
+    });
     if (!raw.trim()) return null;
     return JSON.parse(raw);
   } catch (error) {
+    recordEgressMetric('primary-storage', 'json-read', {
+      durationMs: Date.now() - startedAt,
+      bytes: rawBytes,
+      ok: false,
+      error: error.message,
+      meta: { path: storagePath }
+    });
     console.warn(`Primary storage JSON read failed for ${storagePath}:`, error.message);
     return null;
   }
@@ -1219,8 +1490,25 @@ async function readJsonDocumentFromPrimaryStorage(storagePath) {
 
 async function writeJsonDocumentToPrimaryStorage(storagePath, document) {
   const payload = Buffer.from(JSON.stringify(document, null, 2), 'utf8');
-  await replaceBufferInPrimaryStorage(storagePath, payload, contentTypeForExtension('json'));
-  return document;
+  const startedAt = Date.now();
+  try {
+    await replaceBufferInPrimaryStorage(storagePath, payload, contentTypeForExtension('json'));
+    recordEgressMetric('primary-storage', 'json-write', {
+      durationMs: Date.now() - startedAt,
+      bytes: payload.length,
+      meta: { path: storagePath }
+    });
+    return document;
+  } catch (error) {
+    recordEgressMetric('primary-storage', 'json-write', {
+      durationMs: Date.now() - startedAt,
+      bytes: payload.length,
+      ok: false,
+      error: error.message,
+      meta: { path: storagePath }
+    });
+    throw error;
+  }
 }
 
 function buildDefaultSubmissionMediaManifest(submission = {}) {
@@ -1458,9 +1746,29 @@ async function enrichSubmissionMediaRows(rows = []) {
 
 async function downloadRemoteBuffer(sourceUrl) {
   if (!sourceUrl) throw new Error('Remote media url is unavailable');
-  const response = await fetch(sourceUrl);
-  if (!response.ok) throw new Error(`Failed to download media: ${response.status}`);
-  return Buffer.from(await response.arrayBuffer());
+  const startedAt = Date.now();
+  let bytes = 0;
+  try {
+    const response = await fetch(sourceUrl);
+    if (!response.ok) throw new Error(`Failed to download media: ${response.status}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    bytes = buffer.length;
+    recordEgressMetric('network', 'remote-buffer-download', {
+      durationMs: Date.now() - startedAt,
+      bytes,
+      meta: { url: sourceUrl }
+    });
+    return buffer;
+  } catch (error) {
+    recordEgressMetric('network', 'remote-buffer-download', {
+      durationMs: Date.now() - startedAt,
+      bytes,
+      ok: false,
+      error: error.message,
+      meta: { url: sourceUrl }
+    });
+    throw error;
+  }
 }
 
 async function streamBodyToBuffer(body) {
@@ -2458,24 +2766,50 @@ async function buildHotStorageSummaryFromRows(rows = [], storageFiles = []) {
 }
 
 async function buildGlobalHotStorageSummary() {
-  const { data, error } = await supabase
-    .from('submissions')
-    .select('id,title,upload_time,storage_path,image_url,media_type,media_size,activity_id');
-  if (error) throw error;
-  const rows = await Promise.all((data || []).map(async row => {
-    const manifest = normalizeSubmissionMediaManifest(row, await readSubmissionMediaManifest(row.id).catch(() => null));
-    const storagePath = sanitizeStoragePath(row.storage_path) || storagePathFromPublicUrl(row.image_url);
-    return {
-      ...row,
-      storage_path: storagePath,
-      media_type: row.media_type || (isVideoFilePath(storagePath) ? 'video' : 'image'),
-      media_size: Number(row.media_size || 0),
-      thumbnail_path: sanitizeStoragePath(manifest.thumbnail_path),
-      manifest_path: createMediaManifestStoragePath(row.id)
-    };
-  }));
-  const storageFiles = await listTrackedStorageFiles();
-  return buildHotStorageSummaryFromRows(rows, storageFiles);
+  const startedAt = Date.now();
+  let rowCount = 0;
+  let objectCount = 0;
+  let totalBytes = 0;
+  try {
+    const { data, error } = await supabase
+      .from('submissions')
+      .select('id,title,upload_time,storage_path,image_url,media_type,media_size,activity_id');
+    if (error) throw error;
+    const rows = await Promise.all((data || []).map(async row => {
+      const manifest = normalizeSubmissionMediaManifest(row, await readSubmissionMediaManifest(row.id).catch(() => null));
+      const storagePath = sanitizeStoragePath(row.storage_path) || storagePathFromPublicUrl(row.image_url);
+      return {
+        ...row,
+        storage_path: storagePath,
+        media_type: row.media_type || (isVideoFilePath(storagePath) ? 'video' : 'image'),
+        media_size: Number(row.media_size || 0),
+        thumbnail_path: sanitizeStoragePath(manifest.thumbnail_path),
+        manifest_path: createMediaManifestStoragePath(row.id)
+      };
+    }));
+    const storageFiles = await listTrackedStorageFiles();
+    const summary = buildHotStorageSummaryFromRows(rows, storageFiles);
+    rowCount = rows.length;
+    objectCount = storageFiles.length;
+    totalBytes = Number(summary.total_bytes || 0);
+    recordEgressMetric('ops-scan', 'global-hot-storage', {
+      durationMs: Date.now() - startedAt,
+      bytes: totalBytes,
+      rowCount,
+      objectCount
+    });
+    return summary;
+  } catch (error) {
+    recordEgressMetric('ops-scan', 'global-hot-storage', {
+      durationMs: Date.now() - startedAt,
+      bytes: totalBytes,
+      rowCount,
+      objectCount,
+      ok: false,
+      error: error.message
+    });
+    throw error;
+  }
 }
 
 async function getCachedGlobalHotStorageSummary({ forceRefresh = false } = {}) {
@@ -3041,7 +3375,9 @@ async function buildArchiveStorageSummary(provider = getArchiveProviderInfo()) {
     };
   }
 
+  const startedAt = Date.now();
   let continuationToken = null;
+  let pageCount = 0;
   let totalBytes = 0;
   let objectCount = 0;
   let snapshotBytes = 0;
@@ -3053,12 +3389,14 @@ async function buildArchiveStorageSummary(provider = getArchiveProviderInfo()) {
   let largestVideoObjects = [];
   const activityUsageMap = new Map();
 
-  do {
-    const response = await client.send(new ListObjectsV2Command({
-      Bucket: ARCHIVE_S3_BUCKET,
-      MaxKeys: 1000,
-      ContinuationToken: continuationToken || undefined
-    }));
+  try {
+    do {
+      const response = await client.send(new ListObjectsV2Command({
+        Bucket: ARCHIVE_S3_BUCKET,
+        MaxKeys: 1000,
+        ContinuationToken: continuationToken || undefined
+      }));
+      pageCount += 1;
     for (const item of response.Contents || []) {
       const key = String(item.Key || '');
       const size = Number(item.Size || 0);
@@ -3091,84 +3429,110 @@ async function buildArchiveStorageSummary(provider = getArchiveProviderInfo()) {
         }
       }
     }
-    continuationToken = response.IsTruncated ? response.NextContinuationToken : null;
-  } while (continuationToken);
+      continuationToken = response.IsTruncated ? response.NextContinuationToken : null;
+    } while (continuationToken);
 
-  const activityMetadataMap = await loadArchiveActivityMetadata([...activityUsageMap.keys()]);
-  const largestActivityGroups = [...activityUsageMap.values()]
-    .map(group => {
+    const activityMetadataMap = await loadArchiveActivityMetadata([...activityUsageMap.keys()]);
+    const largestActivityGroups = [...activityUsageMap.values()]
+      .map(group => {
+        const activity = activityMetadataMap.get(String(group.activity_id)) || {};
+        const label = String(activity.activity_name || activity.invite_code || group.activity_id || 'archive-activity').trim();
+        const key = [
+          activity.course_name || '',
+          activity.class_name || '',
+          activity.invite_code || ''
+        ].filter(Boolean).join(' | ');
+        return {
+          ...group,
+          course_name: String(activity.course_name || '').trim() || null,
+          class_name: String(activity.class_name || '').trim() || null,
+          activity_name: String(activity.activity_name || '').trim() || null,
+          invite_code: String(activity.invite_code || '').trim() || null,
+          size_bytes: group.total_bytes,
+          label,
+          key
+        };
+      })
+      .sort((left, right) => right.size_bytes - left.size_bytes)
+      .slice(0, 5);
+
+    const courseUsageMap = new Map();
+    for (const group of activityUsageMap.values()) {
       const activity = activityMetadataMap.get(String(group.activity_id)) || {};
-      const label = String(activity.activity_name || activity.invite_code || group.activity_id || 'archive-activity').trim();
-      const key = [
-        activity.course_name || '',
-        activity.class_name || '',
-        activity.invite_code || ''
-      ].filter(Boolean).join(' | ');
-      return {
-        ...group,
-        course_name: String(activity.course_name || '').trim() || null,
-        class_name: String(activity.class_name || '').trim() || null,
-        activity_name: String(activity.activity_name || '').trim() || null,
-        invite_code: String(activity.invite_code || '').trim() || null,
-        size_bytes: group.total_bytes,
-        label,
-        key
+      const rawCourseName = String(activity.course_name || '').trim() || 'Unknown course';
+      const courseKey = normalizePortalCourseName(rawCourseName || 'unknown-course');
+      const current = courseUsageMap.get(courseKey) || {
+        course_name: rawCourseName,
+        total_bytes: 0,
+        size_bytes: 0,
+        object_count: 0,
+        snapshot_bytes: 0,
+        media_bytes: 0,
+        activity_count: 0
       };
-    })
-    .sort((left, right) => right.size_bytes - left.size_bytes)
-    .slice(0, 5);
+      current.total_bytes += group.total_bytes;
+      current.size_bytes = current.total_bytes;
+      current.object_count += group.object_count;
+      current.snapshot_bytes += group.snapshot_bytes;
+      current.media_bytes += group.media_bytes;
+      current.activity_count += 1;
+      courseUsageMap.set(courseKey, current);
+    }
 
-  const courseUsageMap = new Map();
-  for (const group of activityUsageMap.values()) {
-    const activity = activityMetadataMap.get(String(group.activity_id)) || {};
-    const rawCourseName = String(activity.course_name || '').trim() || 'Unknown course';
-    const courseKey = normalizePortalCourseName(rawCourseName || 'unknown-course');
-    const current = courseUsageMap.get(courseKey) || {
-      course_name: rawCourseName,
-      total_bytes: 0,
-      size_bytes: 0,
-      object_count: 0,
-      snapshot_bytes: 0,
-      media_bytes: 0,
-      activity_count: 0
+    const largestCourseGroups = [...courseUsageMap.values()]
+      .map(group => ({
+        ...group,
+        label: group.course_name,
+        key: `${group.activity_count} activities | ${group.object_count} objects`
+      }))
+      .sort((left, right) => right.size_bytes - left.size_bytes)
+      .slice(0, 5);
+
+    const usagePercent = quotaBytes > 0 ? Math.min((totalBytes / quotaBytes) * 100, 999) : 0;
+    const remainingBytes = Math.max(quotaBytes - totalBytes, 0);
+    const summary = {
+      ...base,
+      total_bytes: totalBytes,
+      object_count: objectCount,
+      snapshot_bytes: snapshotBytes,
+      snapshot_count: snapshotCount,
+      media_bytes: mediaBytes,
+      media_count: mediaCount,
+      largest_snapshot_objects: largestSnapshotObjects,
+      largest_media_objects: largestMediaObjects,
+      largest_video_objects: largestVideoObjects,
+      largest_activity_groups: largestActivityGroups,
+      largest_course_groups: largestCourseGroups,
+      usage_percent: Math.round(usagePercent * 10) / 10,
+      remaining_bytes: remainingBytes,
+      warning: buildArchiveStorageWarningSummary(totalBytes, quotaBytes)
     };
-    current.total_bytes += group.total_bytes;
-    current.size_bytes = current.total_bytes;
-    current.object_count += group.object_count;
-    current.snapshot_bytes += group.snapshot_bytes;
-    current.media_bytes += group.media_bytes;
-    current.activity_count += 1;
-    courseUsageMap.set(courseKey, current);
+    recordEgressMetric('archive-s3', 'full-bucket-scan', {
+      durationMs: Date.now() - startedAt,
+      bytes: totalBytes,
+      objectCount,
+      pageCount,
+      meta: {
+        bucket: ARCHIVE_S3_BUCKET,
+        provider: provider.name
+      }
+    });
+    return summary;
+  } catch (error) {
+    recordEgressMetric('archive-s3', 'full-bucket-scan', {
+      durationMs: Date.now() - startedAt,
+      bytes: totalBytes,
+      objectCount,
+      pageCount,
+      ok: false,
+      error: error.message,
+      meta: {
+        bucket: ARCHIVE_S3_BUCKET,
+        provider: provider.name
+      }
+    });
+    throw error;
   }
-
-  const largestCourseGroups = [...courseUsageMap.values()]
-    .map(group => ({
-      ...group,
-      label: group.course_name,
-      key: `${group.activity_count} activities | ${group.object_count} objects`
-    }))
-    .sort((left, right) => right.size_bytes - left.size_bytes)
-    .slice(0, 5);
-
-  const usagePercent = quotaBytes > 0 ? Math.min((totalBytes / quotaBytes) * 100, 999) : 0;
-  const remainingBytes = Math.max(quotaBytes - totalBytes, 0);
-  return {
-    ...base,
-    total_bytes: totalBytes,
-    object_count: objectCount,
-    snapshot_bytes: snapshotBytes,
-    snapshot_count: snapshotCount,
-    media_bytes: mediaBytes,
-    media_count: mediaCount,
-    largest_snapshot_objects: largestSnapshotObjects,
-    largest_media_objects: largestMediaObjects,
-    largest_video_objects: largestVideoObjects,
-    largest_activity_groups: largestActivityGroups,
-    largest_course_groups: largestCourseGroups,
-    usage_percent: Math.round(usagePercent * 10) / 10,
-    remaining_bytes: remainingBytes,
-    warning: buildArchiveStorageWarningSummary(totalBytes, quotaBytes)
-  };
 }
 
 async function getCachedArchiveStorageSummary(options = {}) {
@@ -3205,61 +3569,113 @@ async function getCachedArchiveStorageSummary(options = {}) {
 
 async function uploadLocalFileToArchiveObject(localPath, objectKey, contentType, provider = getArchiveProviderInfo()) {
   if (!provider.configured || !objectKey) return null;
+  const startedAt = Date.now();
+  const fileSize = Number((await fs.promises.stat(localPath).catch(() => null))?.size || 0);
 
   if (provider.name === 'google-drive') {
     const drive = await getGoogleDriveClient();
     if (!drive) return null;
-    const { data } = await drive.files.create({
-      supportsAllDrives: true,
-      requestBody: {
-        name: String(objectKey).replace(/\//g, '__'),
-        parents: [GOOGLE_DRIVE_FOLDER_ID]
-      },
-      media: {
-        mimeType: contentType,
-        body: fs.createReadStream(localPath)
-      },
-      fields: 'id,name,webViewLink,createdTime,size'
-    });
-    if (GOOGLE_DRIVE_PUBLIC_LINKS) {
-      await drive.permissions.create({
-        fileId: data.id,
-        requestBody: { role: 'reader', type: 'anyone' }
+    try {
+      const { data } = await drive.files.create({
+        supportsAllDrives: true,
+        requestBody: {
+          name: String(objectKey).replace(/\//g, '__'),
+          parents: [GOOGLE_DRIVE_FOLDER_ID]
+        },
+        media: {
+          mimeType: contentType,
+          body: fs.createReadStream(localPath)
+        },
+        fields: 'id,name,webViewLink,createdTime,size'
       });
+      if (GOOGLE_DRIVE_PUBLIC_LINKS) {
+        await drive.permissions.create({
+          fileId: data.id,
+          requestBody: { role: 'reader', type: 'anyone' }
+        });
+      }
+      const result = {
+        provider: 'google-drive',
+        key: data.id,
+        name: data.name || null,
+        view_url: data.webViewLink || null,
+        created_at: data.createdTime || new Date().toISOString(),
+        size: Number(data.size || 0),
+        url: GOOGLE_DRIVE_PUBLIC_LINKS ? `https://drive.google.com/uc?export=download&id=${data.id}` : null
+      };
+      recordEgressMetric('archive-object', 'upload', {
+        durationMs: Date.now() - startedAt,
+        bytes: fileSize || Number(data.size || 0),
+        meta: {
+          provider: 'google-drive',
+          key: objectKey,
+          content_type: contentType
+        }
+      });
+      invalidateArchiveStorageSummaryCache();
+      return result;
+    } catch (error) {
+      recordEgressMetric('archive-object', 'upload', {
+        durationMs: Date.now() - startedAt,
+        bytes: fileSize,
+        ok: false,
+        error: error.message,
+        meta: {
+          provider: 'google-drive',
+          key: objectKey,
+          content_type: contentType
+        }
+      });
+      throw error;
     }
-    const result = {
-      provider: 'google-drive',
-      key: data.id,
-      name: data.name || null,
-      view_url: data.webViewLink || null,
-      created_at: data.createdTime || new Date().toISOString(),
-      size: Number(data.size || 0),
-      url: GOOGLE_DRIVE_PUBLIC_LINKS ? `https://drive.google.com/uc?export=download&id=${data.id}` : null
-    };
-    invalidateArchiveStorageSummaryCache();
-    return result;
   }
 
   if (provider.name === 's3') {
     const client = getS3ArchiveClient();
     if (!client) return null;
-    await client.send(new PutObjectCommand({
-      Bucket: ARCHIVE_S3_BUCKET,
-      Key: objectKey,
-      Body: fs.createReadStream(localPath),
-      ContentType: contentType
-    }));
-    const result = {
-      provider: 's3',
-      key: objectKey,
-      name: path.posix.basename(objectKey),
-      view_url: buildS3ArchivePublicUrl(objectKey),
-      created_at: new Date().toISOString(),
-      size: 0,
-      url: buildS3ArchivePublicUrl(objectKey)
-    };
-    invalidateArchiveStorageSummaryCache();
-    return result;
+    try {
+      await client.send(new PutObjectCommand({
+        Bucket: ARCHIVE_S3_BUCKET,
+        Key: objectKey,
+        Body: fs.createReadStream(localPath),
+        ContentType: contentType
+      }));
+      const result = {
+        provider: 's3',
+        key: objectKey,
+        name: path.posix.basename(objectKey),
+        view_url: buildS3ArchivePublicUrl(objectKey),
+        created_at: new Date().toISOString(),
+        size: 0,
+        url: buildS3ArchivePublicUrl(objectKey)
+      };
+      recordEgressMetric('archive-object', 'upload', {
+        durationMs: Date.now() - startedAt,
+        bytes: fileSize,
+        meta: {
+          provider: 's3',
+          key: objectKey,
+          bucket: ARCHIVE_S3_BUCKET,
+          content_type: contentType
+        }
+      });
+      invalidateArchiveStorageSummaryCache();
+      return result;
+    } catch (error) {
+      recordEgressMetric('archive-object', 'upload', {
+        durationMs: Date.now() - startedAt,
+        bytes: fileSize,
+        ok: false,
+        error: error.message,
+        meta: {
+          provider: 's3',
+          key: objectKey,
+          bucket: ARCHIVE_S3_BUCKET,
+          content_type: contentType
+        }
+      });
+      throw error;
+    }
   }
 
   return null;
@@ -3277,6 +3693,7 @@ async function deleteArchiveObject(archiveKey, providerName, options = {}) {
   if (providerName === 'google-drive') {
     const drive = await getGoogleDriveClient();
     if (!drive) return false;
+    const startedAt = Date.now();
     if (permanent) {
       await drive.files.delete({ fileId: archiveKey, supportsAllDrives: true }).catch(() => {});
     } else {
@@ -3286,6 +3703,14 @@ async function deleteArchiveObject(archiveKey, providerName, options = {}) {
         requestBody: { trashed: true }
       }).catch(() => {});
     }
+    recordEgressMetric('archive-object', 'delete', {
+      durationMs: Date.now() - startedAt,
+      meta: {
+        provider: 'google-drive',
+        key: archiveKey,
+        permanent
+      }
+    });
     invalidateArchiveStorageSummaryCache();
     return true;
   }
@@ -3293,7 +3718,17 @@ async function deleteArchiveObject(archiveKey, providerName, options = {}) {
     if (!permanent) return false;
     const client = getS3ArchiveClient();
     if (!client) return false;
+    const startedAt = Date.now();
     await client.send(new DeleteObjectCommand({ Bucket: ARCHIVE_S3_BUCKET, Key: archiveKey })).catch(() => {});
+    recordEgressMetric('archive-object', 'delete', {
+      durationMs: Date.now() - startedAt,
+      meta: {
+        provider: 's3',
+        key: archiveKey,
+        bucket: ARCHIVE_S3_BUCKET,
+        permanent
+      }
+    });
     invalidateArchiveStorageSummaryCache();
     return true;
   }
@@ -3310,16 +3745,35 @@ async function downloadArchiveObjectToTemp({ archiveKey, archiveUrl, providerNam
   } else if (providerName === 'google-drive' && archiveKey) {
     const drive = await getGoogleDriveClient();
     if (!drive) throw new Error('Google Drive archive client is not configured');
+    const startedAt = Date.now();
     const { data } = await drive.files.get(
       { fileId: archiveKey, alt: 'media', supportsAllDrives: true },
       { responseType: 'arraybuffer' }
     );
     buffer = Buffer.from(data);
+    recordEgressMetric('archive-object', 'download', {
+      durationMs: Date.now() - startedAt,
+      bytes: buffer.length,
+      meta: {
+        provider: 'google-drive',
+        key: archiveKey
+      }
+    });
   } else if (providerName === 's3' && archiveKey) {
     const client = getS3ArchiveClient();
     if (!client) throw new Error('S3 archive client is not configured');
+    const startedAt = Date.now();
     const result = await client.send(new GetObjectCommand({ Bucket: ARCHIVE_S3_BUCKET, Key: archiveKey }));
     buffer = await streamBodyToBuffer(result.Body);
+    recordEgressMetric('archive-object', 'download', {
+      durationMs: Date.now() - startedAt,
+      bytes: buffer.length,
+      meta: {
+        provider: 's3',
+        key: archiveKey,
+        bucket: ARCHIVE_S3_BUCKET
+      }
+    });
   }
 
   if (!buffer?.length) throw new Error('Archive object is unavailable');
@@ -3349,6 +3803,7 @@ async function listArchiveSnapshots(activityId, { limit = 6, force = false, prov
     const drive = await getGoogleDriveClient();
     if (!drive) throw new Error('Google Drive archive client is not configured');
     const namePrefix = prefix.replace(/\//g, '__');
+    const startedAt = Date.now();
     const { data } = await drive.files.list({
       supportsAllDrives: true,
       includeItemsFromAllDrives: true,
@@ -3366,9 +3821,20 @@ async function listArchiveSnapshots(activityId, { limit = 6, force = false, prov
       url: GOOGLE_DRIVE_PUBLIC_LINKS ? `https://drive.google.com/uc?export=download&id=${file.id}` : null,
       view_url: file.webViewLink || null
     }));
+    recordEgressMetric('archive-object', 'list-snapshots', {
+      durationMs: Date.now() - startedAt,
+      bytes: items.reduce((sum, item) => sum + Number(item.size || 0), 0),
+      objectCount: items.length,
+      pageCount: 1,
+      meta: {
+        provider: 'google-drive',
+        activity_id: safeActivity
+      }
+    });
   } else if (provider.name === 's3') {
     const client = getS3ArchiveClient();
     if (!client) throw new Error('S3 archive client is not configured');
+    const startedAt = Date.now();
     const { Contents = [] } = await client.send(new ListObjectsV2Command({
       Bucket: ARCHIVE_S3_BUCKET,
       Prefix: prefix,
@@ -3387,6 +3853,17 @@ async function listArchiveSnapshots(activityId, { limit = 6, force = false, prov
         url: buildS3ArchivePublicUrl(file.Key || ''),
         view_url: buildS3ArchivePublicUrl(file.Key || '')
       }));
+    recordEgressMetric('archive-object', 'list-snapshots', {
+      durationMs: Date.now() - startedAt,
+      bytes: items.reduce((sum, item) => sum + Number(item.size || 0), 0),
+      objectCount: items.length,
+      pageCount: 1,
+      meta: {
+        provider: 's3',
+        bucket: ARCHIVE_S3_BUCKET,
+        activity_id: safeActivity
+      }
+    });
   }
 
   const payload = { provider, items, cache_ttl_ms: OPS_SNAPSHOT_LIST_TTL_MS };
@@ -4413,8 +4890,10 @@ async function processPendingVideoTranscodes({ activityId = null, limit = TRANSC
   }
   videoTranscodeLoopBusy = true;
   recordTaskRunStart(taskState, { origin: source, activityId });
+  const startedAt = Date.now();
   let processed = 0;
   let queued = 0;
+  let candidateCount = 0;
   try {
     let query = supabase.from('submissions')
       .select('id,activity_id,title,image_url,storage_path,media_type,media_size,upload_time,status')
@@ -4423,6 +4902,7 @@ async function processPendingVideoTranscodes({ activityId = null, limit = TRANSC
     if (activityId) query = query.eq('activity_id', activityId);
     const { data, error } = await query;
     if (error) throw error;
+    candidateCount = Array.isArray(data) ? data.length : 0;
     for (const submission of (data || [])) {
       if (processed >= limit) break;
       if (!ignoreMinAge) {
@@ -4452,9 +4932,33 @@ async function processPendingVideoTranscodes({ activityId = null, limit = TRANSC
       processed += 1;
     }
     const result = { processed, queued, skipped: false };
+    recordEgressMetric('loop', 'transcode-scan', {
+      durationMs: Date.now() - startedAt,
+      rowCount: candidateCount,
+      objectCount: processed,
+      meta: {
+        source,
+        activity_id: activityId,
+        queued,
+        ignore_min_age: !!ignoreMinAge
+      }
+    });
     recordTaskRunSuccess(taskState, result, { origin: source, activityId });
     return result;
   } catch (error) {
+    recordEgressMetric('loop', 'transcode-scan', {
+      durationMs: Date.now() - startedAt,
+      rowCount: candidateCount,
+      objectCount: processed,
+      ok: false,
+      error: error.message,
+      meta: {
+        source,
+        activity_id: activityId,
+        queued,
+        ignore_min_age: !!ignoreMinAge
+      }
+    });
     recordTaskRunFailure(taskState, error, { origin: source, activityId });
     throw error;
   } finally {
@@ -4504,10 +5008,15 @@ async function processArchiveQueue({ activityId = null, limit = ARCHIVE_BATCH_SI
   }
   archiveLoopBusy = true;
   recordTaskRunStart(taskState, { origin: source, activityId });
+  const startedAt = Date.now();
   let processed = 0;
   let queued = 0;
+  let candidateCount = 0;
+  let selectedProviderName = baseProvider.name;
+  let earliestCutoffValue = null;
   try {
     const writableProvider = await assertArchiveProviderWritable(baseProvider);
+    selectedProviderName = writableProvider.name;
     let activityConfigMap = new Map();
     let activityConfigQuery = supabase.from('activities')
       .select('id,archive_after_days,archive_delete_primary_after_success');
@@ -4546,6 +5055,7 @@ async function processArchiveQueue({ activityId = null, limit = ARCHIVE_BATCH_SI
       .filter(value => Number.isFinite(value) && value >= 0)
       .reduce((min, value) => Math.min(min, value), Number.POSITIVE_INFINITY);
     const earliestCutoffIso = Number.isFinite(minAfterDays) ? getArchiveCutoffIso(minAfterDays) : null;
+    earliestCutoffValue = earliestCutoffIso;
     if (!earliestCutoffIso) {
       const result = {
         processed: 0,
@@ -4565,6 +5075,7 @@ async function processArchiveQueue({ activityId = null, limit = ARCHIVE_BATCH_SI
     if (activityId) query = query.eq('activity_id', activityId);
     const { data, error } = await query;
     if (error) throw error;
+    candidateCount = Array.isArray(data) ? data.length : 0;
 
     for (const submission of (data || [])) {
       if (processed >= limit) break;
@@ -4657,9 +5168,35 @@ async function processArchiveQueue({ activityId = null, limit = ARCHIVE_BATCH_SI
         }
         : writableProvider
     };
+    recordEgressMetric('loop', 'archive-scan', {
+      durationMs: Date.now() - startedAt,
+      rowCount: candidateCount,
+      objectCount: processed,
+      meta: {
+        source,
+        activity_id: activityId,
+        queued,
+        provider: selectedProviderName,
+        earliest_cutoff: earliestCutoffValue
+      }
+    });
     recordTaskRunSuccess(taskState, result, { origin: source, activityId });
     return result;
   } catch (error) {
+    recordEgressMetric('loop', 'archive-scan', {
+      durationMs: Date.now() - startedAt,
+      rowCount: candidateCount,
+      objectCount: processed,
+      ok: false,
+      error: error.message,
+      meta: {
+        source,
+        activity_id: activityId,
+        queued,
+        provider: selectedProviderName,
+        earliest_cutoff: earliestCutoffValue
+      }
+    });
     recordTaskRunFailure(taskState, error, { origin: source, activityId });
     throw error;
   } finally {
@@ -4723,27 +5260,50 @@ function startArchiveLoop() {
 }
 
 async function listStorageFolder(folder) {
+  const startedAt = Date.now();
   const files = [];
   let offset = 0;
+  let pageCount = 0;
   const bucket = getSubmissionsStorageBucket();
   if (!bucket) throw new Error('Supabase storage bucket is not configured');
-  while (true) {
-    const { data, error } = await bucket.list(folder, {
-      limit: 100,
-      offset,
-      sortBy: { column: 'name', order: 'asc' }
+  try {
+    while (true) {
+      const { data, error } = await bucket.list(folder, {
+        limit: 100,
+        offset,
+        sortBy: { column: 'name', order: 'asc' }
+      });
+      pageCount += 1;
+      if (error) throw error;
+      if (!Array.isArray(data) || data.length === 0) break;
+      files.push(...data.map(item => ({
+        ...item,
+        folder,
+        path: `${folder}/${item.name}`
+      })));
+      if (data.length < 100) break;
+      offset += data.length;
+    }
+    recordEgressMetric('primary-storage', 'list-folder', {
+      durationMs: Date.now() - startedAt,
+      bytes: files.reduce((sum, file) => sum + Number(file.metadata?.size || 0), 0),
+      objectCount: files.length,
+      pageCount,
+      meta: { folder }
     });
-    if (error) throw error;
-    if (!Array.isArray(data) || data.length === 0) break;
-    files.push(...data.map(item => ({
-      ...item,
-      folder,
-      path: `${folder}/${item.name}`
-    })));
-    if (data.length < 100) break;
-    offset += data.length;
+    return files;
+  } catch (error) {
+    recordEgressMetric('primary-storage', 'list-folder', {
+      durationMs: Date.now() - startedAt,
+      bytes: files.reduce((sum, file) => sum + Number(file.metadata?.size || 0), 0),
+      objectCount: files.length,
+      pageCount,
+      ok: false,
+      error: error.message,
+      meta: { folder }
+    });
+    throw error;
   }
-  return files;
 }
 
 async function listTrackedStorageFiles() {
@@ -4753,17 +5313,19 @@ async function listTrackedStorageFiles() {
 }
 
 async function buildStorageSummary(activityId) {
-  const [{ data: activitySubs, error }, { data: allSubs, error: allSubsError }] = await Promise.all([
-    supabase.from('submissions')
-    .select('id,title,upload_time,storage_path,image_url,media_type,media_size')
-      .eq('activity_id', activityId),
-    supabase.from('submissions')
-      .select('id,title,upload_time,storage_path,image_url,media_type,media_size,activity_id')
-  ]);
-  if (error) throw error;
-  if (allSubsError) throw allSubsError;
+  const startedAt = Date.now();
+  try {
+    const [{ data: activitySubs, error }, { data: allSubs, error: allSubsError }] = await Promise.all([
+      supabase.from('submissions')
+      .select('id,title,upload_time,storage_path,image_url,media_type,media_size')
+        .eq('activity_id', activityId),
+      supabase.from('submissions')
+        .select('id,title,upload_time,storage_path,image_url,media_type,media_size,activity_id')
+    ]);
+    if (error) throw error;
+    if (allSubsError) throw allSubsError;
 
-  const activityRows = await Promise.all((activitySubs || []).map(async row => {
+    const activityRows = await Promise.all((activitySubs || []).map(async row => {
     const manifest = normalizeSubmissionMediaManifest(row, await readSubmissionMediaManifest(row.id).catch(() => null));
     const storagePath = sanitizeStoragePath(row.storage_path) || storagePathFromPublicUrl(row.image_url);
     const size = Number(row.media_size) || 0;
@@ -4779,9 +5341,9 @@ async function buildStorageSummary(activityId) {
     };
   }));
 
-  const referenced = activityRows.filter(row => row.storage_path);
+    const referenced = activityRows.filter(row => row.storage_path);
 
-  const allRows = await Promise.all((allSubs || []).map(async row => {
+    const allRows = await Promise.all((allSubs || []).map(async row => {
     const manifest = normalizeSubmissionMediaManifest(row, await readSubmissionMediaManifest(row.id).catch(() => null));
     const storagePath = sanitizeStoragePath(row.storage_path) || storagePathFromPublicUrl(row.image_url);
     return {
@@ -4794,34 +5356,34 @@ async function buildStorageSummary(activityId) {
     };
   }));
 
-  const globallyReferencedPathSet = new Set(
-    allRows.flatMap(row => {
-      const storagePath = sanitizeStoragePath(row.storage_path) || storagePathFromPublicUrl(row.image_url);
-      const derivedThumbPath = storagePath
-        ? createSidecarStoragePath(storagePath, MEDIA_THUMBNAIL_FOLDER, (row.media_type || (isVideoFilePath(storagePath) ? 'video' : 'image')) === 'video' ? 'jpg' : 'webp')
-        : null;
-      return [
-        storagePath,
-        derivedThumbPath,
-        sanitizeStoragePath(row.thumbnail_path),
-        createMediaManifestStoragePath(row.id)
-      ].filter(Boolean);
-    })
-  );
-  const storageFiles = await listTrackedStorageFiles();
-  const trackedPathSet = new Set(storageFiles.map(file => file.path).filter(Boolean));
-  const trashFiles = storageFiles.filter(file => String(file.path || '').startsWith(`${STORAGE_TRASH_FOLDER}/`));
-  const now = Date.now();
-  const referencedBytes = referenced.reduce((sum, row) => sum + (row.media_size || 0), 0);
-  const storageBytes = storageFiles.reduce((sum, row) => sum + Number(row.metadata?.size || 0), 0);
-  const thumbCount = activityRows.filter(row => row.thumbnail_path).length;
-  const manifestCount = activityRows.filter(row => row.manifest_path).length;
-  const thumbBytes = storageFiles
-    .filter(file => activityRows.some(row => row.thumbnail_path === file.path))
-    .reduce((sum, file) => sum + Number(file.metadata?.size || 0), 0);
-  const manifestBytes = storageFiles
-    .filter(file => activityRows.some(row => row.manifest_path === file.path))
-    .reduce((sum, file) => sum + Number(file.metadata?.size || 0), 0);
+    const globallyReferencedPathSet = new Set(
+      allRows.flatMap(row => {
+        const storagePath = sanitizeStoragePath(row.storage_path) || storagePathFromPublicUrl(row.image_url);
+        const derivedThumbPath = storagePath
+          ? createSidecarStoragePath(storagePath, MEDIA_THUMBNAIL_FOLDER, (row.media_type || (isVideoFilePath(storagePath) ? 'video' : 'image')) === 'video' ? 'jpg' : 'webp')
+          : null;
+        return [
+          storagePath,
+          derivedThumbPath,
+          sanitizeStoragePath(row.thumbnail_path),
+          createMediaManifestStoragePath(row.id)
+        ].filter(Boolean);
+      })
+    );
+    const storageFiles = await listTrackedStorageFiles();
+    const trackedPathSet = new Set(storageFiles.map(file => file.path).filter(Boolean));
+    const trashFiles = storageFiles.filter(file => String(file.path || '').startsWith(`${STORAGE_TRASH_FOLDER}/`));
+    const now = Date.now();
+    const referencedBytes = referenced.reduce((sum, row) => sum + (row.media_size || 0), 0);
+    const storageBytes = storageFiles.reduce((sum, row) => sum + Number(row.metadata?.size || 0), 0);
+    const thumbCount = activityRows.filter(row => row.thumbnail_path).length;
+    const manifestCount = activityRows.filter(row => row.manifest_path).length;
+    const thumbBytes = storageFiles
+      .filter(file => activityRows.some(row => row.thumbnail_path === file.path))
+      .reduce((sum, file) => sum + Number(file.metadata?.size || 0), 0);
+    const manifestBytes = storageFiles
+      .filter(file => activityRows.some(row => row.manifest_path === file.path))
+      .reduce((sum, file) => sum + Number(file.metadata?.size || 0), 0);
 
   const orphanFiles = storageFiles.filter(file => {
     if (String(file.path || '').startsWith(`${STORAGE_TRASH_FOLDER}/`)) return false;
@@ -4965,7 +5527,23 @@ async function buildStorageSummary(activityId) {
     enumerable: false,
     configurable: false
   });
+  recordEgressMetric('ops-scan', 'activity-storage', {
+    durationMs: Date.now() - startedAt,
+    bytes: storageBytes,
+    rowCount: allRows.length,
+    objectCount: storageFiles.length,
+    meta: { activity_id: activityId }
+  });
   return summary;
+  } catch (error) {
+    recordEgressMetric('ops-scan', 'activity-storage', {
+      durationMs: Date.now() - startedAt,
+      ok: false,
+      error: error.message,
+      meta: { activity_id: activityId }
+    });
+    throw error;
+  }
 }
 
 async function getCachedStorageSummary(activityId, options = {}) {
@@ -5449,6 +6027,7 @@ app.get(['/economics', '/economics/', '/econ', '/econ/'], (_req, res) => {
 });
 
 app.get('/api/ops/public-health', async (_req, res) => {
+  const startedAt = Date.now();
   try {
     const payload = await getCachedOpsValue(
       publicOpsHealthCache,
@@ -5456,8 +6035,17 @@ app.get('/api/ops/public-health', async (_req, res) => {
       PORTAL_PUBLIC_OPS_HEALTH_CACHE_TTL_MS,
       buildPublicOpsHealthPayload
     );
+    recordEgressMetric('endpoint', 'public-ops-health', {
+      durationMs: Date.now() - startedAt,
+      meta: { ok: !!payload?.ok }
+    });
     res.json(payload);
   } catch (error) {
+    recordEgressMetric('endpoint', 'public-ops-health', {
+      durationMs: Date.now() - startedAt,
+      ok: false,
+      error: error.message
+    });
     res.status(503).json({
       ok: false,
       service: 'classshow',
@@ -5468,6 +6056,7 @@ app.get('/api/ops/public-health', async (_req, res) => {
 
 app.get('/api/health', async (req, res) => {
   const startedAt = Date.now();
+  const includeFullDetails = shouldIncludeFullHealthDetails(req);
   const healthClient = supabase || supabaseMaintenance;
   const health = {
     ok: true,
@@ -5516,7 +6105,7 @@ app.get('/api/health', async (req, res) => {
     }
   }
 
-  if (shouldIncludeFullHealthDetails(req)) {
+  if (includeFullDetails) {
     health.archive_storage = await getCachedArchiveStorageSummary().catch(error => ({
       provider_name: health.archive_provider?.name || 'none',
       configured: !!health.archive_provider?.configured,
@@ -5531,6 +6120,13 @@ app.get('/api/health', async (req, res) => {
 
   health.ok = !!health.supabase_ok;
   health.latency_ms = Date.now() - startedAt;
+  recordEgressMetric('endpoint', 'health', {
+    durationMs: health.latency_ms,
+    meta: {
+      ok: health.ok,
+      full_details: includeFullDetails
+    }
+  });
   res.status(health.ok ? 200 : 503).json(health);
 });
 
@@ -5594,6 +6190,10 @@ app.get('/api/super-admin/overview', superAdminAuth, async (_req, res) => {
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
+});
+
+app.get('/api/super-admin/egress-profile', superAdminAuth, (_req, res) => {
+  res.json(buildEgressProfileSnapshot());
 });
 
 app.post('/api/super-admin/archive-run', superAdminAuth, async (req, res) => {
