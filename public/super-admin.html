@@ -261,6 +261,72 @@
       </div>
     </section>
 
+    <section class="course-portal archive-storage-shell" id="superEgressSection">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">RENDER EGRESS</div>
+          <h2>后端外联流量画像</h2>
+          <p>这里追踪 Render 侧最费外联的类别、最近一次重流量操作，以及当前建议优先节流的环节。先看谁在扫全桶、谁在拉远程媒体、谁在频繁列举主存储。</p>
+        </div>
+        <div class="course-card-actions">
+          <button class="btn btn-secondary btn-sm" type="button" onclick="refreshEgressProfile()">刷新画像</button>
+        </div>
+      </div>
+      <div class="archive-ops-grid">
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>画像总览</strong>
+            <span class="storage-meta-chip" id="superEgressStatusChip">Loading</span>
+          </div>
+          <div class="mini-stat-grid" id="superEgressStats">
+            <div class="mini-stat"><strong>-</strong><span>操作数</span></div>
+          </div>
+          <div class="storage-meta-row" id="superEgressMeta"></div>
+          <div id="superEgressNote" class="archive-gauge-note">Waiting for Render egress telemetry...</div>
+        </div>
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>当前节流基线</strong>
+            <span class="storage-meta-chip">cache / loop / storage</span>
+          </div>
+          <div class="backup-detail-list" id="superEgressSettingsList">
+            <div class="archive-empty-state">Loading egress settings...</div>
+          </div>
+        </div>
+      </div>
+      <div class="archive-ops-grid" style="margin-top:18px;">
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>高外联类别榜</strong>
+            <span class="storage-meta-chip">按字节 / 时长 / 次数排序</span>
+          </div>
+          <div class="archive-suggestion-list" id="superEgressMetricList">
+            <div class="archive-empty-state">Loading top egress categories...</div>
+          </div>
+        </div>
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>最近事件流</strong>
+            <span class="storage-meta-chip">最近 8 条</span>
+          </div>
+          <div class="backup-detail-list" id="superEgressRecentList">
+            <div class="archive-empty-state">Loading recent outbound events...</div>
+          </div>
+        </div>
+      </div>
+      <div class="archive-ops-grid" style="margin-top:18px;">
+        <div class="archive-ops-card">
+          <div class="archive-ops-head">
+            <strong>节流清单</strong>
+            <span class="storage-meta-chip">P1 / P2 prioritized</span>
+          </div>
+          <div class="archive-suggestion-list" id="superEgressChecklistList">
+            <div class="archive-empty-state">Loading throttle checklist...</div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <section class="course-identity-note">
       <strong>接入原则：</strong>
       总门户统一课程入口，课程专页负责课程叙事与玩法；实名身份、邀请码隔离、作品上传、学习时长、评分反馈和运维能力继续复用 ClassShow 公共底座。
@@ -487,8 +553,10 @@
     }
 
     let overview = null;
+    let egressProfile = null;
     let superStatus = null;
     let backupOnlyRefreshBusy = false;
+    let egressRefreshBusy = false;
     let superArchiveTrendWindowDays = 7;
     const registryEditorState = {
       mode: 'create',
@@ -539,7 +607,15 @@
       const token = sessionStorage.getItem('superAdminToken');
       if (!token) return;
       try {
-        overview = await api('/super-admin/overview');
+        const [overviewResult, egressResult] = await Promise.allSettled([
+          api('/super-admin/overview'),
+          api('/super-admin/egress-profile')
+        ]);
+        if (overviewResult.status !== 'fulfilled') {
+          throw overviewResult.reason;
+        }
+        overview = overviewResult.value;
+        egressProfile = egressResult.status === 'fulfilled' ? egressResult.value : null;
         document.getElementById('superAdminLoginPanel').style.display = 'none';
         renderOverviewBlocks();
       } catch (error) {
@@ -559,6 +635,7 @@
       renderArchiveStorageGauge();
       renderArchiveStorageTrend();
       renderArchiveOpsPanel();
+      renderEgressProfilePanel();
       renderLocalBackupStatusPanel();
       renderProjectBackupStatusPanel();
       renderProjectSecretsBackupStatusPanel();
@@ -576,6 +653,7 @@
       renderArchiveStorageGauge();
       renderArchiveStorageTrend();
       renderArchiveOpsPanel();
+      renderEgressProfilePanel();
       renderLocalBackupStatusPanel();
       renderProjectBackupStatusPanel();
       renderProjectSecretsBackupStatusPanel();
@@ -603,6 +681,21 @@
           btn.disabled = false;
           btn.textContent = originalText;
         }
+      }
+    }
+
+    async function refreshEgressProfile(showToast = true) {
+      const token = sessionStorage.getItem('superAdminToken');
+      if (!token || egressRefreshBusy) return;
+      egressRefreshBusy = true;
+      try {
+        egressProfile = await api(`/super-admin/egress-profile?_=${Date.now()}`);
+        renderEgressProfilePanel();
+        if (showToast) toast('Egress profile refreshed.', 'success');
+      } catch (error) {
+        if (showToast) toast('Failed to refresh egress profile: ' + error.message, 'error');
+      } finally {
+        egressRefreshBusy = false;
       }
     }
 
@@ -1070,6 +1163,189 @@
         renderArchiveRankGroup('Largest media Top 5', largestMedia, 'No media objects are stored in R2 yet.'),
         renderArchiveRankGroup('Largest snapshots Top 5', largestSnapshots, 'No activity snapshots are stored in R2 yet.')
       ].join('');
+    }
+
+    function formatDurationCompact(ms) {
+      const value = Math.max(0, Number(ms || 0));
+      if (!value) return '0 ms';
+      if (value < 1000) return `${Math.round(value)} ms`;
+      const seconds = value / 1000;
+      if (seconds < 60) return `${seconds.toFixed(seconds >= 10 ? 1 : 2)} s`;
+      const minutes = seconds / 60;
+      if (minutes < 60) return `${minutes.toFixed(minutes >= 10 ? 1 : 2)} min`;
+      const hours = minutes / 60;
+      return `${hours.toFixed(hours >= 10 ? 1 : 2)} h`;
+    }
+
+    function resolveEgressLevel(profile = null) {
+      const totals = profile?.totals || {};
+      const metrics = Array.isArray(profile?.metrics) ? profile.metrics : [];
+      if (!profile) return 'warning';
+      if (Number(totals.errors || 0) > 0) return 'warning';
+      const heavyMetric = metrics.find(item =>
+        (item.category === 'archive-s3' && item.action === 'full-bucket-scan')
+        || (item.category === 'ops-scan' && (item.action === 'global-hot-storage' || item.action === 'activity-storage'))
+      );
+      if (heavyMetric?.count) return 'attention';
+      return 'healthy';
+    }
+
+    function egressLevelLabel(level) {
+      if (level === 'healthy') return 'Healthy';
+      if (level === 'attention') return 'Watch';
+      if (level === 'critical') return 'Critical';
+      return 'Warning';
+    }
+
+    function egressLevelColor(level) {
+      if (level === 'critical') return '#ef4444';
+      if (level === 'warning' || level === 'attention') return '#f59e0b';
+      return '#10b981';
+    }
+
+    function formatEgressMeta(meta = {}) {
+      const entries = Object.entries(meta || {}).filter(([, value]) => value !== null && value !== undefined && value !== '');
+      return entries.map(([key, value]) => `${key}=${Array.isArray(value) ? value.join(',') : value}`).join(' | ');
+    }
+
+    function renderEgressMetricCard(metric, index) {
+      const metaLine = formatEgressMeta(metric?.sample_meta || {});
+      return `
+        <article class="archive-suggestion-card level-${escapeHtml(metric?.error_count ? 'warning' : 'info')}">
+          <div class="archive-group-header">
+            <strong>#${index + 1} ${escapeHtml(`${metric?.category || 'unknown'} / ${metric?.action || 'unknown'}`)}</strong>
+            <span class="storage-meta-chip">${escapeHtml(formatBytes(metric?.total_bytes || 0))}</span>
+          </div>
+          <p>
+            count ${escapeHtml(metric?.count || 0)}
+            | avg ${escapeHtml(formatDurationCompact(metric?.average_duration_ms || 0))}
+            | max ${escapeHtml(formatDurationCompact(metric?.max_duration_ms || 0))}
+            | rows ${escapeHtml(metric?.total_row_count || 0)}
+            | objects ${escapeHtml(metric?.total_object_count || 0)}
+            | pages ${escapeHtml(metric?.total_page_count || 0)}
+          </p>
+          ${metaLine ? `<p>${escapeHtml(metaLine)}</p>` : ''}
+        </article>
+      `;
+    }
+
+    function renderEgressRecentEventRow(event = {}) {
+      const metaLine = formatEgressMeta(event.meta || {});
+      const label = `${event.category || 'unknown'} / ${event.action || 'unknown'}`;
+      const sizeLine = [
+        event.bytes ? formatBytes(event.bytes) : '',
+        event.row_count ? `${event.row_count} rows` : '',
+        event.object_count ? `${event.object_count} objects` : '',
+        event.page_count ? `${event.page_count} pages` : ''
+      ].filter(Boolean).join(' | ');
+      return `
+        <div class="backup-detail-row">
+          <div>
+            <strong>${escapeHtml(label)}</strong>
+            <small>
+              ${escapeHtml(formatDateTime(event.at, { withSeconds: true }) || event.at || '-')}
+              | ${escapeHtml(formatDurationCompact(event.duration_ms || 0))}
+              ${sizeLine ? ` | ${escapeHtml(sizeLine)}` : ''}
+              ${metaLine ? ` | ${escapeHtml(metaLine)}` : ''}
+              ${event.error ? ` | error=${escapeHtml(event.error)}` : ''}
+            </small>
+          </div>
+          <span class="storage-meta-chip" style="color:${event.ok === false ? '#ef4444' : '#10b981'}">${escapeHtml(event.ok === false ? 'Fail' : 'OK')}</span>
+        </div>
+      `;
+    }
+
+    function renderEgressChecklistCard(item = {}) {
+      return `
+        <article class="archive-suggestion-card level-${escapeHtml(item.status === 'done' ? 'info' : item.status === 'watch' ? 'warning' : 'critical')}">
+          <strong>${escapeHtml(`${item.priority || 'P1'} | ${item.title || 'Throttle item'}`)}</strong>
+          <p>${escapeHtml(item.evidence || '')}</p>
+          ${item.action ? `<p>${escapeHtml(item.action)}</p>` : ''}
+        </article>
+      `;
+    }
+
+    function renderEgressProfilePanel() {
+      const statusEl = document.getElementById('superEgressStatusChip');
+      const statsEl = document.getElementById('superEgressStats');
+      const metaEl = document.getElementById('superEgressMeta');
+      const noteEl = document.getElementById('superEgressNote');
+      const settingsEl = document.getElementById('superEgressSettingsList');
+      const metricListEl = document.getElementById('superEgressMetricList');
+      const recentListEl = document.getElementById('superEgressRecentList');
+      const checklistEl = document.getElementById('superEgressChecklistList');
+      if (!statusEl || !statsEl || !metaEl || !noteEl || !settingsEl || !metricListEl || !recentListEl || !checklistEl) return;
+
+      if (!egressProfile) {
+        statusEl.textContent = 'Unavailable';
+        statusEl.style.color = '#f59e0b';
+        statsEl.innerHTML = '<div class="mini-stat"><strong>-</strong><span>Operations</span></div>';
+        metaEl.innerHTML = '<span class="storage-meta-chip">/api/super-admin/egress-profile not loaded yet</span>';
+        noteEl.className = 'archive-gauge-note warning-warning';
+        noteEl.textContent = 'Load the super-admin overview first, then this panel will show Render-side outbound telemetry.';
+        settingsEl.innerHTML = '<div class="archive-empty-state">Egress settings are not loaded yet.</div>';
+        metricListEl.innerHTML = '<div class="archive-empty-state">No egress metrics yet.</div>';
+        recentListEl.innerHTML = '<div class="archive-empty-state">No recent outbound events yet.</div>';
+        checklistEl.innerHTML = '<div class="archive-empty-state">No throttle checklist available yet.</div>';
+        return;
+      }
+
+      const totals = egressProfile.totals || {};
+      const metrics = Array.isArray(egressProfile.metrics) ? egressProfile.metrics : [];
+      const recentEvents = Array.isArray(egressProfile.recent_events) ? egressProfile.recent_events.slice(0, 8) : [];
+      const checklist = Array.isArray(egressProfile.throttle_checklist) ? egressProfile.throttle_checklist : [];
+      const settings = egressProfile.settings || {};
+      const level = resolveEgressLevel(egressProfile);
+      const topMetric = metrics[0] || null;
+
+      statusEl.textContent = egressLevelLabel(level);
+      statusEl.style.color = egressLevelColor(level);
+      statsEl.innerHTML = [
+        ['Operations', Number(totals.operations || 0)],
+        ['Errors', Number(totals.errors || 0)],
+        ['Bytes', formatBytes(totals.total_bytes || 0)],
+        ['Duration', formatDurationCompact(totals.total_duration_ms || 0)]
+      ].map(item => `
+        <div class="mini-stat">
+          <strong>${escapeHtml(item[1])}</strong>
+          <span>${escapeHtml(item[0])}</span>
+        </div>
+      `).join('');
+      metaEl.innerHTML = [
+        egressProfile.started_at ? `Telemetry since ${formatDateTime(egressProfile.started_at, { withSeconds: true }) || egressProfile.started_at}` : '',
+        egressProfile.generated_at ? `Snapshot ${formatDateTime(egressProfile.generated_at, { withSeconds: true }) || egressProfile.generated_at}` : '',
+        `Metric groups ${Number(totals.metric_count || metrics.length || 0)}`,
+        topMetric ? `Top ${topMetric.category}/${topMetric.action}` : ''
+      ].filter(Boolean).map(text => `<span class="storage-meta-chip">${escapeHtml(text)}</span>`).join('');
+      noteEl.className = `archive-gauge-note warning-${level === 'healthy' ? 'healthy' : 'warning'}`;
+      noteEl.textContent = topMetric
+        ? `Current top outbound category is ${topMetric.category}/${topMetric.action}, totaling ${formatBytes(topMetric.total_bytes || 0)} across ${Number(topMetric.count || 0)} calls.`
+        : 'Telemetry is active, but no outbound-heavy category has been observed yet.';
+
+      settingsEl.innerHTML = [
+        ['Public ops cache TTL', formatDurationCompact(settings.public_ops_health_cache_ttl_ms || 0)],
+        ['Heavy query cache TTL', formatDurationCompact(settings.ops_heavy_query_cache_ttl_ms || 0)],
+        ['Archive storage cache TTL', formatDurationCompact(settings.archive_storage_cache_ttl_ms || 0)],
+        ['Transcode idle loop', formatDurationCompact(settings.transcode_idle_loop_interval_ms || 0)],
+        ['Archive idle loop', formatDurationCompact(settings.archive_idle_loop_interval_ms || 0)]
+      ].map(item => `
+        <div class="backup-detail-row">
+          <div>
+            <strong>${escapeHtml(item[0])}</strong>
+            <small>${escapeHtml(item[1])}</small>
+          </div>
+        </div>
+      `).join('');
+
+      metricListEl.innerHTML = metrics.length
+        ? metrics.slice(0, 8).map(renderEgressMetricCard).join('')
+        : '<div class="archive-empty-state">No egress metrics recorded yet.</div>';
+      recentListEl.innerHTML = recentEvents.length
+        ? recentEvents.map(renderEgressRecentEventRow).join('')
+        : '<div class="archive-empty-state">No recent outbound events recorded yet.</div>';
+      checklistEl.innerHTML = checklist.length
+        ? checklist.map(renderEgressChecklistCard).join('')
+        : '<div class="archive-empty-state">No throttle checklist was returned.</div>';
     }
 
     function renderLocalBackupStatusPanel() {
