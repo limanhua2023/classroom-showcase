@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>学生入口 - ClassShow</title>
+  <link rel="stylesheet" href="css/main.css">
+</head>
+<body>
+  <div class="page-center">
+    <div class="auth-box">
+      <h1>学生<span>入口</span></h1>
+      <p class="subtitle">只需填写姓名、学号、邀请码，即可进入对应课程学习。</p>
+
+      <form onsubmit="studentEnter(event)">
+        <div class="form-group">
+          <label>姓名 *</label>
+          <input type="text" id="name" placeholder="请输入姓名" required>
+        </div>
+
+        <div class="form-group">
+          <label>学号 *</label>
+          <input type="text" id="studentId" placeholder="请输入学号" required>
+        </div>
+
+        <div class="form-group">
+          <label>邀请码 *</label>
+          <input type="text" id="inviteCode" placeholder="请输入邀请码" required autocomplete="off">
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-block btn-lg">进入课程学习</button>
+      </form>
+
+      <p class="form-hint" style="margin-top:14px;text-align:center;">
+        系统会根据邀请码自动绑定课程，并记录该学生的学习时长、学习进度和学习身份。
+      </p>
+    </div>
+  </div>
+
+  <script>window.CLASSSHOW_SURFACE = 'student';</script>
+  <script src="js/deployment-config.js"></script>
+  <script src="js/app-config.js"></script>
+  <script src="js/api.js"></script>
+  <script>
+    const nextTarget = resolveNextTarget(new URLSearchParams(location.search).get('next'));
+    const codePrefill = (new URLSearchParams(location.search).get('code') || '').trim();
+
+    const existing = getSession();
+    if (existing) {
+      document.getElementById('name').value = existing.name || '';
+      document.getElementById('studentId').value = existing.student_id || '';
+    }
+
+    if (codePrefill) {
+      document.getElementById('inviteCode').value = codePrefill;
+    } else {
+      try {
+        const raw = sessionStorage.getItem('classshow_activity');
+        const activity = raw ? JSON.parse(raw) : null;
+        if (activity && activity.invite_code) {
+          document.getElementById('inviteCode').value = activity.invite_code;
+        }
+      } catch {}
+    }
+
+    async function studentEnter(event) {
+      event.preventDefault();
+      const name = document.getElementById('name').value.trim();
+      const studentId = document.getElementById('studentId').value.trim();
+      const inviteCode = document.getElementById('inviteCode').value.trim().toUpperCase();
+      if (!name || !studentId || !inviteCode) {
+        return toast('请完整填写姓名、学号和邀请码', 'error');
+      }
+
+      try {
+        const activity = await api('/activities/code/' + encodeURIComponent(inviteCode));
+        if (activity.pin_required) {
+          return toast('当前活动启用了 PIN 登录，这个精简学生入口暂不支持，请联系老师关闭 PIN 登录。', 'error');
+        }
+
+        const targetPath = await resolveEntryPath(activity);
+        setActivityId(activity.id);
+        sessionStorage.setItem('classshow_activity', JSON.stringify(activity));
+        sessionStorage.removeItem('classshow_guest');
+        setActivityEntryPath(targetPath);
+        setPostLoginTarget(targetPath);
+
+        const user = await api('/users', {
+          method: 'POST',
+          body: JSON.stringify({
+            activity_id: activity.id,
+            name,
+            student_id: studentId,
+            class_name: String(activity.class_name || '').trim(),
+            group_name: null,
+            pin: ''
+          })
+        });
+
+        setSession(user);
+        sessionStorage.removeItem('classshow_guest');
+        clearPostLoginTarget();
+        location.href = targetPath;
+      } catch (error) {
+        toast('进入失败：' + error.message, 'error');
+      }
+    }
+
+    async function resolveEntryPath(activity) {
+      const explicitNext = normalizeRelativeStudentPath(nextTarget);
+      if (explicitNext) return explicitNext;
+
+      const fromRegistry = await resolveCourseEntryPath(activity?.course_name || '');
+      const normalizedRegistry = normalizeRelativeStudentPath(fromRegistry);
+      if (normalizedRegistry) return normalizedRegistry;
+
+      const courseName = String(activity?.course_name || '').trim();
+      if (courseName) {
+        return '/course.html?course=' + encodeURIComponent(courseName);
+      }
+      return '/economics';
+    }
+
+    function resolveNextTarget(rawValue) {
+      if (!rawValue) return '';
+      try {
+        const nextUrl = new URL(String(rawValue), location.origin);
+        if (nextUrl.origin !== location.origin) return '';
+        return `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}` || '';
+      } catch {
+        return '';
+      }
+    }
+
+    function normalizeRelativeStudentPath(path) {
+      if (!path) return '';
+      try {
+        const nextUrl = new URL(String(path), location.origin);
+        if (nextUrl.origin !== location.origin) return '';
+        return `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}` || '';
+      } catch {
+        return '';
+      }
+    }
+  </script>
+</body>
+</html>

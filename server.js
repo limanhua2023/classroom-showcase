@@ -6017,6 +6017,9 @@ app.use(express.static(path.join(__dirname, 'public')));
 app.get(['/portal', '/portal/'], (_req, res) => {
   res.redirect(302, '/index.html');
 });
+app.get(['/student', '/student/'], (_req, res) => {
+  res.redirect(302, '/student-entry.html');
+});
 app.get(['/teacher', '/teacher/'], (_req, res) => {
   res.redirect(302, '/teacher-login.html');
 });

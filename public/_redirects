@@ -1,4 +1,6 @@
 # Student-side friendly aliases
+/student /student-entry.html 302
+/student/ /student-entry.html 302
 /portal /index.html 302
 /economics /courses/economics-fundamentals/ 302
 /economics/ /courses/economics-fundamentals/ 302

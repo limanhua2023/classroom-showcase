@@ -341,8 +341,8 @@
     const helperCopy = access.courseMatched === false && access.activityCourseName
       ? `当前会话绑定的是《${escapeText(access.activityCourseName)}》活动，请从正确课程入口重新进入。`
       : access.activityReady
-        ? '当前活动已绑定成功，请先完成学生实名登录，再进入课程学习。'
-        : '请先输入本课程的邀请码，再完成学生登录。';
+        ? '当前活动已绑定成功。请从学生入口继续，以学生身份进入课程学习。'
+        : '请先在学生入口填写姓名、学号和邀请码，再进入经济学基础课程学习。';
 
     gate.innerHTML = `
       <div class="classshow-econ-auth-card">
@@ -355,9 +355,6 @@
         </div>
         <div class="classshow-econ-auth-actions">
           <a class="primary" href="${escapeText(primaryAction.href)}">${escapeText(primaryAction.label)}</a>
-          <a class="secondary" href="${escapeText(studentUrl(`/course.html?course=${encodeURIComponent(COURSE_NAME)}`))}">返回课程总页</a>
-          <a class="secondary" href="${escapeText(studentUrl('/index.html'))}">去总门户</a>
-          <a class="secondary" href="${escapeText(backendUrl('/teacher-login.html'))}">教师入口</a>
         </div>
       </div>
     `;
@@ -365,15 +362,15 @@
   }
 
   function buildPrimaryAccessAction(access) {
-    if (access.activityReady && access.courseMatched !== false) {
-      return {
-        href: studentUrl(`/student-register.html?next=${encodeURIComponent(currentStudentPath())}`),
-        label: access.isGuest ? '退出访客并实名登录' : '继续学生登录'
-      };
-    }
+    const inviteCode = String(runtime.context.activity && runtime.context.activity.invite_code || '').trim();
+    const search = new URLSearchParams();
+    search.set('next', currentStudentPath());
+    if (inviteCode) search.set('code', inviteCode);
     return {
-      href: studentUrl(`/course.html?course=${encodeURIComponent(COURSE_NAME)}`),
-      label: '输入邀请码进入'
+      href: studentUrl(`/student?${search.toString()}`),
+      label: access.activityReady && access.courseMatched !== false
+        ? (access.isGuest ? '退出访客并以学生身份进入' : '以学生身份继续进入')
+        : '前往学生入口'
     };
   }
 
@@ -474,8 +471,12 @@
     const identityEl = document.getElementById('classshowEconIdentity');
     const chipsEl = document.getElementById('classshowEconChips');
     const syncEl = document.getElementById('classshowEconSync');
+    const portalBtn = document.getElementById('classshowEconPortalBtn');
+    const indexBtn = document.getElementById('classshowEconIndexBtn');
+    const modularBtn = document.getElementById('classshowEconModularBtn');
+    const themeBtn = document.getElementById('classshowEconThemeBtn');
     const teacherBtn = document.getElementById('classshowEconTeacherBtn');
-    if (!identityEl || !chipsEl || !syncEl || !teacherBtn) return;
+    if (!identityEl || !chipsEl || !syncEl || !portalBtn || !indexBtn || !modularBtn || !themeBtn || !teacherBtn) return;
 
     const activityName = runtime.context.activity && runtime.context.activity.activity_name
       ? runtime.context.activity.activity_name
@@ -512,6 +513,10 @@
     chipsEl.innerHTML = chips.join('');
     syncEl.textContent = `进度同步：${runtime.syncLabel}`;
     syncEl.className = `classshow-econ-bridge-sync level-${runtime.syncLevel}`;
+    const studentOnlyView = hasLoggedInStudent() && !hasPreviewAccess();
+    portalBtn.style.display = studentOnlyView ? 'none' : '';
+    indexBtn.style.display = studentOnlyView ? 'none' : '';
+    modularBtn.style.display = studentOnlyView ? 'none' : '';
     teacherBtn.style.display = hasTeacherSession() ? '' : 'none';
   }
 
@@ -573,12 +578,16 @@
     }
   }
 
-  function updateBridgeShell() {
+function updateBridgeShell() {
     const identityEl = document.getElementById('classshowEconIdentity');
     const chipsEl = document.getElementById('classshowEconChips');
     const syncEl = document.getElementById('classshowEconSync');
+    const portalBtn = document.getElementById('classshowEconPortalBtn');
+    const indexBtn = document.getElementById('classshowEconIndexBtn');
+    const modularBtn = document.getElementById('classshowEconModularBtn');
+    const themeBtn = document.getElementById('classshowEconThemeBtn');
     const teacherBtn = document.getElementById('classshowEconTeacherBtn');
-    if (!identityEl || !chipsEl || !syncEl || !teacherBtn) return;
+    if (!identityEl || !chipsEl || !syncEl || !portalBtn || !indexBtn || !modularBtn || !themeBtn || !teacherBtn) return;
 
     const activityName = runtime.context.activity && runtime.context.activity.activity_name
       ? runtime.context.activity.activity_name
@@ -620,6 +629,10 @@
     chipsEl.innerHTML = chips.join('');
     syncEl.textContent = `进度同步：${runtime.syncLabel}`;
     syncEl.className = `classshow-econ-bridge-sync level-${runtime.syncLevel}`;
+    const studentOnlyView = hasLoggedInStudent() && !hasPreviewAccess();
+    portalBtn.style.display = studentOnlyView ? 'none' : '';
+    indexBtn.style.display = studentOnlyView ? 'none' : '';
+    modularBtn.style.display = studentOnlyView ? 'none' : '';
     teacherBtn.style.display = hasTeacherSession() ? '' : 'none';
   }
 
