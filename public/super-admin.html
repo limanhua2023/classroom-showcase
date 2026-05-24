@@ -16,11 +16,27 @@
         R2 存储预警
         <span id="superArchiveAlertBadge" class="archive-alert-badge">!</span>
       </button>
-      <button class="btn btn-secondary btn-sm" onclick="logoutSuperAdmin()">退出超级管理</button>
+      <button id="superAdminLogoutButton" class="btn btn-secondary btn-sm" type="button" onclick="logoutSuperAdmin()" hidden>退出超级管理</button>
     </div>
   </header>
 
-  <main class="container">
+  <div class="page-center" id="superAdminAuthShell">
+    <div class="auth-box">
+      <a href="index.html" class="back-link" id="superAdminBackLink">返回首页</a>
+      <h1>超级管理员<span>后台</span></h1>
+      <p class="subtitle">输入超级管理员密码后，才能进入统一课程管理控制台。这里不需要邀请码。</p>
+      <div class="form-group">
+        <label>超级管理员密码</label>
+        <input id="superAdminPassword" type="password" placeholder="输入超级管理员密码">
+      </div>
+      <button class="btn btn-primary btn-block btn-lg" type="button" onclick="loginSuperAdmin()">登录控制台</button>
+      <div class="auth-divider">管理状态</div>
+      <p class="subtitle" id="superAdminStatusHint">正在检查服务端配置...</p>
+      <button class="btn btn-secondary btn-block" style="margin-top:8px;" onclick="location.href='teacher-login.html'">教师后台入口</button>
+    </div>
+  </div>
+
+  <main class="container" id="superAdminConsoleShell" hidden>
     <section class="course-hero">
       <div class="course-hero-copy">
         <div class="brand-kicker">SUPER ADMIN CONSOLE</div>
@@ -36,17 +52,6 @@
         <div><strong id="sumRegistered">0</strong><span>已注册</span></div>
         <div><strong id="sumReady">0</strong><span>已就绪</span></div>
         <div><strong id="sumActivities">0</strong><span>活动</span></div>
-      </div>
-    </section>
-
-    <section class="course-entry-panel" id="superAdminLoginPanel">
-      <div>
-        <strong>超级管理员登录</strong>
-        <span id="superAdminStatusHint">正在检查服务端配置...</span>
-      </div>
-      <div class="course-entry-actions">
-        <input id="superAdminPassword" type="password" placeholder="输入超级管理员密码">
-        <button class="btn btn-primary btn-sm" onclick="loginSuperAdmin()">登录</button>
       </div>
     </section>
 
@@ -547,9 +552,22 @@
         return false;
       };
     }
+    const superAdminBackLink = document.getElementById('superAdminBackLink');
+    if (superAdminBackLink) {
+      superAdminBackLink.onclick = () => {
+        navigateToStudent('/index.html');
+        return false;
+      };
+    }
     const superAdminTopButtons = document.querySelectorAll('.topbar-right .btn');
     if (superAdminTopButtons[0]) {
       superAdminTopButtons[0].onclick = () => navigateToStudent('/index.html');
+    }
+    const superAdminPasswordInput = document.getElementById('superAdminPassword');
+    if (superAdminPasswordInput) {
+      superAdminPasswordInput.addEventListener('keydown', event => {
+        if (event.key === 'Enter') loginSuperAdmin();
+      });
     }
 
     let overview = null;
@@ -570,10 +588,24 @@
     init();
 
     async function init() {
+      setSuperAdminAuthState(false);
       await loadStatus();
       if (sessionStorage.getItem('superAdminToken')) {
         await loadOverview();
+      } else if (superAdminPasswordInput) {
+        superAdminPasswordInput.focus();
       }
+    }
+
+    function setSuperAdminAuthState(isAuthenticated) {
+      const authShell = document.getElementById('superAdminAuthShell');
+      const consoleShell = document.getElementById('superAdminConsoleShell');
+      const logoutButton = document.getElementById('superAdminLogoutButton');
+      const archiveAlertButton = document.getElementById('superArchiveAlertButton');
+      if (authShell) authShell.hidden = !!isAuthenticated;
+      if (consoleShell) consoleShell.hidden = !isAuthenticated;
+      if (logoutButton) logoutButton.hidden = !isAuthenticated;
+      if (archiveAlertButton && !isAuthenticated) archiveAlertButton.hidden = true;
     }
 
     async function loadStatus() {
@@ -596,6 +628,7 @@
           body: JSON.stringify({ password })
         });
         sessionStorage.setItem('superAdminToken', result.token);
+        document.getElementById('superAdminPassword').value = '';
         toast('超级管理员登录成功', 'success');
         await loadOverview();
       } catch (error) {
@@ -616,11 +649,12 @@
         }
         overview = overviewResult.value;
         egressProfile = egressResult.status === 'fulfilled' ? egressResult.value : null;
-        document.getElementById('superAdminLoginPanel').style.display = 'none';
+        setSuperAdminAuthState(true);
         renderOverviewBlocks();
       } catch (error) {
         if (/Unauthorized|Invalid super admin auth/i.test(error.message)) {
           sessionStorage.removeItem('superAdminToken');
+          setSuperAdminAuthState(false);
         }
         toast('加载统一课程管理页失败：' + error.message, 'error');
       }
@@ -2427,6 +2461,7 @@
     }
 
     function logoutSuperAdmin() {
+      setSuperAdminAuthState(false);
       sessionStorage.removeItem('superAdminToken');
       toast('已退出超级管理员', 'success');
       location.reload();
