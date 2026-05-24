@@ -7797,11 +7797,22 @@ function filterChapterCards(chId, forceFilter) {
 }
 
 // ── 渲染模块 ──
+function hasModuleChapterContent(chId) {
+  return !!(C[String(chId)] || C[chId]);
+}
+
+function isModuleCardReady(moduleMeta) {
+  if (moduleMeta.ready !== false) return true;
+  return Array.isArray(moduleMeta.chs)
+    && moduleMeta.chs.length > 0
+    && moduleMeta.chs.every(hasModuleChapterContent);
+}
+
 function rMods() {
   document.getElementById('mod-grid').innerHTML = MODULES.map(m => {
     const dn = m.chs.filter(id => isDone(id, 'view')).length;
     const pct = Math.round(dn / m.chs.length * 100);
-    if (!m.ready) {
+    if (!isModuleCardReady(m)) {
       return `
         <div class="mod-card mod-card-soon" style="border-color:${m.color}18; opacity:0.5; cursor:default;">
           <div class="mod-icon" style="filter:grayscale(0.5)">${m.icon}</div>
