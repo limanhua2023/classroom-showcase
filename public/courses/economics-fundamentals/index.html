@@ -6135,6 +6135,8 @@ window.EconCourseApp = {
       const app = EconCourseApp;
       const container = document.getElementById('current-task-panel');
       if (!container) return;
+      container.innerHTML = '';
+      return;
 
       const mode = app.state.learningMode || 'classroom';
       const chId = app.state.currentChapter || 1;
