@@ -100,9 +100,16 @@
       document.getElementById('guestCode').value = normalized;
     }
 
+    const hasPortalOpsViewer = !!sessionStorage.getItem('superAdminToken');
+    const PORTAL_OPS_HEALTH_POLL_MS = 10 * 60 * 1000;
+
     loadPortalCourses();
-    loadPortalOpsHealth();
-    setInterval(loadPortalOpsHealth, 60000);
+    if (hasPortalOpsViewer) {
+      loadPortalOpsHealth();
+      setInterval(() => {
+        if (document.visibilityState === 'visible') loadPortalOpsHealth();
+      }, PORTAL_OPS_HEALTH_POLL_MS);
+    }
 
     function switchLoginTab(tab) {
       const isStudent = tab === 'student';
@@ -229,7 +236,7 @@
 
     async function loadPortalOpsHealth() {
       try {
-        const health = await api('/health');
+        const health = await api('/ops/public-health');
         renderPortalOpsHealth(health);
       } catch (error) {
         renderPortalOpsHealth({ error: error.message || 'request failed' });

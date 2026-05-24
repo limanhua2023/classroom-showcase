@@ -89,7 +89,7 @@ async function runAudit(studentBaseUrl, backendBaseUrl) {
       headers: { Origin: studentBaseUrl }
     });
     const allowOrigin = response.headers.get('access-control-allow-origin') || '';
-    const ok = response.ok && (allowOrigin === studentBaseUrl || allowOrigin === '*');
+    const ok = response.ok && allowOrigin === studentBaseUrl;
     add('Backend CORS allows student origin', ok, `HTTP ${response.status}; allow-origin=${allowOrigin || '-'}`);
   } catch (error) {
     add('Backend CORS allows student origin', false, error.message);

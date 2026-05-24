@@ -27,6 +27,7 @@ const DEFAULT_STUDENT_PUBLIC_ORIGIN = 'https://classshow-student.pages.dev';
 const CORS_ALLOWED_HEADERS = ['Content-Type', 'x-user-token', 'x-teacher-auth', 'x-super-admin-auth'];
 const CORS_EXPOSED_HEADERS = ['Content-Disposition'];
 const CORS_ALLOWED_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'];
+const PORTAL_PUBLIC_OPS_HEALTH_CACHE_TTL_MS = Math.max(60 * 1000, Number(process.env.PORTAL_PUBLIC_OPS_HEALTH_CACHE_TTL_MS || 10 * 60 * 1000));
 
 // APP_SECRET must be stable in production; otherwise all signed student/teacher tokens
 // become invalid after each deploy/restart.
@@ -75,11 +76,13 @@ const IMAGE_THUMB_QUALITY = 76;
 const VIDEO_THUMB_MAX_WIDTH = 960;
 const VIDEO_THUMB_CAPTURE_SECOND = 0.8;
 const TRANSCODE_LOOP_INTERVAL_MS = Math.max(30 * 1000, Number(process.env.TRANSCODE_LOOP_INTERVAL_MS || 2 * 60 * 1000));
+const TRANSCODE_IDLE_LOOP_INTERVAL_MS = Math.max(TRANSCODE_LOOP_INTERVAL_MS, Number(process.env.TRANSCODE_IDLE_LOOP_INTERVAL_MS || 15 * 60 * 1000));
 const TRANSCODE_BATCH_SIZE = Math.max(1, Number(process.env.TRANSCODE_BATCH_SIZE || 1));
 const TRANSCODE_MAX_ATTEMPTS = 3;
 const TRANSCODE_MIN_AGE_MS = Math.max(0, Number(process.env.TRANSCODE_MIN_AGE_MS || 90 * 1000));
 const ASYNC_VIDEO_TRANSCODE = !/^false$/i.test(String(process.env.ASYNC_VIDEO_TRANSCODE || 'true'));
 const ARCHIVE_LOOP_INTERVAL_MS = 15 * 60 * 1000;
+const ARCHIVE_IDLE_LOOP_INTERVAL_MS = Math.max(ARCHIVE_LOOP_INTERVAL_MS, Number(process.env.ARCHIVE_IDLE_LOOP_INTERVAL_MS || 60 * 60 * 1000));
 const ARCHIVE_BATCH_SIZE = 2;
 const ARCHIVE_MAX_ATTEMPTS = 3;
 const DEFAULT_ARCHIVE_AFTER_DAYS = Math.max(0, Number(process.env.ARCHIVE_AFTER_DAYS || 30));
@@ -170,7 +173,12 @@ function isAllowedCorsOrigin(origin = '') {
 
 const corsOptions = {
   origin(origin, callback) {
-    callback(null, isAllowedCorsOrigin(origin));
+    if (!origin) {
+      callback(null, false);
+      return;
+    }
+    const normalized = normalizeOrigin(origin);
+    callback(null, isAllowedCorsOrigin(normalized) ? normalized : false);
   },
   methods: CORS_ALLOWED_METHODS,
   allowedHeaders: CORS_ALLOWED_HEADERS,
@@ -1069,6 +1077,7 @@ let googleDriveDestinationInfoPromise = null;
 let googleDriveDestinationInfoExpiresAt = 0;
 let s3ArchiveClient = null;
 const archiveSnapshotListCache = new Map();
+const publicOpsHealthCache = new Map();
 const backgroundTaskState = {
   transcode: createTaskHealthState('transcode', TRANSCODE_LOOP_INTERVAL_MS, ASYNC_VIDEO_TRANSCODE),
   archive: createTaskHealthState('archive', ARCHIVE_LOOP_INTERVAL_MS, getArchiveProviderInfo().configured)
@@ -4455,14 +4464,22 @@ async function processPendingVideoTranscodes({ activityId = null, limit = TRANSC
 
 function startVideoTranscodeLoop() {
   if (!ASYNC_VIDEO_TRANSCODE) return;
-  processPendingVideoTranscodes({ source: 'loop' }).catch(err => {
+  const run = async () => {
+    let delayMs = TRANSCODE_LOOP_INTERVAL_MS;
+    try {
+      const result = await processPendingVideoTranscodes({ source: 'loop' });
+      if (!result?.queued && !result?.processed) {
+        delayMs = TRANSCODE_IDLE_LOOP_INTERVAL_MS;
+      }
+    } catch (err) {
+      console.warn('Video transcode loop failed:', err.message);
+    } finally {
+      setTimeout(run, delayMs).unref?.();
+    }
+  };
+  run().catch(err => {
     console.warn('Initial video transcode loop failed:', err.message);
   });
-  setInterval(() => {
-    processPendingVideoTranscodes({ source: 'loop' }).catch(err => {
-      console.warn('Video transcode loop failed:', err.message);
-    });
-  }, TRANSCODE_LOOP_INTERVAL_MS).unref?.();
 }
 
 function getArchiveCutoffIso(afterDays = DEFAULT_ARCHIVE_AFTER_DAYS) {
@@ -4491,25 +4508,18 @@ async function processArchiveQueue({ activityId = null, limit = ARCHIVE_BATCH_SI
   let queued = 0;
   try {
     const writableProvider = await assertArchiveProviderWritable(baseProvider);
-    let query = supabase.from('submissions')
-      .select('id,activity_id,title,image_url,storage_path,media_type,media_size,upload_time,status')
-      .order('upload_time', { ascending: true });
-    if (activityId) query = query.eq('activity_id', activityId);
-    const { data, error } = await query;
-    if (error) throw error;
-
-    const activityIds = [...new Set((data || []).map(item => String(item.activity_id || '')).filter(Boolean))];
     let activityConfigMap = new Map();
-    if (activityIds.length) {
-      let activityConfigResult = await supabase.from('activities')
-        .select('id,archive_after_days,archive_delete_primary_after_success')
-        .in('id', activityIds);
-      if (activityConfigResult.error && /archive_after_days|archive_delete_primary_after_success/i.test(activityConfigResult.error.message || '')) {
-        activityConfigResult = await supabase.from('activities').select('id').in('id', activityIds);
-      }
-      if (activityConfigResult.error) throw activityConfigResult.error;
-      activityConfigMap = new Map((activityConfigResult.data || []).map(row => [String(row.id), row]));
+    let activityConfigQuery = supabase.from('activities')
+      .select('id,archive_after_days,archive_delete_primary_after_success');
+    if (activityId) activityConfigQuery = activityConfigQuery.eq('id', activityId);
+    let activityConfigResult = await activityConfigQuery;
+    if (activityConfigResult.error && /archive_after_days|archive_delete_primary_after_success/i.test(activityConfigResult.error.message || '')) {
+      activityConfigQuery = supabase.from('activities').select('id');
+      if (activityId) activityConfigQuery = activityConfigQuery.eq('id', activityId);
+      activityConfigResult = await activityConfigQuery;
     }
+    if (activityConfigResult.error) throw activityConfigResult.error;
+    activityConfigMap = new Map((activityConfigResult.data || []).map(row => [String(row.id), row]));
 
     const activityPolicy = activityId ? resolveActivityArchivePolicy(activityConfigMap.get(String(activityId))) : null;
     if (activityPolicy && !getArchiveCutoffIso(activityPolicy.after_days)) {
@@ -4527,6 +4537,34 @@ async function processArchiveQueue({ activityId = null, limit = ARCHIVE_BATCH_SI
       recordTaskRunSuccess(taskState, result, { origin: source, activityId });
       return result;
     }
+
+    const candidatePolicies = activityId
+      ? [activityPolicy].filter(Boolean)
+      : [...activityConfigMap.values()].map(row => resolveActivityArchivePolicy(row));
+    const minAfterDays = candidatePolicies
+      .map(policy => Number(policy?.after_days))
+      .filter(value => Number.isFinite(value) && value >= 0)
+      .reduce((min, value) => Math.min(min, value), Number.POSITIVE_INFINITY);
+    const earliestCutoffIso = Number.isFinite(minAfterDays) ? getArchiveCutoffIso(minAfterDays) : null;
+    if (!earliestCutoffIso) {
+      const result = {
+        processed: 0,
+        queued: 0,
+        skipped: true,
+        reason: 'no-eligible-policy',
+        provider: activityPolicy || writableProvider
+      };
+      recordTaskRunSuccess(taskState, result, { origin: source, activityId });
+      return result;
+    }
+
+    let query = supabase.from('submissions')
+      .select('id,activity_id,title,image_url,storage_path,media_type,media_size,upload_time,status')
+      .lt('upload_time', earliestCutoffIso)
+      .order('upload_time', { ascending: true });
+    if (activityId) query = query.eq('activity_id', activityId);
+    const { data, error } = await query;
+    if (error) throw error;
 
     for (const submission of (data || [])) {
       if (processed >= limit) break;
@@ -4666,14 +4704,22 @@ async function processArchiveQueueBatch({ activityIds = [], source = 'manual-bat
 function startArchiveLoop() {
   const provider = getArchiveProviderInfo();
   if (!provider.configured) return;
-  processArchiveQueue({ source: 'loop' }).catch(err => {
+  const run = async () => {
+    let delayMs = ARCHIVE_LOOP_INTERVAL_MS;
+    try {
+      const result = await processArchiveQueue({ source: 'loop' });
+      if (!result?.queued && !result?.processed) {
+        delayMs = ARCHIVE_IDLE_LOOP_INTERVAL_MS;
+      }
+    } catch (err) {
+      console.warn('Archive loop failed:', err.message);
+    } finally {
+      setTimeout(run, delayMs).unref?.();
+    }
+  };
+  run().catch(err => {
     console.warn('Initial archive loop failed:', err.message);
   });
-  setInterval(() => {
-    processArchiveQueue({ source: 'loop' }).catch(err => {
-      console.warn('Archive loop failed:', err.message);
-    });
-  }, ARCHIVE_LOOP_INTERVAL_MS).unref?.();
 }
 
 async function listStorageFolder(folder) {
@@ -5324,6 +5370,58 @@ function buildTaskOpsOverview() {
   };
 }
 
+function shouldIncludeFullHealthDetails(req) {
+  const raw = String(req?.query?.details || req?.query?.full || '').trim().toLowerCase();
+  return raw === 'full' || raw === 'true' || raw === '1';
+}
+
+async function buildPublicOpsHealthPayload() {
+  const localBackupStatus = await getCachedLocalBackupStatus().catch(error => ({
+    status: 'error',
+    warning: { level: 'critical', message: String(error?.message || error || 'Local backup status unavailable') },
+    error: String(error?.message || error || 'Local backup status unavailable')
+  }));
+  const projectBackupStatus = await getCachedProjectBackupStatus().catch(error => ({
+    status: 'error',
+    warning: { level: 'critical', message: String(error?.message || error || 'Project backup status unavailable') },
+    error: String(error?.message || error || 'Project backup status unavailable')
+  }));
+  const projectSecretsBackupStatus = await getCachedProjectSecretsBackupStatus().catch(error => ({
+    status: 'error',
+    warning: { level: 'critical', message: String(error?.message || error || 'Project secrets backup status unavailable') },
+    error: String(error?.message || error || 'Project secrets backup status unavailable')
+  }));
+
+  const levels = [
+    localBackupStatus?.warning?.level || localBackupStatus?.status || 'warning',
+    projectBackupStatus?.warning?.level || projectBackupStatus?.status || 'warning',
+    projectSecretsBackupStatus?.warning?.level || projectSecretsBackupStatus?.status || 'warning'
+  ].map(level => {
+    const normalized = String(level || '').toLowerCase();
+    if (normalized === 'healthy' || normalized === 'ok') return 'healthy';
+    if (normalized === 'critical' || normalized === 'error') return 'critical';
+    return 'warning';
+  });
+
+  const aggregateLevel = levels.includes('critical')
+    ? 'critical'
+    : levels.every(level => level === 'healthy')
+      ? 'healthy'
+      : 'warning';
+
+  return {
+    ok: true,
+    service: 'classshow',
+    version: process.env.RENDER_GIT_COMMIT || process.env.npm_package_version || 'local',
+    environment: process.env.RENDER ? 'render' : (process.env.NODE_ENV || 'development'),
+    time: new Date().toISOString(),
+    aggregate_level: aggregateLevel,
+    local_backup_status: localBackupStatus,
+    project_backup_status: projectBackupStatus,
+    project_secrets_backup_status: projectSecretsBackupStatus
+  };
+}
+
 startTempUploadCleanupLoop();
 startVideoTranscodeLoop();
 startArchiveLoop();
@@ -5350,7 +5448,25 @@ app.get(['/economics', '/economics/', '/econ', '/econ/'], (_req, res) => {
   res.redirect(302, '/courses/economics-fundamentals/');
 });
 
-app.get('/api/health', async (_req, res) => {
+app.get('/api/ops/public-health', async (_req, res) => {
+  try {
+    const payload = await getCachedOpsValue(
+      publicOpsHealthCache,
+      'public-ops-health',
+      PORTAL_PUBLIC_OPS_HEALTH_CACHE_TTL_MS,
+      buildPublicOpsHealthPayload
+    );
+    res.json(payload);
+  } catch (error) {
+    res.status(503).json({
+      ok: false,
+      service: 'classshow',
+      error: String(error?.message || error || 'Public ops health unavailable')
+    });
+  }
+});
+
+app.get('/api/health', async (req, res) => {
   const startedAt = Date.now();
   const healthClient = supabase || supabaseMaintenance;
   const health = {
@@ -5368,16 +5484,6 @@ app.get('/api/health', async (_req, res) => {
     archive_provider: getArchiveProviderInfo(),
     tasks: buildTaskOpsOverview()
   };
-  health.archive_storage = await getCachedArchiveStorageSummary().catch(error => ({
-    provider_name: health.archive_provider?.name || 'none',
-    configured: !!health.archive_provider?.configured,
-    error: String(error?.message || error || 'Failed to load archive storage summary')
-  }));
-  health.hot_storage = await getCachedGlobalHotStorageSummary().catch(error => ({
-    provider_name: 'supabase-storage',
-    source_label: 'Supabase hot tier',
-    error: String(error?.message || error || 'Failed to load hot storage summary')
-  }));
   health.local_backup_status = await getCachedLocalBackupStatus().catch(error => ({
     status: 'error',
     warning: { level: 'critical', message: String(error?.message || error || 'Local backup status unavailable') },
@@ -5408,6 +5514,19 @@ app.get('/api/health', async (_req, res) => {
       health.supabase_ok = false;
       health.supabase_error = error.message;
     }
+  }
+
+  if (shouldIncludeFullHealthDetails(req)) {
+    health.archive_storage = await getCachedArchiveStorageSummary().catch(error => ({
+      provider_name: health.archive_provider?.name || 'none',
+      configured: !!health.archive_provider?.configured,
+      error: String(error?.message || error || 'Failed to load archive storage summary')
+    }));
+    health.hot_storage = await getCachedGlobalHotStorageSummary().catch(error => ({
+      provider_name: 'supabase-storage',
+      source_label: 'Supabase hot tier',
+      error: String(error?.message || error || 'Failed to load hot storage summary')
+    }));
   }
 
   health.ok = !!health.supabase_ok;
