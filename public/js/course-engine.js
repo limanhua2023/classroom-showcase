@@ -414,10 +414,31 @@
     return `${location.pathname}${location.search}${location.hash}`;
   }
 
+  function normalizeEntryPath(path) {
+    if (!path) return '';
+    try {
+      const url = new URL(String(path), location.origin);
+      return `${url.pathname}${url.search}`.replace(/\/+$/, match => match === '/' ? '/' : '');
+    } catch {
+      return '';
+    }
+  }
+
+  function isAssignedActivityEntry() {
+    if (typeof getActivityEntryPath !== 'function') return false;
+    const assigned = normalizeEntryPath(getActivityEntryPath());
+    const current = normalizeEntryPath(currentStudentPath());
+    return !!assigned && assigned === current;
+  }
+
   function getAccessState(context) {
     const activityCourseName = String(context.activity && context.activity.course_name || '').trim();
     const courseName = getExpectedCourseName();
-    const courseMatched = !courseName || !activityCourseName || normalizeCourseName(activityCourseName) === normalizeCourseName(courseName);
+    const courseMatched =
+      isAssignedActivityEntry()
+      || !courseName
+      || !activityCourseName
+      || normalizeCourseName(activityCourseName) === normalizeCourseName(courseName);
     return {
       allowed: hasSuperAdminSession() || (hasTeacherSession(context) && courseMatched) || (hasLoggedInStudent(context) && courseMatched),
       activityReady: !!context.activity_id,
