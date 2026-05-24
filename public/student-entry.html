@@ -109,9 +109,9 @@
       const fromRegistry = await resolveCourseEntryPath(activity?.course_name || '');
       const normalizedRegistry = normalizeRelativeStudentPath(fromRegistry);
       if (normalizedRegistry && !/student-gallery|student-upload|student-detail/i.test(normalizedRegistry)) {
-        return normalizedRegistry;
+        return canonicalCourseEntryPath(normalizedRegistry);
       }
-      return '/economics';
+      return '/courses/economics-fundamentals/';
     }
 
     function normalizeRelativeStudentPath(path) {
@@ -123,6 +123,14 @@
       } catch {
         return '';
       }
+    }
+
+    function canonicalCourseEntryPath(path) {
+      const value = String(path || '').trim();
+      if (/^\/(?:economics|econ)(?:\/)?(?:\?.*)?$/i.test(value)) {
+        return '/courses/economics-fundamentals/';
+      }
+      return value;
     }
   </script>
 </body>

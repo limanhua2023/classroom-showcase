@@ -25,7 +25,14 @@ html[data-classshow-locked="1"] body.classshow-auth-ready {
     const hasTeacher = !!sessionStorage.getItem('teacherToken') && !!activityId;
     const hasSuperAdmin = !!sessionStorage.getItem('superAdminToken');
     const activityCourseName = String(activity && activity.course_name || '').trim();
-    const courseMatched = !activityCourseName || activityCourseName === expectedCourseName;
+    const normalizeCourseName = value => String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '')
+      .replace(/[《》]/g, '')
+      .replace(/课程$/u, '');
+    const courseMatched = !activityCourseName
+      || normalizeCourseName(activityCourseName) === normalizeCourseName(expectedCourseName);
     const hasStudent = !!activityId && !!user && !!user.id && !isGuest && courseMatched;
     if (!(hasStudent || (hasTeacher && courseMatched) || hasSuperAdmin)) {
       document.documentElement.setAttribute('data-classshow-locked', '1');

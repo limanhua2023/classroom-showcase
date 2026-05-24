@@ -382,7 +382,14 @@
     if (!path) return '';
     try {
       const url = new URL(String(path), location.origin);
-      return `${url.pathname}${url.search}`.replace(/\/+$/, match => match === '/' ? '/' : '');
+      let normalizedPath = `${url.pathname}${url.search}`.replace(/\/+$/, match => match === '/' ? '/' : '');
+      if (/^\/(?:economics|econ)(?:\/)?(?:\?.*)?$/i.test(normalizedPath)) {
+        normalizedPath = '/courses/economics-fundamentals';
+      }
+      if (/^\/courses\/economics-fundamentals(?:\/)?(?:\?.*)?$/i.test(normalizedPath)) {
+        normalizedPath = '/courses/economics-fundamentals';
+      }
+      return normalizedPath;
     } catch {
       return '';
     }
@@ -412,7 +419,12 @@
   }
 
   function normalizeCourseName(value) {
-    return String(value || '').trim().toLowerCase();
+    return String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '')
+      .replace(/[《》]/g, '')
+      .replace(/课程$/u, '');
   }
 
   function injectBridgeShell() {
