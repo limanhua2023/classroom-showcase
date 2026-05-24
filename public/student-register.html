@@ -102,6 +102,7 @@
         });
         sessionStorage.removeItem('classshow_guest');
         setSession(user);
+        clearPostLoginTarget();
         location.href = nextTarget;
       } catch (err) {
         toast('进入失败: ' + err.message, 'error');
@@ -109,9 +110,10 @@
     }
 
     function resolveNextTarget(rawValue) {
-      if (!rawValue) return 'student-gallery.html';
+      const candidate = rawValue || (typeof getPostLoginTarget === 'function' ? getPostLoginTarget() : '');
+      if (!candidate) return 'student-gallery.html';
       try {
-        const nextUrl = new URL(String(rawValue), location.origin);
+        const nextUrl = new URL(String(candidate), location.origin);
         if (nextUrl.origin !== location.origin) return 'student-gallery.html';
         return `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}` || 'student-gallery.html';
       } catch {

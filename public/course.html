@@ -181,7 +181,11 @@
         sessionStorage.removeItem('classshow_guest');
         setActivityId(activity.id);
         sessionStorage.setItem('classshow_activity', JSON.stringify(activity));
-        location.href = 'student-register.html';
+        const nextPath = await resolveActivityStudentTarget(activity);
+        if (typeof setPostLoginTarget === 'function') setPostLoginTarget(nextPath);
+        location.href = nextPath
+          ? `student-register.html?next=${encodeURIComponent(nextPath)}`
+          : 'student-register.html';
       } catch (e) {
         toast('活动入口不可用，请刷新后重试', 'error');
       }
@@ -192,6 +196,7 @@
       if (!code) return toast('活动邀请码为空', 'error');
       try {
         const activity = await api('/activities/code/' + encodeURIComponent(code));
+        if (typeof clearPostLoginTarget === 'function') clearPostLoginTarget();
         setGuestSession(activity);
         location.href = 'student-gallery.html';
       } catch (e) {
@@ -225,6 +230,15 @@
       if (!integration.entry_path) return toast('这个课程还没有专属页面接口', 'error');
       const joiner = integration.entry_path.includes('?') ? '&' : '?';
       location.href = integration.entry_path + joiner + 'course=' + encodeURIComponent(courseName);
+    }
+    async function resolveActivityStudentTarget(activity) {
+      const currentPath = String(currentCourse?.integration?.entry_path || '').trim();
+      if (currentPath) return currentPath;
+      if (typeof resolveCourseEntryPath === 'function') {
+        const registryPath = await resolveCourseEntryPath(activity?.course_name || courseName);
+        if (registryPath) return registryPath;
+      }
+      return '';
     }
   </script>
 </body>

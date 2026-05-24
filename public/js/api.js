@@ -144,6 +144,30 @@ function setActivityId(id) {
   sessionStorage.setItem('classshow_activity_id', id);
 }
 
+function setPostLoginTarget(path) {
+  if (path) sessionStorage.setItem('classshow_post_login_target', String(path));
+  else sessionStorage.removeItem('classshow_post_login_target');
+}
+
+function getPostLoginTarget() {
+  return sessionStorage.getItem('classshow_post_login_target') || '';
+}
+
+function clearPostLoginTarget() {
+  sessionStorage.removeItem('classshow_post_login_target');
+}
+
+async function resolveCourseEntryPath(courseName) {
+  const normalized = String(courseName || '').trim();
+  if (!normalized) return '';
+  try {
+    const payload = await api('/portal/course-registry?course_name=' + encodeURIComponent(normalized));
+    return String(payload?.course?.entry_path || '').trim();
+  } catch {
+    return '';
+  }
+}
+
 function escapeHtml(value) {
   return String(value ?? '')
     .replace(/&/g, '&amp;')

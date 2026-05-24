@@ -127,7 +127,11 @@
         sessionStorage.removeItem('classshow_guest');
         setActivityId(activity.id);
         sessionStorage.setItem('classshow_activity', JSON.stringify(activity));
-        location.href = 'student-register.html';
+        const nextPath = await resolveActivityStudentTarget(activity);
+        if (typeof setPostLoginTarget === 'function') setPostLoginTarget(nextPath);
+        location.href = nextPath
+          ? `student-register.html?next=${encodeURIComponent(nextPath)}`
+          : 'student-register.html';
       } catch (e) {
         toast('邀请码无效，请检查后重试', 'error');
       }
@@ -138,6 +142,7 @@
       if (!code) return toast('请输入邀请码', 'error');
       try {
         const activity = await api('/activities/code/' + code);
+        if (typeof clearPostLoginTarget === 'function') clearPostLoginTarget();
         setGuestSession(activity);
         toast('已切换为访客模式', 'success');
         setTimeout(() => { location.href = 'student-gallery.html'; }, 500);
@@ -281,6 +286,14 @@
 
     function openCourse(encodedCourseName) {
       location.href = 'course.html?course=' + encodedCourseName;
+    }
+
+    async function resolveActivityStudentTarget(activity) {
+      if (typeof resolveCourseEntryPath === 'function') {
+        const registryPath = await resolveCourseEntryPath(activity?.course_name || '');
+        if (registryPath) return registryPath;
+      }
+      return '';
     }
   </script>
 </body>
