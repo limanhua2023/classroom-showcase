@@ -1,7 +1,8 @@
 (function initEconomicsCourseAdapter() {
   const COURSE_NAME = '经济学基础';
   const COURSE_SLUG = 'economics-fundamentals';
-  const LEARNING_HEARTBEAT_MS = 30000;
+  const LOCAL_STUDY_TICK_MS = 15000;
+  const CLOUD_SAVE_REMINDER_MS = 5 * 60 * 1000;
   const PROGRESS_SYNC_DEBOUNCE_MS = 1500;
   const LEARNING_SESSION_KEY = 'classshow_learning_session_token';
   const AI_MODE_KEY = 'econCourse_v117_ai_mode';
@@ -9,6 +10,7 @@
   const ECON_SESSION_KEY_PREFIX = 'econCourse_v117_';
   const LOCAL_STUDY_STATS_KEY = 'econCourse_v117_self_study_stats';
   const LOCAL_STUDY_MAX_DELTA_SECONDS = 90;
+  const LEGACY_LOCAL_STUDY_STATS_KEY = 'econCourse_v117_self_study_stats';
   function studentUrl(path = '') {
     return typeof window.classShowStudentUrl === 'function'
       ? window.classShowStudentUrl(path)
@@ -67,11 +69,13 @@
 
   const params = new URLSearchParams(location.search);
   const wantsTeacherMode = params.get('teacher') === '1';
+  const initialContext = readContext();
   const runtime = {
-    context: readContext(),
+    context: initialContext,
     heartbeatTimer: null,
     syncTimer: null,
     syncBusy: false,
+    cloudSaveBusy: false,
     syncReason: 'idle',
     syncLabel: '未开始同步',
     syncLevel: 'local',
@@ -87,9 +91,11 @@
     originalStorageSave: null,
     originalStorageReset: null,
     originalBridge: window.EconCourseBridge || {},
-    localStudySessionToken: makeSessionToken(),
-    localStudy: readLocalStudyStats()
+    localStudySessionToken: '',
+    localStudy: readLocalStudyStats(initialContext),
+    progressDirty: false
   };
+  runtime.localStudySessionToken = getLearningSessionToken();
 
   forceLocalAiMode();
   injectBridgeStyles();
@@ -442,6 +448,7 @@
         <button type="button" class="primary" id="classshowEconPortalBtn">返回课程总页</button>
         <button type="button" id="classshowEconIndexBtn">总门户</button>
         <button type="button" id="classshowEconModularBtn">模块版</button>
+        <button type="button" id="classshowEconSaveBtn" style="display:none;">保存记录</button>
         <button type="button" id="classshowEconThemeBtn">亮色</button>
         <button type="button" id="classshowEconTeacherBtn" style="display:none;">教师后台</button>
       </div>
@@ -465,6 +472,9 @@
     document.getElementById('classshowEconModularBtn').addEventListener('click', () => {
       location.href = studentUrl(`/course-player.html?slug=${encodeURIComponent(COURSE_SLUG)}`);
     });
+    document.getElementById('classshowEconSaveBtn').addEventListener('click', () => {
+      saveStudyCheckpoint('manual_save', { manual: true, includeProgress: true }).catch(() => {});
+    });
     document.getElementById('classshowEconThemeBtn').addEventListener('click', () => {
       if (typeof window.toggleTheme === 'function') {
         window.toggleTheme();
@@ -486,9 +496,10 @@
     const portalBtn = document.getElementById('classshowEconPortalBtn');
     const indexBtn = document.getElementById('classshowEconIndexBtn');
     const modularBtn = document.getElementById('classshowEconModularBtn');
+    const saveBtn = document.getElementById('classshowEconSaveBtn');
     const themeBtn = document.getElementById('classshowEconThemeBtn');
     const teacherBtn = document.getElementById('classshowEconTeacherBtn');
-    if (!identityEl || !chipsEl || !syncEl || !portalBtn || !indexBtn || !modularBtn || !themeBtn || !teacherBtn) return;
+    if (!identityEl || !chipsEl || !syncEl || !portalBtn || !indexBtn || !modularBtn || !saveBtn || !themeBtn || !teacherBtn) return;
 
     const activityName = runtime.context.activity && runtime.context.activity.activity_name
       ? runtime.context.activity.activity_name
@@ -505,9 +516,16 @@
       runtime.context.activity_id ? '活动上下文已连接' : '仅设备自学模式',
       runtime.context.activity_id ? 'ok' : 'warn'
     ));
-    chips.push(renderChip(`本机累计 ${formatStudyDuration(localStudyTotalSeconds())}`, 'ok'));
     if (hasLoggedInStudent()) {
-      chips.push(renderChip('学习时长回传中', 'ok'));
+      const pendingSeconds = pendingCloudSaveSeconds();
+      chips.push(renderChip(`累计 ${formatStudyDuration(displayedStudyTotalSeconds())}`, 'ok'));
+      chips.push(renderChip(
+        pendingSeconds > 0 ? `待保存 ${formatStudyDuration(pendingSeconds)}` : '云端已保存',
+        pendingSeconds > 0 ? 'warn' : 'ok'
+      ));
+      if (runtime.localStudy && runtime.localStudy.last_cloud_save_at) {
+        chips.push(renderChip(`上次保存 ${formatClockTime(runtime.localStudy.last_cloud_save_at)}`, 'ok'));
+      }
     } else if (runtime.context.is_guest) {
       chips.push(renderChip('访客模式不记录个人进度', 'warn'));
     } else {
@@ -529,6 +547,9 @@
     portalBtn.style.display = studentOnlyView ? 'none' : '';
     indexBtn.style.display = studentOnlyView ? 'none' : '';
     modularBtn.style.display = studentOnlyView ? 'none' : '';
+    saveBtn.style.display = hasLoggedInStudent() ? '' : 'none';
+    saveBtn.disabled = runtime.cloudSaveBusy;
+    saveBtn.textContent = runtime.cloudSaveBusy ? '保存中...' : (pendingCloudSaveSeconds() > 0 ? '保存记录' : '已保存');
     teacherBtn.style.display = hasTeacherSession() ? '' : 'none';
   }
 
@@ -597,9 +618,10 @@ function updateBridgeShell() {
     const portalBtn = document.getElementById('classshowEconPortalBtn');
     const indexBtn = document.getElementById('classshowEconIndexBtn');
     const modularBtn = document.getElementById('classshowEconModularBtn');
+    const saveBtn = document.getElementById('classshowEconSaveBtn');
     const themeBtn = document.getElementById('classshowEconThemeBtn');
     const teacherBtn = document.getElementById('classshowEconTeacherBtn');
-    if (!identityEl || !chipsEl || !syncEl || !portalBtn || !indexBtn || !modularBtn || !themeBtn || !teacherBtn) return;
+    if (!identityEl || !chipsEl || !syncEl || !portalBtn || !indexBtn || !modularBtn || !saveBtn || !themeBtn || !teacherBtn) return;
 
     const activityName = runtime.context.activity && runtime.context.activity.activity_name
       ? runtime.context.activity.activity_name
@@ -619,8 +641,15 @@ function updateBridgeShell() {
       runtime.context.activity_id ? 'ok' : 'warn'
     ));
     if (hasLoggedInStudent()) {
-      chips.push(renderChip(`本机累计 ${formatStudyDuration(localStudyTotalSeconds())}`, 'ok'));
-      chips.push(renderChip('学习时长回传中', 'ok'));
+      const pendingSeconds = pendingCloudSaveSeconds();
+      chips.push(renderChip(`累计 ${formatStudyDuration(displayedStudyTotalSeconds())}`, 'ok'));
+      chips.push(renderChip(
+        pendingSeconds > 0 ? `待保存 ${formatStudyDuration(pendingSeconds)}` : '云端已保存',
+        pendingSeconds > 0 ? 'warn' : 'ok'
+      ));
+      if (runtime.localStudy && runtime.localStudy.last_cloud_save_at) {
+        chips.push(renderChip(`上次保存 ${formatClockTime(runtime.localStudy.last_cloud_save_at)}`, 'ok'));
+      }
     } else if (hasPreviewAccess()) {
       chips.push(renderChip(hasTeacherSession() ? '教师预览' : '超级管理员预览', 'warn'));
       chips.push(renderChip('预览模式不记录学生学习数据', 'warn'));
@@ -645,6 +674,9 @@ function updateBridgeShell() {
     portalBtn.style.display = studentOnlyView ? 'none' : '';
     indexBtn.style.display = studentOnlyView ? 'none' : '';
     modularBtn.style.display = studentOnlyView ? 'none' : '';
+    saveBtn.style.display = hasLoggedInStudent() ? '' : 'none';
+    saveBtn.disabled = runtime.cloudSaveBusy;
+    saveBtn.textContent = runtime.cloudSaveBusy ? '保存中...' : (pendingCloudSaveSeconds() > 0 ? '保存记录' : '已保存');
     teacherBtn.style.display = hasTeacherSession() ? '' : 'none';
   }
 
@@ -680,14 +712,29 @@ function updateBridgeShell() {
       onQuizSubmit(data) {
         safeCall(original.onQuizSubmit, window, data);
         scheduleProgressSync(data && data.correct === false ? 'quiz_incorrect' : 'quiz_submit');
+        saveStudyCheckpoint(data && data.correct === false ? 'quiz_incorrect' : 'quiz_submit', {
+          automatic: true,
+          includeProgress: true,
+          silent: true
+        }).catch(() => {});
       },
       onReflectionSubmit(data) {
         safeCall(original.onReflectionSubmit, window, data);
         scheduleProgressSync(data && data.event ? data.event : 'reflection_submit');
+        saveStudyCheckpoint(data && data.event ? data.event : 'reflection_submit', {
+          automatic: true,
+          includeProgress: true,
+          silent: true
+        }).catch(() => {});
       },
       onExperimentComplete(data) {
         safeCall(original.onExperimentComplete, window, data);
         scheduleProgressSync(data && data.event ? data.event : 'experiment_complete');
+        saveStudyCheckpoint(data && data.event ? data.event : 'experiment_complete', {
+          automatic: true,
+          includeProgress: true,
+          silent: true
+        }).catch(() => {});
       },
       onTeacherModeChange(data) {
         safeCall(original.onTeacherModeChange, window, data);
@@ -830,9 +877,11 @@ function updateBridgeShell() {
   function scheduleRemoteHydration() {
     if (!hasLoggedInStudent()) return;
     const run = () => {
-      hydrateRemoteProgress().finally(() => {
-        scheduleProgressSync('page_boot');
-      });
+      hydrateRemoteLearningSummary()
+        .catch(() => null)
+        .finally(() => {
+          hydrateRemoteProgress().catch(() => null);
+        });
     };
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', run, { once: true });
@@ -986,6 +1035,116 @@ function updateBridgeShell() {
     }
   }
 
+  async function hydrateRemoteLearningSummary() {
+    if (!hasLoggedInStudent()) return;
+    try {
+      const summary = await api(`/student/learning/summary?activity_id=${encodeURIComponent(runtime.context.activity_id)}&user_id=${encodeURIComponent(runtime.context.user.id)}`);
+      if (!summary || summary.schema_ready === false) return;
+      const stats = normalizeLocalStudyStats(runtime.localStudy || readLocalStudyStats(runtime.context));
+      const remoteTotal = Math.max(0, Number(summary && summary.my && summary.my.active_seconds || 0));
+      stats.summary_total_seconds = Math.max(remoteTotal, Number(stats.summary_total_seconds || 0));
+      runtime.localStudy = stats;
+      writeLocalStudyStats(stats, runtime.context);
+      updateBridgeShell();
+    } catch (error) {
+      console.warn('Failed to hydrate learning summary:', error);
+    }
+  }
+
+  function maybePromptCloudSave(stats = runtime.localStudy) {
+    if (!hasLoggedInStudent()) return;
+    const pendingSeconds = pendingCloudSaveSeconds(stats);
+    if (pendingSeconds < CLOUD_SAVE_REMINDER_MS / 1000) return;
+    const lastPromptAt = stats && stats.last_prompt_at ? new Date(stats.last_prompt_at).getTime() : 0;
+    const now = Date.now();
+    if (Number.isFinite(lastPromptAt) && lastPromptAt > 0 && now - lastPromptAt < CLOUD_SAVE_REMINDER_MS) return;
+    const nextStats = normalizeLocalStudyStats(stats);
+    nextStats.last_prompt_at = new Date(now).toISOString();
+    runtime.localStudy = nextStats;
+    writeLocalStudyStats(nextStats, runtime.context);
+    runtime.syncLabel = `已累计 ${formatStudyDuration(pendingSeconds)} 未保存`;
+    runtime.syncLevel = 'warn';
+    updateBridgeShell();
+    notify(`已累计 ${formatStudyDuration(pendingSeconds)} 未保存，点击顶部“保存记录”同步到云端。`, 'error');
+  }
+
+  async function saveStudyCheckpoint(reason, options = {}) {
+    if (!hasLoggedInStudent() || runtime.cloudSaveBusy) return false;
+    const stats = recordLocalStudy(reason || 'manual_save', {
+      active: typeof options.active === 'boolean' ? options.active : !document.hidden,
+      startSession: !!options.startSession
+    });
+    const pendingSeconds = pendingCloudSaveSeconds(stats);
+    const shouldSyncProgress = !!options.includeProgress && (runtime.progressDirty || options.forceProgress);
+    if (pendingSeconds <= 0 && !shouldSyncProgress) {
+      runtime.syncLabel = '云端已保存';
+      runtime.syncLevel = 'ok';
+      updateBridgeShell();
+      return true;
+    }
+
+    runtime.cloudSaveBusy = true;
+    runtime.syncLabel = options.manual ? '正在保存记录…' : '正在保存学习记录…';
+    runtime.syncLevel = 'warn';
+    updateBridgeShell();
+
+    try {
+      const result = await api('/student/learning/heartbeat', {
+        method: 'POST',
+        keepalive: !!options.keepalive,
+        body: JSON.stringify({
+          activity_id: runtime.context.activity_id,
+          user_id: runtime.context.user.id,
+          session_token: getLearningSessionToken(),
+          page_path: location.pathname,
+          active: typeof options.active === 'boolean' ? options.active : !document.hidden,
+          course_slug: COURSE_SLUG,
+          last_event: reason || 'manual_save',
+          client_total_seconds: stats.total_seconds
+        })
+      });
+
+      if (result && result.schema_ready === false) {
+        runtime.syncLabel = '数据库未启用学习时长表';
+        runtime.syncLevel = 'warn';
+        updateBridgeShell();
+        return false;
+      }
+
+      stats.cloud_total_seconds = Math.max(0, Number(result && result.total_seconds || stats.total_seconds));
+      stats.summary_total_seconds = Math.max(
+        summaryCloudTotalSeconds(stats) + Math.max(0, Number(result && result.added_seconds || 0)),
+        stats.cloud_total_seconds
+      );
+      stats.last_cloud_save_at = new Date().toISOString();
+      runtime.localStudy = normalizeLocalStudyStats(stats);
+      writeLocalStudyStats(runtime.localStudy, runtime.context);
+
+      if (shouldSyncProgress) {
+        await syncProgress(reason || 'checkpoint', {
+          force: true,
+          silent: true,
+          keepalive: !!options.keepalive
+        });
+      }
+
+      runtime.syncLabel = '学习记录已保存到云端';
+      runtime.syncLevel = 'ok';
+      updateBridgeShell();
+      if (options.manual) notify('本次学习记录已保存。', 'success');
+      return true;
+    } catch (error) {
+      runtime.syncLabel = error && error.message ? error.message : '学习记录保存失败';
+      runtime.syncLevel = 'err';
+      updateBridgeShell();
+      if (options.manual) notify(runtime.syncLabel, 'error');
+      return false;
+    } finally {
+      runtime.cloudSaveBusy = false;
+      updateBridgeShell();
+    }
+  }
+
   function startLearningHeartbeat() {
     if (hasPreviewAccess()) {
       runtime.syncLabel = '预览模式不记录学生学习时长';
@@ -994,76 +1153,84 @@ function updateBridgeShell() {
       return;
     }
     recordLocalStudy('page_open', { startSession: true });
-
-    const send = active => {
-      api('/student/learning/heartbeat', {
-        method: 'POST',
-        body: JSON.stringify({
-          activity_id: runtime.context.activity_id,
-          user_id: runtime.context.user.id,
-          session_token: getLearningSessionToken(),
-          page_path: location.pathname,
-          active
-        })
-      }).catch(() => {});
-    };
-
     if (hasLoggedInStudent()) {
-      send(!document.hidden);
+      runtime.syncLabel = '本地已开始记录，等待保存到云端';
+      runtime.syncLevel = 'warn';
     } else {
       runtime.syncLabel = '本地自学记录中';
       runtime.syncLevel = document.hidden ? 'warn' : 'ok';
-      updateBridgeShell();
     }
+    updateBridgeShell();
 
     runtime.heartbeatTimer = window.setInterval(() => {
-      recordLocalStudy('heartbeat');
-      if (hasLoggedInStudent()) {
-        send(!document.hidden);
-      }
-    }, LEARNING_HEARTBEAT_MS);
+      const stats = recordLocalStudy('local_tick');
+      maybePromptCloudSave(stats);
+    }, LOCAL_STUDY_TICK_MS);
 
     document.addEventListener('visibilitychange', () => {
       recordLocalStudy(document.hidden ? 'page_hidden' : 'page_visible');
-      if (hasLoggedInStudent()) {
-        send(!document.hidden);
+      if (document.hidden) {
+        saveStudyCheckpoint('page_hidden', {
+          automatic: true,
+          includeProgress: true,
+          silent: true,
+          keepalive: true,
+          active: false
+        }).catch(() => {});
       }
-      scheduleProgressSync(document.hidden ? 'page_hidden' : 'page_visible');
     });
 
-    window.addEventListener('beforeunload', () => {
+    window.addEventListener('pagehide', () => {
       if (runtime.heartbeatTimer) window.clearInterval(runtime.heartbeatTimer);
       recordLocalStudy('page_unload', { active: false });
+      saveStudyCheckpoint('page_unload', {
+        automatic: true,
+        includeProgress: true,
+        silent: true,
+        keepalive: true,
+        active: false
+      }).catch(() => {});
     });
   }
 
   function scheduleProgressSync(reason) {
-    if (!hasLoggedInStudent() || !window.EconCourseApp || runtime.hydrating) return;
+    if (!window.EconCourseApp || runtime.hydrating) return;
     runtime.syncReason = reason || 'state_change';
+    runtime.progressDirty = true;
+    if (hasLoggedInStudent()) {
+      runtime.syncLabel = '本地进度已更新，等待保存';
+      runtime.syncLevel = 'warn';
+    }
     if (runtime.syncTimer) window.clearTimeout(runtime.syncTimer);
     runtime.syncTimer = window.setTimeout(() => {
       runtime.syncTimer = null;
-      syncProgress(runtime.syncReason);
+      updateBridgeShell();
     }, PROGRESS_SYNC_DEBOUNCE_MS);
   }
 
-  async function syncProgress(reason) {
-    if (!hasLoggedInStudent() || !window.EconCourseApp || runtime.syncBusy) return;
+  async function syncProgress(reason, options = {}) {
+    if (!hasLoggedInStudent() || !window.EconCourseApp || runtime.syncBusy) return false;
+    if (!runtime.progressDirty && !options.force) return true;
     runtime.syncBusy = true;
-    runtime.syncLabel = `同步中 · ${reason}`;
-    runtime.syncLevel = 'warn';
-    updateBridgeShell();
+    if (!options.silent) {
+      runtime.syncLabel = `同步中 · ${reason}`;
+      runtime.syncLevel = 'warn';
+      updateBridgeShell();
+    }
 
     try {
       const payload = buildProgressPayload(reason);
       const result = await api('/student/course-runtime/progress', {
         method: 'POST',
+        keepalive: !!options.keepalive,
         body: JSON.stringify(payload)
       });
 
       if (result && result.schema_ready === false) {
-        runtime.syncLabel = '数据库未启用课程进度表';
-        runtime.syncLevel = 'warn';
+        if (!options.silent) {
+          runtime.syncLabel = '数据库未启用课程进度表';
+          runtime.syncLevel = 'warn';
+        }
       } else {
         const app = window.EconCourseApp;
         app.state.classshowMeta = {
@@ -1073,15 +1240,22 @@ function updateBridgeShell() {
             ? result.progress.updated_at
             : new Date().toISOString()
         };
-        runtime.syncLabel = '进度已记录到 ClassShow';
-        runtime.syncLevel = 'ok';
+        runtime.progressDirty = false;
+        if (!options.silent) {
+          runtime.syncLabel = '进度已记录到 ClassShow';
+          runtime.syncLevel = 'ok';
+        }
       }
+      return true;
     } catch (error) {
-      runtime.syncLabel = error && error.message ? error.message : '进度同步失败';
-      runtime.syncLevel = 'err';
+      if (!options.silent) {
+        runtime.syncLabel = error && error.message ? error.message : '进度同步失败';
+        runtime.syncLevel = 'err';
+      }
+      return false;
     } finally {
       runtime.syncBusy = false;
-      updateBridgeShell();
+      if (!options.silent) updateBridgeShell();
     }
   }
 
@@ -1142,10 +1316,16 @@ function updateBridgeShell() {
   }
 
   function getLearningSessionToken() {
-    let token = sessionStorage.getItem(LEARNING_SESSION_KEY);
+    const storageKey = getLearningSessionStorageKey(runtime.context);
+    let token = '';
+    try {
+      token = localStorage.getItem(storageKey) || '';
+    } catch {}
     if (!token) {
       token = makeSessionToken();
-      sessionStorage.setItem(LEARNING_SESSION_KEY, token);
+      try {
+        localStorage.setItem(storageKey, token);
+      } catch {}
     }
     return token;
   }
@@ -1157,13 +1337,33 @@ function updateBridgeShell() {
     return `learn-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
   }
 
-  function readLocalStudyStats() {
+  function getLearningSessionStorageKey(context = runtime.context) {
+    const activityId = String(context && (context.activity_id || context.activity && context.activity.id) || 'local').trim() || 'local';
+    const userId = String(context && context.user && context.user.id || 'anon').trim() || 'anon';
+    return `${LEARNING_SESSION_KEY}::${COURSE_SLUG}::${activityId}::${userId}`;
+  }
+
+  function getLocalStudyStorageKey(context = runtime.context) {
+    const activityId = String(context && (context.activity_id || context.activity && context.activity.id) || 'local').trim() || 'local';
+    const userId = String(context && context.user && context.user.id || 'anon').trim() || 'anon';
+    return `${LOCAL_STUDY_STATS_KEY}::${COURSE_SLUG}::${activityId}::${userId}`;
+  }
+
+  function readLocalStudyStats(context = runtime.context) {
     try {
-      const raw = localStorage.getItem(LOCAL_STUDY_STATS_KEY);
-      return normalizeLocalStudyStats(raw ? JSON.parse(raw) : null);
+      const scopedRaw = localStorage.getItem(getLocalStudyStorageKey(context));
+      if (scopedRaw) return normalizeLocalStudyStats(JSON.parse(scopedRaw));
+      const legacyRaw = localStorage.getItem(LEGACY_LOCAL_STUDY_STATS_KEY);
+      return normalizeLocalStudyStats(legacyRaw ? JSON.parse(legacyRaw) : null);
     } catch {
       return normalizeLocalStudyStats(null);
     }
+  }
+
+  function writeLocalStudyStats(stats, context = runtime.context) {
+    try {
+      localStorage.setItem(getLocalStudyStorageKey(context), JSON.stringify(normalizeLocalStudyStats(stats)));
+    } catch {}
   }
 
   function normalizeLocalStudyStats(value) {
@@ -1171,11 +1371,15 @@ function updateBridgeShell() {
     return {
       session_token: typeof stats.session_token === 'string' ? stats.session_token : '',
       total_seconds: Math.max(0, Number(stats.total_seconds || 0)),
+      cloud_total_seconds: Math.max(0, Number(stats.cloud_total_seconds || 0)),
+      summary_total_seconds: Math.max(0, Number(stats.summary_total_seconds || 0)),
       session_count: Math.max(0, Number(stats.session_count || 0)),
       active: stats.active === true,
       started_at: typeof stats.started_at === 'string' ? stats.started_at : '',
       last_seen_at: typeof stats.last_seen_at === 'string' ? stats.last_seen_at : '',
       updated_at: typeof stats.updated_at === 'string' ? stats.updated_at : '',
+      last_cloud_save_at: typeof stats.last_cloud_save_at === 'string' ? stats.last_cloud_save_at : '',
+      last_prompt_at: typeof stats.last_prompt_at === 'string' ? stats.last_prompt_at : '',
       last_event: typeof stats.last_event === 'string' ? stats.last_event : '',
       page_path: typeof stats.page_path === 'string' ? stats.page_path : location.pathname,
       learning_mode: typeof stats.learning_mode === 'string' ? stats.learning_mode : 'selflearn',
@@ -1192,7 +1396,7 @@ function updateBridgeShell() {
   function recordLocalStudy(reason, options = {}) {
     const now = Date.now();
     const nowIso = new Date(now).toISOString();
-    const stats = normalizeLocalStudyStats(runtime.localStudy || readLocalStudyStats());
+    const stats = normalizeLocalStudyStats(runtime.localStudy || readLocalStudyStats(runtime.context));
     const active = typeof options.active === 'boolean' ? options.active : !document.hidden;
     const lastSeenMs = stats.last_seen_at ? new Date(stats.last_seen_at).getTime() : 0;
 
@@ -1226,14 +1430,16 @@ function updateBridgeShell() {
     stats.xp = summary.xp;
 
     runtime.localStudy = stats;
-
-    try {
-      localStorage.setItem(LOCAL_STUDY_STATS_KEY, JSON.stringify(stats));
-    } catch {}
+    writeLocalStudyStats(stats, runtime.context);
 
     if (!hasLoggedInStudent()) {
       runtime.syncLabel = active ? '本地自学记录中' : '本地自学已暂停';
       runtime.syncLevel = active ? 'ok' : 'warn';
+    } else {
+      runtime.syncLabel = pendingCloudSaveSeconds(stats) > 0
+        ? '本地已记录，等待保存到云端'
+        : (runtime.progressDirty ? '本地进度待保存' : '云端已保存');
+      runtime.syncLevel = pendingCloudSaveSeconds(stats) > 0 || runtime.progressDirty ? 'warn' : 'ok';
     }
 
     updateBridgeShell();
@@ -1269,6 +1475,26 @@ function updateBridgeShell() {
     return Math.max(0, Number(runtime.localStudy && runtime.localStudy.total_seconds || 0));
   }
 
+  function localStudyTotalSecondsFor(stats) {
+    return Math.max(0, Number(stats && stats.total_seconds || 0));
+  }
+
+  function savedCloudTotalSeconds(stats = runtime.localStudy) {
+    return Math.max(0, Number(stats && stats.cloud_total_seconds || 0));
+  }
+
+  function summaryCloudTotalSeconds(stats = runtime.localStudy) {
+    return Math.max(0, Number(stats && stats.summary_total_seconds || 0));
+  }
+
+  function pendingCloudSaveSeconds(stats = runtime.localStudy) {
+    return Math.max(0, localStudyTotalSecondsFor(stats) - savedCloudTotalSeconds(stats));
+  }
+
+  function displayedStudyTotalSeconds() {
+    return Math.max(summaryCloudTotalSeconds(), savedCloudTotalSeconds()) + pendingCloudSaveSeconds();
+  }
+
   function localStudyIsActive() {
     return !!(runtime.localStudy && runtime.localStudy.active);
   }
@@ -1281,6 +1507,18 @@ function updateBridgeShell() {
     return remainingMinutes > 0
       ? `${hours} 小时 ${remainingMinutes} 分`
       : `${hours} 小时`;
+  }
+
+  function formatClockTime(value) {
+    if (!value) return '--:--';
+    const date = new Date(value);
+    if (!Number.isFinite(date.getTime())) return '--:--';
+    return date.toLocaleTimeString('zh-CN', {
+      timeZone: 'Asia/Bangkok',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false
+    });
   }
 
   function hasMeaningfulLocalProgress(state) {

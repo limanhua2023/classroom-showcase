@@ -50,6 +50,8 @@ const FEEDBACK_MIN_MEANINGFUL_CHARS = 3;
 const DEFAULT_FEEDBACK_DAILY_LIMIT = 5;
 const MAX_FEEDBACK_DAILY_LIMIT = 20;
 const LEARNING_HEARTBEAT_MAX_DELTA_SECONDS = Math.max(30, Number(process.env.LEARNING_HEARTBEAT_MAX_DELTA_SECONDS || 120));
+const LEARNING_CHECKPOINT_MAX_DELTA_SECONDS = Math.max(5 * 60, Number(process.env.LEARNING_CHECKPOINT_MAX_DELTA_SECONDS || 10 * 60));
+const LEARNING_RECENT_ACTIVE_WINDOW_SECONDS = Math.max(5 * 60, Number(process.env.LEARNING_RECENT_ACTIVE_WINDOW_SECONDS || 15 * 60));
 const LEARNING_LEADERBOARD_LIMIT = Math.max(5, Number(process.env.LEARNING_LEADERBOARD_LIMIT || 12));
 const BANGKOK_UTC_OFFSET_MS = 7 * 60 * 60 * 1000;
 const WITHDRAWN_FEEDBACK_PREFIX = '__WITHDRAWN__::';
@@ -6735,7 +6737,7 @@ async function buildLearningEngagementSummary(activityId, viewerUserId = null) {
     individualRows.map(row => ({ ...row })),
     'engagement_score'
   );
-  const recentActiveWindowMs = Math.max(2 * 60 * 1000, LEARNING_HEARTBEAT_MAX_DELTA_SECONDS * 1000);
+  const recentActiveWindowMs = Math.max(2 * 60 * 1000, LEARNING_RECENT_ACTIVE_WINDOW_SECONDS * 1000);
   const recentActiveThreshold = Date.now() - recentActiveWindowMs;
   const recentlyActiveCount = individualRows.filter(row => {
     if (!row.last_seen_at) return false;
@@ -6820,7 +6822,7 @@ function emptyLearningEngagementSummary(error = null) {
       active_minutes: 0,
       tracked_students: 0,
       recently_active_count: 0,
-      recently_active_window_seconds: Math.round(Math.max(2 * 60 * 1000, LEARNING_HEARTBEAT_MAX_DELTA_SECONDS * 1000) / 1000),
+      recently_active_window_seconds: Math.round(Math.max(2 * 60 * 1000, LEARNING_RECENT_ACTIVE_WINDOW_SECONDS * 1000) / 1000),
       student_count: 0,
       group_count: 0
     }
@@ -8987,6 +8989,10 @@ app.post('/api/student/learning/heartbeat', studentAuth, async (req, res) => {
     const active = req.body.active !== false;
     const pagePath = sanitizeText(req.body.page_path || '', 240);
     const userAgent = sanitizeText(req.headers['user-agent'] || '', 400);
+    const clientTotalSecondsRaw = Number(req.body.client_total_seconds);
+    const clientTotalSeconds = Number.isFinite(clientTotalSecondsRaw)
+      ? Math.max(0, Math.floor(clientTotalSecondsRaw))
+      : null;
 
     const { data: existing, error: findError } = await supabase.from('student_learning_sessions')
       .select('id,active_seconds,last_seen_at')
@@ -9003,13 +9009,16 @@ app.post('/api/student/learning/heartbeat', studentAuth, async (req, res) => {
     }
 
     if (!existing) {
+      const initialSeconds = clientTotalSeconds == null
+        ? 0
+        : Math.min(clientTotalSeconds, LEARNING_CHECKPOINT_MAX_DELTA_SECONDS);
       const { data, error } = await supabase.from('student_learning_sessions').insert([{
         activity_id: activityId,
         user_id: userId,
         session_token: sessionToken,
         page_path: pagePath,
         user_agent: userAgent,
-        active_seconds: 0,
+        active_seconds: initialSeconds,
         started_at: nowIso,
         last_seen_at: nowIso,
         updated_at: nowIso
@@ -9020,13 +9029,24 @@ app.post('/api/student/learning/heartbeat', studentAuth, async (req, res) => {
         }
         throw error;
       }
-      return res.json({ ok: true, schema_ready: true, added_seconds: 0, total_seconds: Number(data?.active_seconds || 0) });
+      return res.json({
+        ok: true,
+        schema_ready: true,
+        added_seconds: initialSeconds,
+        total_seconds: Number(data?.active_seconds || initialSeconds)
+      });
     }
 
+    const existingTotalSeconds = Math.max(0, Number(existing.active_seconds || 0));
     const lastSeen = existing.last_seen_at ? new Date(existing.last_seen_at).getTime() : now;
     const rawDelta = Math.max(0, Math.floor((now - lastSeen) / 1000));
-    const addedSeconds = active ? Math.min(rawDelta, LEARNING_HEARTBEAT_MAX_DELTA_SECONDS) : 0;
-    const totalSeconds = Math.max(0, Number(existing.active_seconds || 0) + addedSeconds);
+    const addedSeconds = clientTotalSeconds == null
+      ? (active ? Math.min(rawDelta, LEARNING_HEARTBEAT_MAX_DELTA_SECONDS) : 0)
+      : Math.min(
+          Math.max(0, clientTotalSeconds - existingTotalSeconds),
+          LEARNING_CHECKPOINT_MAX_DELTA_SECONDS
+        );
+    const totalSeconds = Math.max(0, existingTotalSeconds + addedSeconds);
     const { data, error } = await supabase.from('student_learning_sessions')
       .update({
         active_seconds: totalSeconds,

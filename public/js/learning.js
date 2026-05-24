@@ -1,35 +1,16 @@
 (function () {
-  const HEARTBEAT_MS = 30000;
-  const SUMMARY_MS = 45000;
-  const SESSION_KEY = 'classshow_learning_session_token';
+  const SUMMARY_MS = 60000;
 
   const activityId = typeof getActivityId === 'function' ? getActivityId() : null;
   const user = typeof getSession === 'function' ? getSession() : null;
   const guest = typeof isGuest === 'function' ? isGuest() : false;
   const panel = document.getElementById('learningArena');
-  let heartbeatTimer = null;
   let summaryTimer = null;
   let lastSummary = null;
 
   if (!activityId || !user || guest) {
     if (panel) renderGuestPanel();
     return;
-  }
-
-  function makeToken() {
-    if (window.crypto && typeof window.crypto.randomUUID === 'function') {
-      return window.crypto.randomUUID();
-    }
-    return 'learn-' + Date.now().toString(36) + '-' + Math.random().toString(36).slice(2);
-  }
-
-  function getSessionToken() {
-    let token = sessionStorage.getItem(SESSION_KEY);
-    if (!token) {
-      token = makeToken();
-      sessionStorage.setItem(SESSION_KEY, token);
-    }
-    return token;
   }
 
   function fmtMinutes(minutes) {
@@ -56,30 +37,6 @@
         </div>
       </div>
     `;
-  }
-
-  async function sendHeartbeat(active = !document.hidden) {
-    try {
-      const result = await api('/student/learning/heartbeat', {
-        method: 'POST',
-        body: JSON.stringify({
-          activity_id: activityId,
-          user_id: user.id,
-          session_token: getSessionToken(),
-          page_path: location.pathname,
-          active
-        })
-      });
-      if (result && result.schema_ready === false && panel) {
-        renderSchemaNotice(result.error);
-      }
-      return result;
-    } catch (error) {
-      if (panel) {
-        panel.dataset.learningError = error.message || 'learning heartbeat failed';
-      }
-      return null;
-    }
   }
 
   async function loadSummary() {
@@ -197,23 +154,21 @@
   }
 
   function start() {
-    sendHeartbeat(false).then(loadSummary);
-    heartbeatTimer = setInterval(() => sendHeartbeat(!document.hidden), HEARTBEAT_MS);
+    loadSummary();
     if (panel) summaryTimer = setInterval(loadSummary, SUMMARY_MS);
   }
 
   document.addEventListener('visibilitychange', () => {
-    if (document.hidden) {
-      sendHeartbeat(false);
-    } else {
-      sendHeartbeat(false).then(() => {
-        if (panel && lastSummary) loadSummary();
-      });
+    if (!document.hidden) {
+      if (panel && lastSummary) {
+        loadSummary();
+      } else if (panel) {
+        loadSummary();
+      }
     }
   });
 
   window.addEventListener('beforeunload', () => {
-    if (heartbeatTimer) clearInterval(heartbeatTimer);
     if (summaryTimer) clearInterval(summaryTimer);
   });
 
