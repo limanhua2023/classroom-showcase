@@ -7407,6 +7407,15 @@ function summarizePortalActivity(activity, metrics = emptyPortalMetrics()) {
   };
 }
 
+function isPortalHiddenSmokeActivity(activity) {
+  const fingerprint = [
+    activity?.activity_name,
+    activity?.class_name,
+    activity?.description
+  ].map(value => String(value || '').trim()).join(' ');
+  return /自动烟测创建，请忽略|自动验证-两学生登录-|自动验证班-请忽略/i.test(fingerprint);
+}
+
 async function buildPortalCourseDirectory(courseNameFilter = null, options = {}) {
   const includeInactive = !!options.includeInactive;
   const registry = await getCourseRegistry();
@@ -7423,7 +7432,9 @@ async function buildPortalCourseDirectory(courseNameFilter = null, options = {})
   const { data: activitiesData, error: activitiesError } = await activityQuery;
   if (activitiesError) throw activitiesError;
 
-  const activities = (activitiesData || []).map(activity => ({
+  const activities = (activitiesData || [])
+    .filter(activity => !isPortalHiddenSmokeActivity(activity))
+    .map(activity => ({
     ...activity,
     course_name: normalizePortalCourseName(activity.course_name)
   }));
