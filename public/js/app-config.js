@@ -78,9 +78,13 @@
   window.navigateToBackend = path => { window.location.href = config.backendUrl(path); };
   window.navigateToStudent = path => { window.location.href = config.studentUrl(path); };
 
-  function maybeRedirectToStudentSurface() {
-    if (config.surface !== 'student' || !studentBase || !currentOrigin) return;
-    const targetUrl = config.studentUrl(window.location.pathname) + window.location.search + window.location.hash;
+  function maybeRedirectToPreferredSurface() {
+    if (!currentOrigin) return;
+    let targetBase = '';
+    if (config.surface === 'student') targetBase = studentBase;
+    if (config.surface === 'backend') targetBase = backendBase;
+    if (!targetBase) return;
+    const targetUrl = buildUrl(targetBase, window.location.pathname) + window.location.search + window.location.hash;
     const currentUrl = window.location.origin + window.location.pathname + window.location.search + window.location.hash;
     if (targetUrl !== currentUrl) {
       window.location.replace(targetUrl);
@@ -120,5 +124,5 @@
     rewriteBackendLinks();
   }
 
-  maybeRedirectToStudentSurface();
+  maybeRedirectToPreferredSurface();
 })();

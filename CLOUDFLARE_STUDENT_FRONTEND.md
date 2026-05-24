@@ -65,6 +65,27 @@ window.CLASSSHOW_HOST_OVERRIDES = {
 Current student site:
 
 - `https://classshow-student.pages.dev`
+- Backend/API site: `https://classroom-showcase.onrender.com`
+
+## P0 rollout guardrails
+
+Before considering the split deployment production-ready:
+
+1. Student pages must open from `classshow-student.pages.dev`.
+2. Teacher/admin pages must open from `classroom-showcase.onrender.com`.
+3. Render API must only allow expected frontend origins instead of global `cors()`.
+4. Student aliases such as `/economics` and `/course/economics` should work on Pages.
+5. Teacher/admin aliases on the student site should redirect back to Render.
+
+The current repo now enforces this in three layers:
+
+- `public/js/app-config.js`
+  Student pages auto-redirect from Render back to the student site.
+  Backend pages auto-redirect from the student site back to Render.
+- `public/_redirects`
+  Cloudflare Pages serves friendly student aliases and forwards `/teacher` and `/admin` to Render.
+- `server.js`
+  Render now uses an origin allowlist instead of unrestricted CORS.
 
 ## Rollout order
 
@@ -84,3 +105,32 @@ Recommended long-term split:
 - teacher/admin/API/backend logic: Render or another Node host
 
 Only move teacher/admin/API off Render later if you decide to replace the current backend architecture.
+
+## Backend CORS allowlist
+
+Render currently allows:
+
+- `https://classroom-showcase.onrender.com`
+- `https://classshow-student.pages.dev`
+- preview subdomains matching `*.classshow-student.pages.dev`
+- local development origins such as `http://localhost:*` and `http://127.0.0.1:*`
+
+To extend the allowlist later for a custom domain, set:
+
+- `STUDENT_PUBLIC_ORIGIN`
+- `BACKEND_PUBLIC_ORIGIN`
+- `CORS_ALLOWED_ORIGINS` as a comma-separated list
+
+## Verification
+
+Use the split readiness script after each deploy:
+
+```bash
+node scripts/check-public-readiness.mjs
+```
+
+Optional explicit targets:
+
+```bash
+node scripts/check-public-readiness.mjs https://classshow-student.pages.dev https://classroom-showcase.onrender.com
+```

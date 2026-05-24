@@ -1,0 +1,16 @@
+# Student-side friendly aliases
+/portal /index.html 302
+/economics /courses/economics-fundamentals/ 302
+/economics/ /courses/economics-fundamentals/ 302
+/econ /courses/economics-fundamentals/ 302
+/econ/ /courses/economics-fundamentals/ 302
+/course/economics /course.html?course=%E7%BB%8F%E6%B5%8E%E5%AD%A6%E5%9F%BA%E7%A1%80%E8%AF%BE%E7%A8%8B 302
+/course/economics/ /course.html?course=%E7%BB%8F%E6%B5%8E%E5%AD%A6%E5%9F%BA%E7%A1%80%E8%AF%BE%E7%A8%8B 302
+
+# Backend entry aliases still live on Render
+/teacher https://classroom-showcase.onrender.com/teacher 302
+/teacher/ https://classroom-showcase.onrender.com/teacher 302
+/admin https://classroom-showcase.onrender.com/admin 302
+/admin/ https://classroom-showcase.onrender.com/admin 302
+/super-admin https://classroom-showcase.onrender.com/admin 302
+/super-admin/ https://classroom-showcase.onrender.com/admin 302

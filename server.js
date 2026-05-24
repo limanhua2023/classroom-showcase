@@ -22,6 +22,11 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 3000;
 const APP_TIME_ZONE = 'Asia/Bangkok';
+const DEFAULT_BACKEND_PUBLIC_ORIGIN = 'https://classroom-showcase.onrender.com';
+const DEFAULT_STUDENT_PUBLIC_ORIGIN = 'https://classshow-student.pages.dev';
+const CORS_ALLOWED_HEADERS = ['Content-Type', 'x-user-token', 'x-teacher-auth', 'x-super-admin-auth'];
+const CORS_EXPOSED_HEADERS = ['Content-Disposition'];
+const CORS_ALLOWED_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'];
 
 // APP_SECRET must be stable in production; otherwise all signed student/teacher tokens
 // become invalid after each deploy/restart.
@@ -128,6 +133,51 @@ const OPS_SNAPSHOT_LIST_TTL_MS = 60 * 1000;
 const OPS_HEAVY_QUERY_CACHE_TTL_MS = Math.max(5 * 1000, Number(process.env.OPS_HEAVY_QUERY_CACHE_TTL_MS || 30 * 1000));
 const TASK_STUCK_GRACE_MS = 5 * 60 * 1000;
 const QUARANTINED_MISSING_MEDIA_STATUS = 'quarantined_missing_media';
+
+function normalizeOrigin(value = '') {
+  const input = String(value || '').trim();
+  if (!input) return '';
+  try {
+    return new URL(input).origin;
+  } catch {
+    return input.replace(/\/+$/, '');
+  }
+}
+
+const corsAllowedOrigins = new Set([
+  normalizeOrigin(process.env.BACKEND_PUBLIC_ORIGIN || DEFAULT_BACKEND_PUBLIC_ORIGIN),
+  normalizeOrigin(process.env.STUDENT_PUBLIC_ORIGIN || DEFAULT_STUDENT_PUBLIC_ORIGIN),
+  ...String(process.env.CORS_ALLOWED_ORIGINS || '')
+    .split(',')
+    .map(item => normalizeOrigin(item))
+    .filter(Boolean)
+].filter(Boolean));
+
+const corsAllowedOriginPatterns = [
+  /^https?:\/\/localhost(?::\d+)?$/i,
+  /^https?:\/\/127\.0\.0\.1(?::\d+)?$/i,
+  /^https?:\/\/\[::1\](?::\d+)?$/i,
+  /^https:\/\/([a-z0-9-]+\.)*classshow-student\.pages\.dev$/i
+];
+
+function isAllowedCorsOrigin(origin = '') {
+  if (!origin) return true;
+  const normalized = normalizeOrigin(origin);
+  if (!normalized) return true;
+  if (corsAllowedOrigins.has(normalized)) return true;
+  return corsAllowedOriginPatterns.some(pattern => pattern.test(normalized));
+}
+
+const corsOptions = {
+  origin(origin, callback) {
+    callback(null, isAllowedCorsOrigin(origin));
+  },
+  methods: CORS_ALLOWED_METHODS,
+  allowedHeaders: CORS_ALLOWED_HEADERS,
+  exposedHeaders: CORS_EXPOSED_HEADERS,
+  maxAge: 60 * 60,
+  optionsSuccessStatus: 204
+};
 
 function escapeHtml(input = '') {
   const str = String(input);
@@ -5279,7 +5329,8 @@ startVideoTranscodeLoop();
 startArchiveLoop();
 
 // Middleware
-app.use(cors());
+app.use(cors(corsOptions));
+app.options(/.*/, cors(corsOptions));
 app.use(express.json({ limit: '10mb' }));
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 app.use(express.static(path.join(__dirname, 'public')));

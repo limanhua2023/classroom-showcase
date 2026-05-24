@@ -1,10 +1,11 @@
-const DEFAULT_BASE_URL = 'https://classroom-showcase.onrender.com';
+const DEFAULT_STUDENT_BASE_URL = 'https://classshow-student.pages.dev';
+const DEFAULT_BACKEND_BASE_URL = 'https://classroom-showcase.onrender.com';
 const COURSE_NAME = '经济学基础课程';
 const COURSE_SLUG = 'economics-fundamentals';
 
-function normalizeBaseUrl(input) {
-  const value = String(input || DEFAULT_BASE_URL).trim().replace(/\/+$/, '');
-  return value || DEFAULT_BASE_URL;
+function normalizeBaseUrl(input, fallback) {
+  const value = String(input || fallback).trim().replace(/\/+$/, '');
+  return value || fallback;
 }
 
 function formatStatus(ok) {
@@ -31,35 +32,21 @@ async function fetchJson(url, options = {}) {
   return { response, text, json };
 }
 
-async function runAudit(baseUrl) {
+async function runAudit(studentBaseUrl, backendBaseUrl) {
   const checks = [];
   const add = (name, ok, detail) => checks.push({ name, ok, detail });
+  const encodedCourse = encodeURIComponent(COURSE_NAME);
 
   try {
-    const { response, json } = await fetchJson(`${baseUrl}/api/health`);
+    const { response, json } = await fetchJson(`${backendBaseUrl}/api/health`);
     const ok = response.ok && json?.service === 'classshow' && json?.supabase_configured === true;
-    add('API health', ok, `HTTP ${response.status}; env=${json?.environment || '-'}; supabase=${json?.supabase_configured}`);
+    add('Backend API health', ok, `HTTP ${response.status}; env=${json?.environment || '-'}; supabase=${json?.supabase_configured}`);
   } catch (error) {
-    add('API health', false, error.message);
+    add('Backend API health', false, error.message);
   }
 
   try {
-    const { response, text } = await fetchText(`${baseUrl}/index.html`);
-    add('Student portal shell', response.ok && text.includes('经济学基础'), `HTTP ${response.status}`);
-  } catch (error) {
-    add('Student portal shell', false, error.message);
-  }
-
-  try {
-    const encoded = encodeURIComponent(COURSE_NAME);
-    const { response, text } = await fetchText(`${baseUrl}/course.html?course=${encoded}`);
-    add('Course portal shell', response.ok && text.includes('经济学基础'), `HTTP ${response.status}`);
-  } catch (error) {
-    add('Course portal shell', false, error.message);
-  }
-
-  try {
-    const { response, json } = await fetchJson(`${baseUrl}/api/portal/course-registry`);
+    const { response, json } = await fetchJson(`${backendBaseUrl}/api/portal/course-registry`);
     const econ = Array.isArray(json?.courses)
       ? json.courses.find(item => item?.slug === COURSE_SLUG)
       : null;
@@ -67,78 +54,117 @@ async function runAudit(baseUrl) {
       && !!econ
       && econ.is_active !== false
       && econ.entry_path === '/courses/economics-fundamentals/';
-    add('Course registry entry', ok, econ ? `HTTP ${response.status}; active=${econ.is_active !== false}; path=${econ.entry_path}` : `HTTP ${response.status}; economics missing`);
+    add('Backend course registry entry', ok, econ ? `HTTP ${response.status}; active=${econ.is_active !== false}; path=${econ.entry_path}` : `HTTP ${response.status}; economics missing`);
   } catch (error) {
-    add('Course registry entry', false, error.message);
+    add('Backend course registry entry', false, error.message);
   }
 
   try {
-    const { response, text } = await fetchText(`${baseUrl}/courses/economics-fundamentals/`);
-    const ok = response.ok && text.includes('经济学基础') && text.includes('economics-course-adapter.js');
-    add('Dedicated economics page', ok, `HTTP ${response.status}`);
+    const { response, text } = await fetchText(`${backendBaseUrl}/teacher-dashboard.html`);
+    add('Backend teacher dashboard shell', response.ok && text.includes('learningMonitorBadge'), `HTTP ${response.status}`);
   } catch (error) {
-    add('Dedicated economics page', false, error.message);
+    add('Backend teacher dashboard shell', false, error.message);
   }
 
   try {
-    const response = await fetch(`${baseUrl}/economics`, { redirect: 'manual' });
-    const location = response.headers.get('location') || '';
-    const ok = response.status >= 300 && response.status < 400 && location.includes('/courses/economics-fundamentals/');
-    add('Short alias /economics', ok, `HTTP ${response.status}; location=${location || '-'}`);
-  } catch (error) {
-    add('Short alias /economics', false, error.message);
-  }
-
-  try {
-    const response = await fetch(`${baseUrl}/course/economics`, { redirect: 'manual' });
-    const location = response.headers.get('location') || '';
-    const ok = response.status >= 300 && response.status < 400 && location.includes('/course.html?course=');
-    add('Short alias /course/economics', ok, `HTTP ${response.status}; location=${location || '-'}`);
-  } catch (error) {
-    add('Short alias /course/economics', false, error.message);
-  }
-
-  try {
-    const response = await fetch(`${baseUrl}/teacher`, { redirect: 'manual' });
+    const response = await fetch(`${backendBaseUrl}/teacher`, { redirect: 'manual' });
     const location = response.headers.get('location') || '';
     const ok = response.status >= 300 && response.status < 400 && location.includes('/teacher-login.html');
-    add('Short alias /teacher', ok, `HTTP ${response.status}; location=${location || '-'}`);
+    add('Backend short alias /teacher', ok, `HTTP ${response.status}; location=${location || '-'}`);
   } catch (error) {
-    add('Short alias /teacher', false, error.message);
+    add('Backend short alias /teacher', false, error.message);
   }
 
   try {
-    const { response, text } = await fetchText(`${baseUrl}/teacher-dashboard.html`);
-    add('Teacher dashboard shell', response.ok && text.includes('learningMonitorBadge'), `HTTP ${response.status}`);
-  } catch (error) {
-    add('Teacher dashboard shell', false, error.message);
-  }
-
-  try {
-    const response = await fetch(`${baseUrl}/admin`, { redirect: 'manual' });
+    const response = await fetch(`${backendBaseUrl}/admin`, { redirect: 'manual' });
     const location = response.headers.get('location') || '';
     const ok = response.status >= 300 && response.status < 400 && location.includes('/super-admin.html');
-    add('Short alias /admin', ok, `HTTP ${response.status}; location=${location || '-'}`);
+    add('Backend short alias /admin', ok, `HTTP ${response.status}; location=${location || '-'}`);
   } catch (error) {
-    add('Short alias /admin', false, error.message);
+    add('Backend short alias /admin', false, error.message);
   }
 
   try {
-    const { response, text } = await fetchText(`${baseUrl}/super-admin.html`);
-    add('Super-admin shell', response.ok && text.includes('economics-fundamentals'), `HTTP ${response.status}`);
+    const response = await fetch(`${backendBaseUrl}/api/health`, {
+      headers: { Origin: studentBaseUrl }
+    });
+    const allowOrigin = response.headers.get('access-control-allow-origin') || '';
+    const ok = response.ok && (allowOrigin === studentBaseUrl || allowOrigin === '*');
+    add('Backend CORS allows student origin', ok, `HTTP ${response.status}; allow-origin=${allowOrigin || '-'}`);
   } catch (error) {
-    add('Super-admin shell', false, error.message);
+    add('Backend CORS allows student origin', false, error.message);
+  }
+
+  try {
+    const { response, text } = await fetchText(`${studentBaseUrl}/index.html`);
+    add('Student portal shell', response.ok && text.includes('deployment-config.js'), `HTTP ${response.status}`);
+  } catch (error) {
+    add('Student portal shell', false, error.message);
+  }
+
+  try {
+    const { response, text } = await fetchText(`${studentBaseUrl}/course.html?course=${encodedCourse}`);
+    add('Student course portal shell', response.ok && text.includes('deployment-config.js'), `HTTP ${response.status}`);
+  } catch (error) {
+    add('Student course portal shell', false, error.message);
+  }
+
+  try {
+    const { response, text } = await fetchText(`${studentBaseUrl}/courses/economics-fundamentals/`);
+    const ok = response.ok && text.includes('economics-course-adapter.js') && text.includes('deployment-config.js');
+    add('Student dedicated economics page', ok, `HTTP ${response.status}`);
+  } catch (error) {
+    add('Student dedicated economics page', false, error.message);
+  }
+
+  try {
+    const response = await fetch(`${studentBaseUrl}/economics`, { redirect: 'manual' });
+    const location = response.headers.get('location') || '';
+    const ok = response.status >= 300 && response.status < 400 && location.includes('/courses/economics-fundamentals/');
+    add('Student short alias /economics', ok, `HTTP ${response.status}; location=${location || '-'}`);
+  } catch (error) {
+    add('Student short alias /economics', false, error.message);
+  }
+
+  try {
+    const response = await fetch(`${studentBaseUrl}/course/economics`, { redirect: 'manual' });
+    const location = response.headers.get('location') || '';
+    const ok = response.status >= 300 && response.status < 400 && location.includes('/course.html?course=');
+    add('Student short alias /course/economics', ok, `HTTP ${response.status}; location=${location || '-'}`);
+  } catch (error) {
+    add('Student short alias /course/economics', false, error.message);
+  }
+
+  try {
+    const response = await fetch(`${studentBaseUrl}/teacher`, { redirect: 'manual' });
+    const location = response.headers.get('location') || '';
+    const ok = response.status >= 300 && response.status < 400 && location.includes('classroom-showcase.onrender.com/teacher');
+    add('Student site /teacher redirects to backend', ok, `HTTP ${response.status}; location=${location || '-'}`);
+  } catch (error) {
+    add('Student site /teacher redirects to backend', false, error.message);
+  }
+
+  try {
+    const response = await fetch(`${studentBaseUrl}/admin`, { redirect: 'manual' });
+    const location = response.headers.get('location') || '';
+    const ok = response.status >= 300 && response.status < 400 && location.includes('classroom-showcase.onrender.com/admin');
+    add('Student site /admin redirects to backend', ok, `HTTP ${response.status}; location=${location || '-'}`);
+  } catch (error) {
+    add('Student site /admin redirects to backend', false, error.message);
   }
 
   return checks;
 }
 
 async function main() {
-  const baseUrl = normalizeBaseUrl(process.argv[2]);
-  const checks = await runAudit(baseUrl);
+  const studentBaseUrl = normalizeBaseUrl(process.argv[2], DEFAULT_STUDENT_BASE_URL);
+  const backendBaseUrl = normalizeBaseUrl(process.argv[3], DEFAULT_BACKEND_BASE_URL);
+  const checks = await runAudit(studentBaseUrl, backendBaseUrl);
   const failed = checks.filter(item => !item.ok);
 
-  console.log(`Public readiness audit for ${baseUrl}`);
+  console.log(`Public readiness audit`);
+  console.log(`  student: ${studentBaseUrl}`);
+  console.log(`  backend: ${backendBaseUrl}`);
   for (const check of checks) {
     console.log(`${marker(check.ok)} ${check.name}: ${formatStatus(check.ok)} - ${check.detail}`);
   }
