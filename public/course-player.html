@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>课程模块播放器 - ClassShow</title>
+  <link rel="stylesheet" href="/css/main.css">
+  <link rel="stylesheet" href="/css/course-player.css">
+</head>
+<body class="course-player-page">
+  <header class="player-topbar">
+    <a class="topbar-logo" href="/index.html">Class<span>Show</span></a>
+    <div class="player-topbar-actions">
+      <button class="btn btn-secondary btn-sm" type="button" id="playerPortalButton">课程总页</button>
+      <button class="btn btn-secondary btn-sm" type="button" id="playerLegacyButton">原课程页</button>
+      <button class="btn btn-secondary btn-sm" type="button" id="playerIndexButton">总门户</button>
+    </div>
+  </header>
+
+  <main class="player-layout">
+    <aside class="player-sidebar">
+      <div class="player-sidebar-shell">
+        <div class="brand-kicker">COURSE PACK</div>
+        <h1 id="playerCourseTitle">正在加载课程包...</h1>
+        <p id="playerCourseDescription">共享播放器会把课程内容和课程程序拆开，后续新增课程只需要交付内容包。</p>
+        <div class="player-chip-row" id="playerContextChips">
+          <span class="player-chip">初始化中</span>
+        </div>
+        <div class="player-sidebar-meta" id="playerSidebarMeta"></div>
+      </div>
+      <nav class="player-module-nav" aria-label="课程模块导航">
+        <div class="player-module-nav-head">
+          <strong>模块目录</strong>
+          <span id="playerModuleCount">0</span>
+        </div>
+        <div id="playerModuleList" class="player-module-list">
+          <div class="player-empty-state">正在读取模块目录...</div>
+        </div>
+      </nav>
+    </aside>
+
+    <section class="player-main">
+      <div class="player-module-shell">
+        <div class="player-module-head">
+          <div>
+            <div class="brand-kicker">MODULE VIEW</div>
+            <h2 id="playerModuleTitle">请选择模块</h2>
+            <p id="playerModuleSummary">模块内容会从课程包 JSON 动态渲染，这样第二门课可以直接复用播放器。</p>
+          </div>
+          <div class="player-module-head-meta" id="playerModuleMeta"></div>
+        </div>
+
+        <div class="player-module-toolbar">
+          <div class="player-module-status" id="playerModuleStatus">等待加载模块...</div>
+          <div class="player-module-toolbar-actions">
+            <button class="btn btn-secondary btn-sm" type="button" id="playerPrevButton">上一模块</button>
+            <button class="btn btn-secondary btn-sm" type="button" id="playerNextButton">下一模块</button>
+          </div>
+        </div>
+
+        <article class="player-module-body" id="playerModuleBody">
+          <div class="player-empty-state">课程包加载完成后，这里会显示模块内容。</div>
+        </article>
+      </div>
+    </section>
+  </main>
+
+  <script>window.CLASSSHOW_SURFACE = 'student';</script>
+  <script src="/js/deployment-config.js"></script>
+  <script src="/js/app-config.js"></script>
+  <script src="/js/api.js"></script>
+  <script src="/js/course-runtime.js"></script>
+  <script src="/js/course-engine.js"></script>
+</body>
+</html>

@@ -224,6 +224,7 @@
       <div class="classshow-econ-actions">
         <button type="button" class="primary" id="classshowEconPortalBtn">返回课程总页</button>
         <button type="button" id="classshowEconIndexBtn">总门户</button>
+        <button type="button" id="classshowEconModularBtn">模块版</button>
         <button type="button" id="classshowEconThemeBtn">亮色</button>
         <button type="button" id="classshowEconTeacherBtn" style="display:none;">教师后台</button>
       </div>
@@ -243,6 +244,9 @@
         return;
       }
       location.href = studentUrl('/index.html');
+    });
+    document.getElementById('classshowEconModularBtn').addEventListener('click', () => {
+      location.href = studentUrl(`/course-player.html?slug=${encodeURIComponent(COURSE_SLUG)}`);
     });
     document.getElementById('classshowEconThemeBtn').addEventListener('click', () => {
       if (typeof window.toggleTheme === 'function') {

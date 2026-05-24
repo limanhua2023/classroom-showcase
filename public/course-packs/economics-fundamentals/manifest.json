@@ -1,0 +1,30 @@
+{
+  "schema_version": "classshow-course-pack-v1",
+  "pack_version": "2026.05.24",
+  "updated_at": "2026-05-24T03:00:00.000Z",
+  "course": {
+    "slug": "economics-fundamentals",
+    "name": "经济学基础课程",
+    "course_name": "经济学基础课程",
+    "short_name": "经济学基础",
+    "audience": "大一新生",
+    "format_label": "共享播放器样板",
+    "description": "这是经济学基础课程的第一份模块化内容包。它把课程内容从巨型静态页里抽出来，后续数学、英语、AI 都可以直接复用同一套播放器。",
+    "legacy_entry_path": "/courses/economics-fundamentals/"
+  },
+  "engine": {
+    "player_version": "course-engine-v1",
+    "default_module_id": "thinking-tools-01"
+  },
+  "modules": [
+    {
+      "id": "thinking-tools-01",
+      "title": "思维工具：从机会成本到边际分析",
+      "kicker": "第一批迁移样板",
+      "summary": "先把最核心的经济学思维工具拆成模块化内容，验证共享播放器、模块导航和轻交互题型。",
+      "duration_minutes": 18,
+      "status": "ready",
+      "file": "modules/thinking-tools-01.json"
+    }
+  ]
+}
