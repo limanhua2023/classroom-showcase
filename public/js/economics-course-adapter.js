@@ -9,6 +9,7 @@
   const AI_KEY_KEY = 'econCourse_v117_api_key';
   const ECON_SESSION_KEY_PREFIX = 'econCourse_v117_';
   const LOCAL_STUDY_STATS_KEY = 'econCourse_v117_self_study_stats';
+  const LOCAL_PROGRESS_CHECKPOINT_KEY = 'econCourse_v117_progress_checkpoint';
   const LOCAL_STUDY_MAX_DELTA_SECONDS = 90;
   const LEGACY_LOCAL_STUDY_STATS_KEY = 'econCourse_v117_self_study_stats';
   function studentUrl(path = '') {
@@ -66,6 +67,10 @@
     'wrongQuestions',
     'reflections'
   ];
+  const LOCAL_PROGRESS_SNAPSHOT_KEYS = Array.from(new Set([
+    ...REMOTE_SNAPSHOT_KEYS,
+    ...PROGRESS_STATE_KEYS
+  ]));
 
   const params = new URLSearchParams(location.search);
   const wantsTeacherMode = params.get('teacher') === '1';
@@ -93,6 +98,7 @@
     originalBridge: window.EconCourseBridge || {},
     localStudySessionToken: '',
     localStudy: readLocalStudyStats(initialContext),
+    progressCheckpoint: readLocalProgressCheckpoint(initialContext),
     progressDirty: false
   };
   runtime.localStudySessionToken = getLearningSessionToken();
@@ -811,6 +817,9 @@ function updateBridgeShell() {
       if (app.state.learningMode === 'teacher') {
         app.state.learningMode = 'classroom';
       }
+      if (hasLoggedInStudent()) {
+        hydrateScopedLocalProgress();
+      }
     };
 
     app.storage.save = function patchedSave() {
@@ -824,6 +833,9 @@ function updateBridgeShell() {
         learning_channel: hasLoggedInStudent() ? 'classshow-activity' : 'device-selflearn'
       };
       runtime.originalStorageSave();
+      if (hasLoggedInStudent()) {
+        captureLocalProgressCheckpoint('state_save');
+      }
       if (!runtime.hydrating) {
         recordLocalStudy('state_save');
         if (!hasLoggedInStudent()) {
@@ -840,7 +852,7 @@ function updateBridgeShell() {
       const localKeys = [];
       for (let i = 0; i < localStorage.length; i += 1) {
         const key = localStorage.key(i);
-        if (key && key.startsWith(ECON_SESSION_KEY_PREFIX)) localKeys.push(key);
+        if (key && (key.startsWith(ECON_SESSION_KEY_PREFIX) || key.startsWith(LOCAL_PROGRESS_CHECKPOINT_KEY))) localKeys.push(key);
       }
       localKeys.forEach(key => localStorage.removeItem(key));
 
@@ -864,6 +876,10 @@ function updateBridgeShell() {
       }
       bootstrapTeacherSupplement(true);
     };
+
+    if (hasLoggedInStudent()) {
+      hydrateScopedLocalProgress();
+    }
   }
 
   function scheduleTeacherBootstrap() {
@@ -1021,6 +1037,7 @@ function updateBridgeShell() {
         learning_channel: 'classshow-activity'
       };
       runtime.originalStorageSave();
+      captureLocalProgressCheckpoint('remote_hydrate', { remoteSynced: true });
       refreshCourseViews();
       recordLocalStudy('remote_hydrate');
       runtime.syncLabel = '已恢复云端进度';
@@ -1241,6 +1258,7 @@ function updateBridgeShell() {
             : new Date().toISOString()
         };
         runtime.progressDirty = false;
+        captureLocalProgressCheckpoint(reason || 'checkpoint', { remoteSynced: true });
         if (!options.silent) {
           runtime.syncLabel = '进度已记录到 ClassShow';
           runtime.syncLevel = 'ok';
@@ -1349,6 +1367,12 @@ function updateBridgeShell() {
     return `${LOCAL_STUDY_STATS_KEY}::${COURSE_SLUG}::${activityId}::${userId}`;
   }
 
+  function getLocalProgressStorageKey(context = runtime.context) {
+    const activityId = String(context && (context.activity_id || context.activity && context.activity.id) || 'local').trim() || 'local';
+    const userId = String(context && context.user && context.user.id || 'anon').trim() || 'anon';
+    return `${LOCAL_PROGRESS_CHECKPOINT_KEY}::${COURSE_SLUG}::${activityId}::${userId}`;
+  }
+
   function readLocalStudyStats(context = runtime.context) {
     try {
       const scopedRaw = localStorage.getItem(getLocalStudyStorageKey(context));
@@ -1364,6 +1388,162 @@ function updateBridgeShell() {
     try {
       localStorage.setItem(getLocalStudyStorageKey(context), JSON.stringify(normalizeLocalStudyStats(stats)));
     } catch {}
+  }
+
+  function normalizeLocalProgressCheckpoint(value) {
+    const checkpoint = value && typeof value === 'object' ? value : {};
+    return {
+      course_slug: typeof checkpoint.course_slug === 'string' ? checkpoint.course_slug : COURSE_SLUG,
+      activity_id: typeof checkpoint.activity_id === 'string' ? checkpoint.activity_id : String(runtime.context.activity_id || ''),
+      user_id: typeof checkpoint.user_id === 'string' ? checkpoint.user_id : String(runtime.context.user && runtime.context.user.id || ''),
+      last_local_update_at: typeof checkpoint.last_local_update_at === 'string' ? checkpoint.last_local_update_at : '',
+      last_remote_sync_at: typeof checkpoint.last_remote_sync_at === 'string' ? checkpoint.last_remote_sync_at : '',
+      last_event: typeof checkpoint.last_event === 'string' ? checkpoint.last_event : '',
+      snapshot: checkpoint.snapshot && typeof checkpoint.snapshot === 'object' ? checkpoint.snapshot : {}
+    };
+  }
+
+  function readLocalProgressCheckpoint(context = runtime.context) {
+    try {
+      const raw = localStorage.getItem(getLocalProgressStorageKey(context));
+      return normalizeLocalProgressCheckpoint(raw ? JSON.parse(raw) : null);
+    } catch {
+      return normalizeLocalProgressCheckpoint(null);
+    }
+  }
+
+  function writeLocalProgressCheckpoint(checkpoint, context = runtime.context) {
+    const normalized = normalizeLocalProgressCheckpoint(checkpoint);
+    runtime.progressCheckpoint = normalized;
+    try {
+      localStorage.setItem(getLocalProgressStorageKey(context), JSON.stringify(normalized));
+    } catch {}
+  }
+
+  function emptyProgressSnapshot() {
+    return {
+      learningMode: 'classroom',
+      currentLesson: 1,
+      currentChapter: 1,
+      currentStage: 'core',
+      xp: 0,
+      done: {},
+      achs: {},
+      perfects: {},
+      scores: {},
+      streak: 0,
+      completedLessons: {},
+      completedChapters: {},
+      completedStages: {},
+      chapterProgress: {},
+      lessonProgress: {},
+      stageProgress: {},
+      wrongQuestions: [],
+      reflections: {},
+      storyStageProgress: {},
+      storyIncorrectAttempts: {},
+      completedStoryChallenges: {},
+      completedSandboxes: {},
+      chatTurn: {},
+      currentActiveChapter: 1,
+      ppfInteracted: false,
+      completedQuests: {},
+      chapterThoughts: {},
+      chapterThoughtDrafts: {}
+    };
+  }
+
+  function buildLocalProgressSnapshot(state) {
+    const safeState = state && typeof state === 'object' ? state : {};
+    const base = emptyProgressSnapshot();
+    LOCAL_PROGRESS_SNAPSHOT_KEYS.forEach(key => {
+      if (key in safeState) {
+        base[key] = cloneValue(safeState[key]);
+      }
+    });
+    return base;
+  }
+
+  function captureLocalProgressCheckpoint(reason, options = {}) {
+    const app = window.EconCourseApp;
+    if (!app || !app.state) return null;
+    const meta = app.state.classshowMeta && typeof app.state.classshowMeta === 'object'
+      ? app.state.classshowMeta
+      : {};
+    const checkpoint = {
+      course_slug: COURSE_SLUG,
+      activity_id: String(runtime.context.activity_id || ''),
+      user_id: String(runtime.context.user && runtime.context.user.id || ''),
+      last_local_update_at: meta.last_local_update_at || new Date().toISOString(),
+      last_remote_sync_at: options.remoteSynced
+        ? (meta.last_remote_sync_at || new Date().toISOString())
+        : (runtime.progressCheckpoint && runtime.progressCheckpoint.last_remote_sync_at || ''),
+      last_event: reason || meta.last_event || 'state_save',
+      snapshot: buildLocalProgressSnapshot(app.state)
+    };
+    writeLocalProgressCheckpoint(checkpoint, runtime.context);
+    return checkpoint;
+  }
+
+  function applyProgressSnapshotToState(snapshot, meta = {}) {
+    const app = window.EconCourseApp;
+    if (!app || !app.state) return false;
+    const nextSnapshot = snapshot && typeof snapshot === 'object' ? snapshot : emptyProgressSnapshot();
+    const mergedMeta = {
+      ...(app.state.classshowMeta || {}),
+      course_slug: COURSE_SLUG,
+      last_local_update_at: meta.last_local_update_at || '',
+      last_remote_sync_at: meta.last_remote_sync_at || '',
+      learning_channel: hasLoggedInStudent() ? 'classshow-activity' : 'device-selflearn'
+    };
+    const base = emptyProgressSnapshot();
+    LOCAL_PROGRESS_SNAPSHOT_KEYS.forEach(key => {
+      const value = key in nextSnapshot ? nextSnapshot[key] : base[key];
+      app.state[key] = cloneValue(value);
+    });
+    app.state.classshowMeta = mergedMeta;
+    runtime.originalStorageSave();
+    return true;
+  }
+
+  function hydrateScopedLocalProgress() {
+    const app = window.EconCourseApp;
+    if (!app || !hasLoggedInStudent()) return false;
+    const checkpoint = readLocalProgressCheckpoint(runtime.context);
+    runtime.progressCheckpoint = checkpoint;
+    const hasCheckpoint = checkpoint && checkpoint.snapshot && hasMeaningfulLocalProgress(checkpoint.snapshot);
+    if (hasCheckpoint) {
+      const checkpointTime = checkpoint.last_local_update_at ? new Date(checkpoint.last_local_update_at).getTime() : 0;
+      const currentTime = app.state.classshowMeta && app.state.classshowMeta.last_local_update_at
+        ? new Date(app.state.classshowMeta.last_local_update_at).getTime()
+        : 0;
+      if (!Number.isFinite(currentTime) || !Number.isFinite(checkpointTime) || checkpointTime >= currentTime) {
+        runtime.hydrating = true;
+        try {
+          applyProgressSnapshotToState(checkpoint.snapshot, {
+            last_local_update_at: checkpoint.last_local_update_at,
+            last_remote_sync_at: checkpoint.last_remote_sync_at
+          });
+          refreshCourseViews();
+        } finally {
+          runtime.hydrating = false;
+        }
+        return true;
+      }
+      return false;
+    }
+
+    runtime.hydrating = true;
+    try {
+      applyProgressSnapshotToState(emptyProgressSnapshot(), {
+        last_local_update_at: '',
+        last_remote_sync_at: ''
+      });
+      refreshCourseViews();
+    } finally {
+      runtime.hydrating = false;
+    }
+    return true;
   }
 
   function normalizeLocalStudyStats(value) {
