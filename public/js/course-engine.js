@@ -1,7 +1,7 @@
 (function initCourseEngine() {
   const params = new URLSearchParams(location.search);
   const COURSE_NAME_BY_SLUG = {
-    'economics-fundamentals': '经济学基础课程'
+    'economics-fundamentals': '经济学基础'
   };
   const state = {
     slug: '',

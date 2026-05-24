@@ -1,6 +1,6 @@
 const DEFAULT_STUDENT_BASE_URL = 'https://classshow-student.pages.dev';
 const DEFAULT_BACKEND_BASE_URL = 'https://classroom-showcase.onrender.com';
-const COURSE_NAME = '经济学基础课程';
+const COURSE_NAME = '经济学基础';
 const COURSE_SLUG = 'economics-fundamentals';
 
 function normalizeBaseUrl(input, fallback) {

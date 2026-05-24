@@ -1,5 +1,5 @@
 (function initEconomicsCourseAdapter() {
-  const COURSE_NAME = '经济学基础课程';
+  const COURSE_NAME = '经济学基础';
   const COURSE_SLUG = 'economics-fundamentals';
   const LEARNING_HEARTBEAT_MS = 30000;
   const PROGRESS_SYNC_DEBOUNCE_MS = 1500;
@@ -342,12 +342,12 @@
       ? `当前会话绑定的是《${escapeText(access.activityCourseName)}》活动，请从正确课程入口重新进入。`
       : access.activityReady
         ? '当前活动已绑定成功。请从学生入口继续，以学生身份进入课程学习。'
-        : '请先在学生入口填写姓名、学号和邀请码，再进入经济学基础课程学习。';
+        : '请先在学生入口填写姓名、学号和邀请码，再进入经济学基础学习。';
 
     gate.innerHTML = `
       <div class="classshow-econ-auth-card">
         <div class="classshow-econ-auth-kicker">STUDENT LOGIN REQUIRED</div>
-        <h1>登录后才能进入经济学基础课程</h1>
+        <h1>登录后才能进入经济学基础</h1>
         <p>为了准确记录学习时长、学习进度和具体学生身份，本课程仅向已登录学生开放。登录后，系统才会把学习记录绑定到正确学生名下。</p>
         <div class="classshow-econ-auth-note">
           <strong>${escapeText(access.isGuest ? '当前是访客模式' : '当前尚未完成学生登录')}</strong>

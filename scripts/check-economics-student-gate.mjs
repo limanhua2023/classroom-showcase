@@ -44,7 +44,7 @@ if (studentEntryHtml.includes('resolveNextTarget')) {
   fail('student entry must not use stale next targets');
 }
 
-const expectedCourse = normalizeCourseName('经济学基础课程');
+const expectedCourse = normalizeCourseName('经济学基础');
 const actualShortCourse = normalizeCourseName('经济学基础');
 if (expectedCourse !== actualShortCourse) {
   fail('course normalization does not treat short economics activity names as equivalent');

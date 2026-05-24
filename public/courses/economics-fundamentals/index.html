@@ -15,7 +15,7 @@ html[data-classshow-locked="1"] body.classshow-auth-ready {
 <script>
 (() => {
   try {
-    const expectedCourseName = '经济学基础课程';
+    const expectedCourseName = '经济学基础';
     const activityRaw = sessionStorage.getItem('classshow_activity');
     const activity = activityRaw ? JSON.parse(activityRaw) : null;
     const activityId = sessionStorage.getItem('classshow_activity_id');
@@ -2969,78 +2969,6 @@ footer {
   word-break: break-all;
 }
 
-/* AI Tutor floating button */
-.ai-float-btn {
-  position: fixed;
-  bottom: 80px;
-  right: 20px;
-  width: 50px;
-  height: 50px;
-  border-radius: 50px;
-  background: linear-gradient(135deg, var(--gold), var(--teal));
-  color: #030D1E;
-  border: none;
-  font-size: 22px;
-  cursor: pointer;
-  z-index: 999;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  box-shadow: 0 4px 20px rgba(13, 148, 136, 0.4);
-  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
-}
-.ai-float-btn:hover {
-  transform: scale(1.1) rotate(5deg);
-  box-shadow: 0 6px 24px rgba(13, 148, 136, 0.6);
-}
-.ai-float-btn::after {
-  content: "AI私教";
-  position: absolute;
-  right: 60px;
-  background: var(--bg2);
-  border: 1px solid var(--border);
-  color: var(--text);
-  font-size: 11px;
-  font-weight: 700;
-  padding: 4px 8px;
-  border-radius: 6px;
-  white-space: nowrap;
-  opacity: 0;
-  transform: translateX(10px);
-  pointer-events: none;
-  transition: all 0.3s;
-}
-.ai-float-btn:hover::after {
-  opacity: 1;
-  transform: translateX(0);
-}
-
-/* AI Sidebar Panel */
-.ai-sidebar {
-  position: fixed;
-  top: 0;
-  right: -420px;
-  width: 400px;
-  height: 100vh;
-  background: rgba(3, 13, 30, 0.85);
-  backdrop-filter: blur(25px);
-  -webkit-backdrop-filter: blur(25px);
-  border-left: 1px solid var(--border);
-  z-index: 1000;
-  box-shadow: -10px 0 40px rgba(0, 0, 0, 0.5);
-  transition: right 0.4s cubic-bezier(0.075, 0.82, 0.165, 1);
-  display: flex;
-  flex-direction: column;
-}
-@media(max-width: 480px) {
-  .ai-sidebar {
-    width: 100%;
-    right: -100%;
-  }
-}
-.ai-sidebar.active {
-  right: 0;
-}
 .ai-header {
   padding: 20px;
   border-bottom: 1px solid var(--border);
@@ -5517,27 +5445,7 @@ body.projector-mode .teacher-question-card {
 
 <!-- 浮动操作 -->
 <button id="btt" onclick="window.scrollTo({top:0,behavior:'smooth'})">↑</button>
-<button class="ai-float-btn" id="ai-btn" onclick="toggleAiSidebar()">🧠</button>
 <div id="toast-c"></div>
-
-<!-- AI 智能私教侧边栏 v1.17.4 — 学生端无 API Key 入口 -->
-<div class="ai-sidebar" id="ai-sidebar">
-  <div class="ai-header">
-    <div class="ai-title">🧠 AI 随堂经济学私教 <span id="ai-ch-badge">正在学习第1章</span></div>
-    <div class="ai-hd-btns">
-      <!-- v1.17.4: API 设置按钮仅在 teacher-mode 下由 JS 动态注入，学生端无此按钮 -->
-      <button class="ai-hd-btn ai-close" onclick="toggleAiSidebar()">×</button>
-    </div>
-  </div>
-  <!-- v1.17.4: AI 设置面板由 renderTeacherApiPanel() 在 teacher-mode 下动态渲染，学生端不存在此 DOM -->
-  <!-- 消息展示区 -->
-  <div class="ai-chat-messages" id="ai-chat-msgs"></div>
-  <!-- 输入框 -->
-  <div class="ai-chat-input-area">
-    <textarea class="ai-chat-input" id="ai-input" placeholder="在下方选择话题对话，或输入你的学术提问..." onkeydown="if(event.key==='Enter'&&!event.shiftKey){event.preventDefault();sendAiMsg();}"></textarea>
-    <button class="ai-chat-send" onclick="sendAiMsg()">发送</button>
-  </div>
-</div>
 
 <!-- 全局模态弹窗 (成就 & 错题本) -->
 <div id="modal" class="modal" onclick="if(event.target.id==='modal')closeModal()"></div>

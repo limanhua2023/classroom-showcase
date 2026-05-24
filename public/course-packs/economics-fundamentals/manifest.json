@@ -4,12 +4,12 @@
   "updated_at": "2026-05-24T03:00:00.000Z",
   "course": {
     "slug": "economics-fundamentals",
-    "name": "经济学基础课程",
-    "course_name": "经济学基础课程",
+    "name": "经济学基础",
+    "course_name": "经济学基础",
     "short_name": "经济学基础",
     "audience": "大一新生",
     "format_label": "共享播放器样板",
-    "description": "这是经济学基础课程的第一份模块化内容包。它把课程内容从巨型静态页里抽出来，后续数学、英语、AI 都可以直接复用同一套播放器。",
+    "description": "这是经济学基础的第一份模块化内容包。它把课程内容从巨型静态页里抽出来，后续数学、英语、AI 都可以直接复用同一套播放器。",
     "legacy_entry_path": "/courses/economics-fundamentals/"
   },
   "engine": {

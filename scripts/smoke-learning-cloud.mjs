@@ -1,7 +1,7 @@
 import { createClient } from '@supabase/supabase-js';
 
 const DEFAULT_BASE_URL = 'https://classroom-showcase.onrender.com';
-const COURSE_NAME = '经济学基础课程';
+const COURSE_NAME = '经济学基础';
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));

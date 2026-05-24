@@ -13,7 +13,7 @@
         <section class="launch-intro" aria-label="ClassShow 课堂作品秀">
           <div class="brand-kicker">COURSE SHOWCASE PORTAL</div>
           <h1>让课堂作品<br><span>真正被看见</span></h1>
-          <p>ClassShow 把学生作品上传、实名入场、匿名互评、信息反馈和大屏展示连成一个统一门户。经济学基础课程会先接入，后续再逐步扩展到 AI 学习、数学与统计、英语等课程。</p>
+          <p>ClassShow 把学生作品上传、实名入场、匿名互评、信息反馈和大屏展示连成一个统一门户。经济学基础会先接入，后续再逐步扩展到 AI 学习、数学与统计、英语等课程。</p>
           <div class="launch-signals">
             <div class="launch-signal"><strong>实名入场</strong><span>同一学号跨课程保持同一身份</span></div>
             <div class="launch-signal"><strong>竞赛互动</strong><span>评分、评论、反馈、排行统一记录</span></div>
@@ -67,7 +67,7 @@
           <div>
             <div class="brand-kicker course-kicker">COURSE ARENA</div>
             <h2>课程作品总门户</h2>
-            <p>经济学基础课程会先从这里进入，后续 AI 学习、数学与统计、英语等课程也都走同一注册表和同一公共底座。课程页负责课程体验，公共底座继续负责身份、邀请码、上传、反馈、学习时长与运维。</p>
+            <p>经济学基础会先从这里进入，后续 AI 学习、数学与统计、英语等课程也都走同一注册表和同一公共底座。课程页负责课程体验，公共底座继续负责身份、邀请码、上传、反馈、学习时长与运维。</p>
           </div>
           <button class="btn btn-secondary btn-sm" onclick="loadPortalCourses()">刷新课程</button>
         </div>
@@ -156,7 +156,7 @@
 
     function fallbackCourses() {
       return [{
-        course_name: '经济学基础课程',
+        course_name: '经济学基础',
         activity_count: 0,
         student_count: 0,
         submission_count: 0,
@@ -167,7 +167,7 @@
         activities: [],
         integration: {
           slug: 'economics-fundamentals',
-          description: '经济学基础课程已作为第一门课程挂入总门户，正式课程页内容会持续替换到该路由。',
+          description: '经济学基础已作为第一门课程挂入总门户，正式课程页内容会持续替换到该路由。',
           integration_status: 'ready',
           entry_path: '/courses/economics-fundamentals/'
         }

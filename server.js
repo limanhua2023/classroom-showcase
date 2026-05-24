@@ -6027,7 +6027,7 @@ app.get(['/admin', '/admin/', '/super-admin', '/super-admin/'], (_req, res) => {
   res.redirect(302, '/super-admin.html');
 });
 app.get(['/course/economics', '/course/economics/'], (_req, res) => {
-  res.redirect(302, `/course.html?course=${encodeURIComponent('经济学基础课程')}`);
+  res.redirect(302, `/course.html?course=${encodeURIComponent('经济学基础')}`);
 });
 app.get(['/economics', '/economics/', '/econ', '/econ/'], (_req, res) => {
   res.redirect(302, '/courses/economics-fundamentals/');
@@ -6831,18 +6831,18 @@ const PORTAL_ACTIVITY_FIELDS = 'id,course_name,class_name,activity_name,descript
 const PORTAL_SUBMISSION_FIELDS = 'activity_id,media_type,upload_time,status';
 const PORTAL_SUBMISSION_LEGACY_FIELDS = 'activity_id,upload_time';
 const PORTAL_USER_FIELDS = 'activity_id,student_id';
-const PORTAL_DEFAULT_COURSES = ['经济学基础课程', 'AI学习课程'];
+const PORTAL_DEFAULT_COURSES = ['经济学基础', 'AI学习课程'];
 const DEFAULT_COURSE_REGISTRY = {
   version: 3,
   updated_at: '2026-05-23T00:30:00.000Z',
   courses: [
     {
       slug: 'economics-fundamentals',
-      course_name: '经济学基础课程',
+      course_name: '经济学基础',
       short_name: '经济学基础',
       audience: '大一新生',
       visual_style: '学术感，图表感，讨论感',
-      description: '经济学基础课程总入口。作为第一门接入课程页，继续复用统一身份、邀请码、评分、反馈、备份与归档体系。',
+      description: '经济学基础总入口。作为第一门接入课程页，继续复用统一身份、邀请码、评分、反馈、备份与归档体系。',
       integration_status: 'ready',
       entry_path: '/courses/economics-fundamentals/',
       module_key: 'economics-fundamentals-v1',
@@ -6858,7 +6858,7 @@ const DEFAULT_COURSE_REGISTRY = {
       short_name: 'AI学习',
       audience: '后续第二阶段课程',
       visual_style: '科技感，项目感',
-      description: 'AI学习课程预留为第二门对接课程。正式内容将在经济学基础课程之后逐步接入。',
+      description: 'AI学习课程预留为第二门对接课程。正式内容将在经济学基础之后逐步接入。',
       integration_status: 'planned',
       entry_path: '/courses/ai-learning/',
       module_key: 'ai-learning-v1',

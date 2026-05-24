@@ -1830,7 +1830,7 @@
 
     function isEconomicsActivity(activity) {
       const courseName = String(activity?.course_name || '').trim();
-      return courseName === '经济学基础课程' || courseName.includes('经济学基础');
+      return courseName === '经济学基础' || courseName === '经济学基础课程' || courseName.includes('经济学基础');
     }
 
     function getToggleMeta(activity) {

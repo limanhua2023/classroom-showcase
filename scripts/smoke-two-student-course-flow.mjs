@@ -3,7 +3,7 @@ import path from 'node:path';
 
 const STUDENT_BASE = (process.env.CLASSSHOW_STUDENT_BASE || 'https://classshow-student.pages.dev').replace(/\/$/, '');
 const BACKEND_BASE = (process.env.CLASSSHOW_BACKEND_BASE || 'https://classroom-showcase.onrender.com').replace(/\/$/, '');
-const COURSE_NAME = '经济学基础课程';
+const COURSE_NAME = '经济学基础';
 const COURSE_SLUG = 'economics-fundamentals';
 
 function fail(message) {

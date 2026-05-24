@@ -19,7 +19,7 @@
     <section class="course-hero">
       <div class="course-hero-copy">
         <div class="brand-kicker">COURSE ARENA</div>
-        <h1 id="courseTitle">经济学基础课程</h1>
+        <h1 id="courseTitle">经济学基础</h1>
         <p id="courseSubtitle">这里汇集课程活动、作品展示与课程专页入口。学生身份跨课程共享，邀请码按课程和活动继续隔离。</p>
         <div class="course-hero-actions">
           <button class="btn btn-primary" onclick="focusInviteBox()">输入邀请码进入</button>
@@ -76,7 +76,7 @@
   <script src="js/api.js"></script>
   <script>
     const params = new URLSearchParams(location.search);
-    const courseName = (params.get('course') || '经济学基础课程').trim();
+    const courseName = (params.get('course') || '经济学基础').trim();
     let currentCourse = null;
     let activities = [];
 
