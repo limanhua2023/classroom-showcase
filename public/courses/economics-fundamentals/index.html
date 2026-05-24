@@ -690,27 +690,83 @@ body.low-perf * {
   font-size: 15px; font-weight: 800; margin-bottom: 14px;
   display: flex; align-items: center; justify-content: space-between; cursor: pointer;
 }
-.lesson-row {
+.lesson-map-grid {
   display: grid;
-  grid-template-columns: 48px 1fr auto;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+}
+.lesson-row {
+  display: flex;
+  flex-direction: column;
   gap: 10px;
-  align-items: center;
-  padding: 9px 10px;
-  border-radius: 8px;
-  margin-bottom: 4px;
+  min-height: 148px;
+  padding: 14px 14px 12px;
+  border-radius: 14px;
   font-size: 12.5px;
-  transition: background 0.15s;
+  border: 1px solid var(--border-color);
+  background: rgba(255,255,255,0.03);
+  transition: transform 0.18s, box-shadow 0.18s, border-color 0.18s, background 0.18s;
   cursor: pointer;
 }
-.lesson-row:hover { background: rgba(255,255,255,0.04); }
-[data-theme="light"] .lesson-row:hover { background: rgba(0,0,0,0.04); }
+.lesson-row:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow);
+  border-color: rgba(245,158,11,0.28);
+  background: rgba(255,255,255,0.05);
+}
+[data-theme="light"] .lesson-row {
+  background: rgba(255,255,255,0.82);
+}
+[data-theme="light"] .lesson-row:hover { background: rgba(255,255,255,0.96); }
 .lesson-num {
   font-weight: 800;
   font-size: 11px;
-  padding: 3px 6px;
-  border-radius: 6px;
+  padding: 4px 8px;
+  border-radius: 8px;
   text-align: center;
-  min-width: 38px;
+  min-width: 52px;
+}
+.lesson-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.lesson-status {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+}
+.lesson-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  flex: 1;
+}
+.lesson-title {
+  font-size: 13.5px;
+  font-weight: 800;
+  line-height: 1.45;
+  color: var(--text-main);
+}
+.lesson-meta {
+  margin-top: auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.lesson-meta-chip {
+  font-size: 10.5px;
+  font-weight: 700;
+  color: var(--text-muted);
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.05);
+  border: 1px solid rgba(255,255,255,0.08);
+}
+[data-theme="light"] .lesson-meta-chip {
+  background: rgba(0,0,0,0.04);
+  border-color: rgba(0,0,0,0.05);
 }
 .lesson-type-badge {
   font-size: 10.5px;
@@ -726,6 +782,19 @@ body.low-perf * {
 .badge-fuxi { background: rgba(16,185,129,0.15); color: var(--green); }
 
 /* 16章自主学习地图 */
+@media (max-width: 1180px) {
+  .lesson-map-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 920px) {
+  .lesson-map-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+}
+@media (max-width: 720px) {
+  .lesson-map-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lesson-row { min-height: 136px; }
+}
+@media (max-width: 520px) {
+  .lesson-map-grid { grid-template-columns: 1fr; }
+}
 .self-map-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
@@ -13401,6 +13470,42 @@ document.addEventListener('keydown', (e) => {
 <button id="theme-btn-mobile" class="mobile-theme-fab" onclick="toggleTheme()" title="Toggle theme">Light</button>
 
 <canvas id="particles-canvas"></canvas>
+
+<script>
+  window.renderLessonMap = function renderLessonMapCardGrid() {
+    const el = document.getElementById('lesson-map-body');
+    if (!el || typeof lp !== 'function' || !Array.isArray(window.LESSONS_15 || LESSONS_15)) return;
+    const p = lp();
+    const source = window.LESSONS_15 || LESSONS_15;
+    const cards = source.map(l => {
+      const chIds = l.ch.match(/\d+/g)?.map(Number) || [];
+      const allDone = chIds.length > 0 && chIds.every(id => p.done[id] && p.done[id].quiz);
+      const anyDone = chIds.some(id => p.done[id] && p.done[id].view);
+      const status = allDone ? '已完成' : anyDone ? '学习中' : '待开始';
+      const targetCh = chIds[0];
+      const targetAction = targetCh ? `jumpToChapter(${targetCh})` : `scrollMod('M1')`;
+      return `
+        <div class="lesson-row" onclick="${targetAction}" title="第${l.num}次课：${l.title}">
+          <div class="lesson-row-head">
+            <div class="lesson-num" style="background:${l.color}18;color:${l.color}">第${l.num}课</div>
+            <span class="lesson-type-badge ${l.badge}">${l.type}</span>
+          </div>
+          <div class="lesson-row-main">
+            <div class="lesson-title">${l.title}</div>
+            <div class="lesson-meta">
+              <span class="lesson-meta-chip">${l.ch}</span>
+              <span class="lesson-meta-chip">${status}</span>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+    el.innerHTML = `<div class="lesson-map-grid">${cards}</div>`;
+  };
+
+  if (document.getElementById('lesson-map-body')?.innerHTML.trim()) {
+    window.renderLessonMap();
+  }
+</script>
 
   <script>window.CLASSSHOW_SURFACE = 'student';</script>
   <script src="/js/deployment-config.js"></script>
