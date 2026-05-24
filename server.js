@@ -6606,7 +6606,7 @@ async function ensureActivityMatchesCourseSlug(activityId, courseSlug) {
     .single();
   if (error || !activity) return { ok: false, status: 404, error: 'Activity not found' };
 
-  if (normalizePortalCourseName(activity.course_name) !== normalizePortalCourseName(entry.course_name)) {
+  if (!arePortalCourseNamesCompatible(activity.course_name, entry.course_name)) {
     return { ok: false, status: 403, error: 'Course/activity mismatch' };
   }
 
@@ -7007,6 +7007,20 @@ function normalizeCourseSlug(value) {
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
     .slice(0, 60) || 'course';
+}
+
+function normalizeCourseNameForMatch(value) {
+  return normalizePortalCourseName(value)
+    .toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/[·・.。_\-]/g, '')
+    .replace(/课程$/u, '');
+}
+
+function arePortalCourseNamesCompatible(left, right) {
+  const a = normalizeCourseNameForMatch(left);
+  const b = normalizeCourseNameForMatch(right);
+  return !!a && !!b && (a === b || a.includes(b) || b.includes(a));
 }
 
 function sanitizeCourseEntryPath(value) {
