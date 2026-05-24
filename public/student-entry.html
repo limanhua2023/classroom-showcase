@@ -42,7 +42,6 @@
   <script src="js/app-config.js"></script>
   <script src="js/api.js"></script>
   <script>
-    const nextTarget = resolveNextTarget(new URLSearchParams(location.search).get('next'));
     const codePrefill = (new URLSearchParams(location.search).get('code') || '').trim();
 
     const existing = getSession();
@@ -107,29 +106,12 @@
     }
 
     async function resolveEntryPath(activity) {
-      const explicitNext = normalizeRelativeStudentPath(nextTarget);
-      if (explicitNext) return explicitNext;
-
       const fromRegistry = await resolveCourseEntryPath(activity?.course_name || '');
       const normalizedRegistry = normalizeRelativeStudentPath(fromRegistry);
-      if (normalizedRegistry) return normalizedRegistry;
-
-      const courseName = String(activity?.course_name || '').trim();
-      if (courseName) {
-        return '/course.html?course=' + encodeURIComponent(courseName);
+      if (normalizedRegistry && !/student-gallery|student-upload|student-detail/i.test(normalizedRegistry)) {
+        return normalizedRegistry;
       }
       return '/economics';
-    }
-
-    function resolveNextTarget(rawValue) {
-      if (!rawValue) return '';
-      try {
-        const nextUrl = new URL(String(rawValue), location.origin);
-        if (nextUrl.origin !== location.origin) return '';
-        return `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}` || '';
-      } catch {
-        return '';
-      }
     }
 
     function normalizeRelativeStudentPath(path) {
