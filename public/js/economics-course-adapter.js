@@ -452,9 +452,6 @@
         <div class="classshow-econ-bridge-sync" id="classshowEconSync">未开始同步</div>
       </div>
       <div class="classshow-econ-actions">
-        <button type="button" class="primary" id="classshowEconPortalBtn">返回课程总页</button>
-        <button type="button" id="classshowEconIndexBtn">总门户</button>
-        <button type="button" id="classshowEconModularBtn">模块版</button>
         <button type="button" id="classshowEconSaveBtn" style="display:none;">保存记录</button>
         <button type="button" id="classshowEconThemeBtn">亮色</button>
         <button type="button" id="classshowEconTeacherBtn" style="display:none;">教师后台</button>
@@ -462,23 +459,6 @@
     `;
     document.body.appendChild(shell);
 
-    document.getElementById('classshowEconPortalBtn').addEventListener('click', () => {
-      if (window.ClassShowCourseRuntime && typeof window.ClassShowCourseRuntime.openPortal === 'function') {
-        window.ClassShowCourseRuntime.openPortal(COURSE_NAME);
-        return;
-      }
-      location.href = studentUrl(`/course.html?course=${encodeURIComponent(COURSE_NAME)}`);
-    });
-    document.getElementById('classshowEconIndexBtn').addEventListener('click', () => {
-      if (window.ClassShowCourseRuntime && typeof window.ClassShowCourseRuntime.openIndex === 'function') {
-        window.ClassShowCourseRuntime.openIndex();
-        return;
-      }
-      location.href = studentUrl('/index.html');
-    });
-    document.getElementById('classshowEconModularBtn').addEventListener('click', () => {
-      location.href = studentUrl(`/course-player.html?slug=${encodeURIComponent(COURSE_SLUG)}`);
-    });
     document.getElementById('classshowEconSaveBtn').addEventListener('click', () => {
       saveStudyCheckpoint('manual_save', { manual: true, includeProgress: true }).catch(() => {});
     });
@@ -500,13 +480,10 @@
     const identityEl = document.getElementById('classshowEconIdentity');
     const chipsEl = document.getElementById('classshowEconChips');
     const syncEl = document.getElementById('classshowEconSync');
-    const portalBtn = document.getElementById('classshowEconPortalBtn');
-    const indexBtn = document.getElementById('classshowEconIndexBtn');
-    const modularBtn = document.getElementById('classshowEconModularBtn');
     const saveBtn = document.getElementById('classshowEconSaveBtn');
     const themeBtn = document.getElementById('classshowEconThemeBtn');
     const teacherBtn = document.getElementById('classshowEconTeacherBtn');
-    if (!identityEl || !chipsEl || !syncEl || !portalBtn || !indexBtn || !modularBtn || !saveBtn || !themeBtn || !teacherBtn) return;
+    if (!identityEl || !chipsEl || !syncEl || !saveBtn || !themeBtn || !teacherBtn) return;
 
     const activityName = runtime.context.activity && runtime.context.activity.activity_name
       ? runtime.context.activity.activity_name
@@ -550,10 +527,6 @@
     chipsEl.innerHTML = chips.join('');
     syncEl.textContent = `进度同步：${runtime.syncLabel}`;
     syncEl.className = `classshow-econ-bridge-sync level-${runtime.syncLevel}`;
-    const studentOnlyView = hasLoggedInStudent() && !hasPreviewAccess();
-    portalBtn.style.display = studentOnlyView ? 'none' : '';
-    indexBtn.style.display = studentOnlyView ? 'none' : '';
-    modularBtn.style.display = studentOnlyView ? 'none' : '';
     saveBtn.style.display = hasLoggedInStudent() ? '' : 'none';
     saveBtn.disabled = runtime.cloudSaveBusy;
     saveBtn.textContent = runtime.cloudSaveBusy ? '保存中...' : (pendingCloudSaveSeconds() > 0 ? '保存记录' : '已保存');
@@ -622,13 +595,10 @@ function updateBridgeShell() {
     const identityEl = document.getElementById('classshowEconIdentity');
     const chipsEl = document.getElementById('classshowEconChips');
     const syncEl = document.getElementById('classshowEconSync');
-    const portalBtn = document.getElementById('classshowEconPortalBtn');
-    const indexBtn = document.getElementById('classshowEconIndexBtn');
-    const modularBtn = document.getElementById('classshowEconModularBtn');
     const saveBtn = document.getElementById('classshowEconSaveBtn');
     const themeBtn = document.getElementById('classshowEconThemeBtn');
     const teacherBtn = document.getElementById('classshowEconTeacherBtn');
-    if (!identityEl || !chipsEl || !syncEl || !portalBtn || !indexBtn || !modularBtn || !saveBtn || !themeBtn || !teacherBtn) return;
+    if (!identityEl || !chipsEl || !syncEl || !saveBtn || !themeBtn || !teacherBtn) return;
 
     const activityName = runtime.context.activity && runtime.context.activity.activity_name
       ? runtime.context.activity.activity_name
@@ -677,10 +647,6 @@ function updateBridgeShell() {
     chipsEl.innerHTML = chips.join('');
     syncEl.textContent = `进度同步：${runtime.syncLabel}`;
     syncEl.className = `classshow-econ-bridge-sync level-${runtime.syncLevel}`;
-    const studentOnlyView = hasLoggedInStudent() && !hasPreviewAccess();
-    portalBtn.style.display = studentOnlyView ? 'none' : '';
-    indexBtn.style.display = studentOnlyView ? 'none' : '';
-    modularBtn.style.display = studentOnlyView ? 'none' : '';
     saveBtn.style.display = hasLoggedInStudent() ? '' : 'none';
     saveBtn.disabled = runtime.cloudSaveBusy;
     saveBtn.textContent = runtime.cloudSaveBusy ? '保存中...' : (pendingCloudSaveSeconds() > 0 ? '保存记录' : '已保存');
