@@ -559,7 +559,7 @@
         </div>
       </div>
       <div class="classshow-econ-actions">
-        <button type="button" class="toggle" id="classshowEconPanelToggleBtn">灞曞紑缁熻</button>
+        <button type="button" class="toggle" id="classshowEconPanelToggleBtn">\u5c55\u5f00\u7edf\u8ba1</button>
         <button type="button" class="primary" id="classshowEconSaveBtn" data-econ-action="save-progress">保存记录</button>
         <button type="button" id="classshowEconThemeBtn">亮色</button>
         <button type="button" id="classshowEconTeacherBtn" style="display:none;">教师后台</button>
@@ -644,7 +644,7 @@
     syncEl.textContent = `进度同步：${runtime.syncLabel}`;
     syncEl.className = `classshow-econ-bridge-sync level-${runtime.syncLevel}`;
     detailsEl.classList.toggle('is-collapsed', runtime.studentPanelCollapsed);
-    toggleBtn.textContent = runtime.studentPanelCollapsed ? '灞曞紑缁熻' : '鏀惰捣缁熻';
+    toggleBtn.textContent = runtime.studentPanelCollapsed ? '\u5c55\u5f00\u7edf\u8ba1' : '\u6536\u8d77\u7edf\u8ba1';
     renderStudentLearningPanel(statsEl, rankEl);
     saveBtn.style.display = '';
     saveBtn.disabled = runtime.cloudSaveBusy || !hasLoggedInStudent();
@@ -773,7 +773,7 @@ function updateBridgeShell() {
     syncEl.textContent = `进度同步：${runtime.syncLabel}`;
     syncEl.className = `classshow-econ-bridge-sync level-${runtime.syncLevel}`;
     detailsEl.classList.toggle('is-collapsed', runtime.studentPanelCollapsed);
-    toggleBtn.textContent = runtime.studentPanelCollapsed ? '灞曞紑缁熻' : '鏀惰捣缁熻';
+    toggleBtn.textContent = runtime.studentPanelCollapsed ? '\u5c55\u5f00\u7edf\u8ba1' : '\u6536\u8d77\u7edf\u8ba1';
     renderStudentLearningPanel(statsEl, rankEl);
     saveBtn.style.display = '';
     saveBtn.disabled = runtime.cloudSaveBusy || !hasLoggedInStudent();
