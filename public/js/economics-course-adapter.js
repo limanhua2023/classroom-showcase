@@ -452,7 +452,7 @@
         <div class="classshow-econ-bridge-sync" id="classshowEconSync">未开始同步</div>
       </div>
       <div class="classshow-econ-actions">
-        <button type="button" id="classshowEconSaveBtn" style="display:none;">保存记录</button>
+        <button type="button" class="primary" id="classshowEconSaveBtn">保存记录</button>
         <button type="button" id="classshowEconThemeBtn">亮色</button>
         <button type="button" id="classshowEconTeacherBtn" style="display:none;">教师后台</button>
       </div>
@@ -527,9 +527,11 @@
     chipsEl.innerHTML = chips.join('');
     syncEl.textContent = `进度同步：${runtime.syncLabel}`;
     syncEl.className = `classshow-econ-bridge-sync level-${runtime.syncLevel}`;
-    saveBtn.style.display = hasLoggedInStudent() ? '' : 'none';
-    saveBtn.disabled = runtime.cloudSaveBusy;
-    saveBtn.textContent = runtime.cloudSaveBusy ? '保存中...' : (pendingCloudSaveSeconds() > 0 ? '保存记录' : '已保存');
+    saveBtn.style.display = '';
+    saveBtn.disabled = runtime.cloudSaveBusy || !hasLoggedInStudent();
+    saveBtn.textContent = !hasLoggedInStudent()
+      ? '登录后可保存'
+      : (runtime.cloudSaveBusy ? '保存中...' : (pendingCloudSaveSeconds() > 0 ? '保存记录' : '已保存'));
     teacherBtn.style.display = hasTeacherSession() ? '' : 'none';
   }
 
@@ -647,9 +649,11 @@ function updateBridgeShell() {
     chipsEl.innerHTML = chips.join('');
     syncEl.textContent = `进度同步：${runtime.syncLabel}`;
     syncEl.className = `classshow-econ-bridge-sync level-${runtime.syncLevel}`;
-    saveBtn.style.display = hasLoggedInStudent() ? '' : 'none';
-    saveBtn.disabled = runtime.cloudSaveBusy;
-    saveBtn.textContent = runtime.cloudSaveBusy ? '保存中...' : (pendingCloudSaveSeconds() > 0 ? '保存记录' : '已保存');
+    saveBtn.style.display = '';
+    saveBtn.disabled = runtime.cloudSaveBusy || !hasLoggedInStudent();
+    saveBtn.textContent = !hasLoggedInStudent()
+      ? '登录后可保存'
+      : (runtime.cloudSaveBusy ? '保存中...' : (pendingCloudSaveSeconds() > 0 ? '保存记录' : '已保存'));
     teacherBtn.style.display = hasTeacherSession() ? '' : 'none';
   }
 
