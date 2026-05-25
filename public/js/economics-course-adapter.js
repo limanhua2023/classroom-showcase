@@ -3,6 +3,7 @@
   const COURSE_SLUG = 'economics-fundamentals';
   const LOCAL_STUDY_TICK_MS = 15000;
   const CLOUD_SAVE_REMINDER_MS = 5 * 60 * 1000;
+  const LEARNING_SUMMARY_REFRESH_MS = 2 * 60 * 1000;
   const PROGRESS_SYNC_DEBOUNCE_MS = 1500;
   const LEARNING_SESSION_KEY = 'classshow_learning_session_token';
   const AI_MODE_KEY = 'econCourse_v117_ai_mode';
@@ -78,6 +79,7 @@
   const runtime = {
     context: initialContext,
     heartbeatTimer: null,
+    summaryTimer: null,
     syncTimer: null,
     syncBusy: false,
     cloudSaveBusy: false,
@@ -99,6 +101,9 @@
     localStudySessionToken: '',
     localStudy: readLocalStudyStats(initialContext),
     progressCheckpoint: readLocalProgressCheckpoint(initialContext),
+    learningSummary: null,
+    learningSummaryLoading: false,
+    learningSummaryLoadedAt: '',
     lastPresenceSignature: '',
     progressDirty: false
   };
@@ -277,6 +282,74 @@
       .classshow-econ-chip.ok { background: rgba(22, 163, 74, 0.2); color: #bbf7d0; }
       .classshow-econ-chip.warn { background: rgba(234, 179, 8, 0.18); color: #fde68a; }
       .classshow-econ-chip.err { background: rgba(239, 68, 68, 0.2); color: #fecaca; }
+      .classshow-econ-student-stats {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(120px, 1fr));
+        gap: 8px;
+        margin-top: 8px;
+        max-width: 760px;
+      }
+      .classshow-econ-stat-card {
+        min-width: 0;
+        padding: 8px 10px;
+        border-radius: 12px;
+        background: rgba(255, 255, 255, 0.07);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      .classshow-econ-stat-card span {
+        display: block;
+        color: rgba(226, 232, 240, 0.78);
+        font-size: 11px;
+        font-weight: 700;
+      }
+      .classshow-econ-stat-card strong {
+        display: block;
+        margin-top: 2px;
+        color: #fff7ed;
+        font-size: 16px;
+        line-height: 1.2;
+      }
+      .classshow-econ-rank-panel {
+        display: none;
+        margin-top: 8px;
+        max-width: 760px;
+        padding: 8px 10px;
+        border-radius: 12px;
+        background: rgba(15, 23, 42, 0.28);
+        border: 1px solid rgba(255, 255, 255, 0.1);
+      }
+      .classshow-econ-rank-panel.is-visible {
+        display: block;
+      }
+      .classshow-econ-rank-title {
+        margin-bottom: 6px;
+        color: rgba(226, 232, 240, 0.9);
+        font-size: 12px;
+        font-weight: 800;
+      }
+      .classshow-econ-rank-row {
+        display: grid;
+        grid-template-columns: 42px minmax(0, 1fr) 72px;
+        gap: 8px;
+        align-items: center;
+        padding: 5px 0;
+        border-top: 1px solid rgba(255, 255, 255, 0.07);
+        color: rgba(248, 250, 252, 0.84);
+        font-size: 12px;
+      }
+      .classshow-econ-rank-row:first-of-type {
+        border-top: 0;
+      }
+      .classshow-econ-rank-row.is-me {
+        color: #fde68a;
+        font-weight: 800;
+      }
+      .classshow-econ-rank-row span {
+        min-width: 0;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
       .classshow-econ-actions {
         display: flex;
         flex-wrap: wrap;
@@ -314,6 +387,9 @@
         }
         .classshow-econ-actions button {
           flex: 1 1 140px;
+        }
+        .classshow-econ-student-stats {
+          grid-template-columns: 1fr;
         }
       }
     `;
@@ -450,6 +526,8 @@
         <small id="classshowEconIdentity">正在绑定课程上下文…</small>
         <div class="classshow-econ-chip-row" id="classshowEconChips"></div>
         <div class="classshow-econ-bridge-sync" id="classshowEconSync">未开始同步</div>
+        <div class="classshow-econ-student-stats" id="classshowEconStudentStats"></div>
+        <div class="classshow-econ-rank-panel" id="classshowEconRankPanel"></div>
       </div>
       <div class="classshow-econ-actions">
         <button type="button" class="primary" id="classshowEconSaveBtn">保存记录</button>
@@ -480,6 +558,8 @@
     const identityEl = document.getElementById('classshowEconIdentity');
     const chipsEl = document.getElementById('classshowEconChips');
     const syncEl = document.getElementById('classshowEconSync');
+    const statsEl = document.getElementById('classshowEconStudentStats');
+    const rankEl = document.getElementById('classshowEconRankPanel');
     const saveBtn = document.getElementById('classshowEconSaveBtn');
     const themeBtn = document.getElementById('classshowEconThemeBtn');
     const teacherBtn = document.getElementById('classshowEconTeacherBtn');
@@ -527,6 +607,7 @@
     chipsEl.innerHTML = chips.join('');
     syncEl.textContent = `进度同步：${runtime.syncLabel}`;
     syncEl.className = `classshow-econ-bridge-sync level-${runtime.syncLevel}`;
+    renderStudentLearningPanel(statsEl, rankEl);
     saveBtn.style.display = '';
     saveBtn.disabled = runtime.cloudSaveBusy || !hasLoggedInStudent();
     saveBtn.textContent = !hasLoggedInStudent()
@@ -597,6 +678,8 @@ function updateBridgeShell() {
     const identityEl = document.getElementById('classshowEconIdentity');
     const chipsEl = document.getElementById('classshowEconChips');
     const syncEl = document.getElementById('classshowEconSync');
+    const statsEl = document.getElementById('classshowEconStudentStats');
+    const rankEl = document.getElementById('classshowEconRankPanel');
     const saveBtn = document.getElementById('classshowEconSaveBtn');
     const themeBtn = document.getElementById('classshowEconThemeBtn');
     const teacherBtn = document.getElementById('classshowEconTeacherBtn');
@@ -649,12 +732,70 @@ function updateBridgeShell() {
     chipsEl.innerHTML = chips.join('');
     syncEl.textContent = `进度同步：${runtime.syncLabel}`;
     syncEl.className = `classshow-econ-bridge-sync level-${runtime.syncLevel}`;
+    renderStudentLearningPanel(statsEl, rankEl);
     saveBtn.style.display = '';
     saveBtn.disabled = runtime.cloudSaveBusy || !hasLoggedInStudent();
     saveBtn.textContent = !hasLoggedInStudent()
       ? '登录后可保存'
       : (runtime.cloudSaveBusy ? '保存中...' : (pendingCloudSaveSeconds() > 0 ? '保存记录' : '已保存'));
     teacherBtn.style.display = hasTeacherSession() ? '' : 'none';
+  }
+
+  function renderStudentLearningPanel(statsEl, rankEl) {
+    if (!statsEl || !rankEl) return;
+    if (!hasLoggedInStudent()) {
+      statsEl.innerHTML = '';
+      rankEl.innerHTML = '';
+      rankEl.classList.remove('is-visible');
+      return;
+    }
+
+    const summary = runtime.learningSummary || {};
+    const mine = summary.my || {};
+    const pendingSeconds = pendingCloudSaveSeconds();
+    const localTotalSeconds = displayedStudyTotalSeconds();
+    const cloudTotalSeconds = Math.max(0, Number(mine.active_seconds || runtime.localStudy?.cloud_total_seconds || 0));
+    const rankLabel = mine.rank ? `第 ${mine.rank} 名` : (summary.schema_ready === false ? '等待数据表' : '保存后更新');
+    const lastSavedAt = runtime.localStudy?.last_cloud_save_at || mine.last_saved_at || '';
+    const savedLabel = lastSavedAt ? formatClockTime(lastSavedAt) : '尚未保存';
+
+    statsEl.innerHTML = `
+      <div class="classshow-econ-stat-card">
+        <span>本次可见学习时长</span>
+        <strong>${escapeText(formatStudyDuration(localTotalSeconds))}</strong>
+      </div>
+      <div class="classshow-econ-stat-card">
+        <span>云端已保存时长</span>
+        <strong>${escapeText(formatStudyDuration(cloudTotalSeconds))}</strong>
+      </div>
+      <div class="classshow-econ-stat-card">
+        <span>班级在线学习排名</span>
+        <strong>${escapeText(rankLabel)}</strong>
+      </div>
+    `;
+
+    const rows = Array.isArray(summary.leaderboard) ? summary.leaderboard.slice(0, 5) : [];
+    const pendingHint = pendingSeconds > 0
+      ? `<div class="classshow-econ-rank-title">还有 ${escapeText(formatStudyDuration(pendingSeconds))} 未保存，点击“保存记录”后排名会更新。上次保存：${escapeText(savedLabel)}</div>`
+      : `<div class="classshow-econ-rank-title">班级在线学习榜 · 上次保存：${escapeText(savedLabel)}</div>`;
+    rankEl.innerHTML = pendingHint + (rows.length
+      ? rows.map(row => renderLearningRankRow(row)).join('')
+      : '<div class="classshow-econ-rank-row"><span>-</span><span>保存后生成班级排行</span><strong>-</strong></div>');
+    rankEl.classList.add('is-visible');
+  }
+
+  function renderLearningRankRow(row) {
+    const isMe = runtime.context.user && String(row.user_id || '') === String(runtime.context.user.id || '');
+    const minutes = Number(row.active_minutes || 0);
+    const seconds = Math.max(0, Math.round(minutes * 60));
+    const displayName = row.name || row.student_id || '同学';
+    return `
+      <div class="classshow-econ-rank-row ${isMe ? 'is-me' : ''}">
+        <span>#${escapeText(row.rank || '-')}</span>
+        <span>${escapeText(displayName)}</span>
+        <strong>${escapeText(formatStudyDuration(seconds))}</strong>
+      </div>
+    `;
   }
 
   function hideTeacherEntrypoints() {
@@ -872,9 +1013,14 @@ function updateBridgeShell() {
     };
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', run, { once: true });
-      return;
+    } else {
+      run();
     }
-    run();
+    if (!runtime.summaryTimer) {
+      runtime.summaryTimer = window.setInterval(() => {
+        if (!document.hidden) hydrateRemoteLearningSummary().catch(() => null);
+      }, LEARNING_SUMMARY_REFRESH_MS);
+    }
   }
 
   async function bootstrapTeacherSupplement(autoOpen) {
@@ -1025,9 +1171,13 @@ function updateBridgeShell() {
 
   async function hydrateRemoteLearningSummary() {
     if (!hasLoggedInStudent()) return;
+    if (runtime.learningSummaryLoading) return;
+    runtime.learningSummaryLoading = true;
     try {
       const summary = await api(`/student/learning/summary?activity_id=${encodeURIComponent(runtime.context.activity_id)}&user_id=${encodeURIComponent(runtime.context.user.id)}`);
       if (!summary || summary.schema_ready === false) return;
+      runtime.learningSummary = summary;
+      runtime.learningSummaryLoadedAt = new Date().toISOString();
       const stats = normalizeLocalStudyStats(runtime.localStudy || readLocalStudyStats(runtime.context));
       const remoteTotal = Math.max(0, Number(summary && summary.my && summary.my.active_seconds || 0));
       stats.summary_total_seconds = Math.max(remoteTotal, Number(stats.summary_total_seconds || 0));
@@ -1036,6 +1186,8 @@ function updateBridgeShell() {
       updateBridgeShell();
     } catch (error) {
       console.warn('Failed to hydrate learning summary:', error);
+    } finally {
+      runtime.learningSummaryLoading = false;
     }
   }
 
@@ -1165,6 +1317,7 @@ function updateBridgeShell() {
         active: typeof options.active === 'boolean' ? options.active : !document.hidden,
         force: true
       });
+      await hydrateRemoteLearningSummary();
       updateBridgeShell();
       if (options.manual) notify('本次学习记录已保存。', 'success');
       return true;
@@ -1218,11 +1371,14 @@ function updateBridgeShell() {
           keepalive: true,
           active: false
         }).catch(() => {});
+      } else if (hasLoggedInStudent()) {
+        hydrateRemoteLearningSummary().catch(() => null);
       }
     });
 
     window.addEventListener('pagehide', () => {
       if (runtime.heartbeatTimer) window.clearInterval(runtime.heartbeatTimer);
+      if (runtime.summaryTimer) window.clearInterval(runtime.summaryTimer);
       recordLocalStudy('page_unload', { active: false });
       saveStudyCheckpoint('page_unload', {
         automatic: true,
