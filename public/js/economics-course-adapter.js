@@ -11,6 +11,7 @@
   const ECON_SESSION_KEY_PREFIX = 'econCourse_v117_';
   const LOCAL_STUDY_STATS_KEY = 'econCourse_v117_self_study_stats';
   const LOCAL_PROGRESS_CHECKPOINT_KEY = 'econCourse_v117_progress_checkpoint';
+  const STUDENT_PANEL_COLLAPSED_KEY = 'econCourse_v117_student_panel_collapsed';
   const LOCAL_STUDY_MAX_DELTA_SECONDS = 90;
   const LEGACY_LOCAL_STUDY_STATS_KEY = 'econCourse_v117_self_study_stats';
   function studentUrl(path = '') {
@@ -23,6 +24,21 @@
     return typeof window.classShowBackendUrl === 'function'
       ? window.classShowBackendUrl(path)
       : path;
+  }
+
+  function readStudentPanelCollapsed() {
+    try {
+      return localStorage.getItem(STUDENT_PANEL_COLLAPSED_KEY) !== '0';
+    } catch {
+      return true;
+    }
+  }
+
+  function writeStudentPanelCollapsed(collapsed) {
+    runtime.studentPanelCollapsed = !!collapsed;
+    try {
+      localStorage.setItem(STUDENT_PANEL_COLLAPSED_KEY, collapsed ? '1' : '0');
+    } catch {}
   }
 
   const REMOTE_SNAPSHOT_KEYS = [
@@ -93,6 +109,7 @@
     teacherEntrypoints: [],
     appPatched: false,
     hydrating: false,
+    studentPanelCollapsed: readStudentPanelCollapsed(),
     originalToggleTeacherMode: null,
     originalStorageLoad: null,
     originalStorageSave: null,
@@ -282,11 +299,18 @@
       .classshow-econ-chip.ok { background: rgba(22, 163, 74, 0.2); color: #bbf7d0; }
       .classshow-econ-chip.warn { background: rgba(234, 179, 8, 0.18); color: #fde68a; }
       .classshow-econ-chip.err { background: rgba(239, 68, 68, 0.2); color: #fecaca; }
+      .classshow-econ-details {
+        display: grid;
+        gap: 8px;
+        margin-top: 8px;
+      }
+      .classshow-econ-details.is-collapsed {
+        display: none;
+      }
       .classshow-econ-student-stats {
         display: grid;
         grid-template-columns: repeat(3, minmax(120px, 1fr));
         gap: 8px;
-        margin-top: 8px;
         max-width: 760px;
       }
       .classshow-econ-stat-card {
@@ -369,6 +393,9 @@
       .classshow-econ-actions button.primary {
         background: linear-gradient(135deg, #f59e0b, #b45309);
         border-color: rgba(245, 158, 11, 0.45);
+      }
+      .classshow-econ-actions button.toggle {
+        background: rgba(255, 255, 255, 0.04);
       }
       @media (max-width: 860px) {
         #classshow-econ-auth-gate {
@@ -526,10 +553,13 @@
         <small id="classshowEconIdentity">正在绑定课程上下文…</small>
         <div class="classshow-econ-chip-row" id="classshowEconChips"></div>
         <div class="classshow-econ-bridge-sync" id="classshowEconSync">未开始同步</div>
-        <div class="classshow-econ-student-stats" id="classshowEconStudentStats"></div>
-        <div class="classshow-econ-rank-panel" id="classshowEconRankPanel"></div>
+        <div class="classshow-econ-details" id="classshowEconDetails">
+          <div class="classshow-econ-student-stats" id="classshowEconStudentStats"></div>
+          <div class="classshow-econ-rank-panel" id="classshowEconRankPanel"></div>
+        </div>
       </div>
       <div class="classshow-econ-actions">
+        <button type="button" class="toggle" id="classshowEconPanelToggleBtn">灞曞紑缁熻</button>
         <button type="button" class="primary" id="classshowEconSaveBtn" data-econ-action="save-progress">保存记录</button>
         <button type="button" id="classshowEconThemeBtn">亮色</button>
         <button type="button" id="classshowEconTeacherBtn" style="display:none;">教师后台</button>
@@ -539,6 +569,10 @@
 
     document.getElementById('classshowEconSaveBtn').addEventListener('click', () => {
       saveStudyCheckpoint('manual_save', { manual: true, includeProgress: true }).catch(() => {});
+    });
+    document.getElementById('classshowEconPanelToggleBtn').addEventListener('click', () => {
+      writeStudentPanelCollapsed(!runtime.studentPanelCollapsed);
+      updateBridgeShell();
     });
     document.getElementById('classshowEconThemeBtn').addEventListener('click', () => {
       if (typeof window.toggleTheme === 'function') {
@@ -558,12 +592,14 @@
     const identityEl = document.getElementById('classshowEconIdentity');
     const chipsEl = document.getElementById('classshowEconChips');
     const syncEl = document.getElementById('classshowEconSync');
+    const detailsEl = document.getElementById('classshowEconDetails');
     const statsEl = document.getElementById('classshowEconStudentStats');
     const rankEl = document.getElementById('classshowEconRankPanel');
+    const toggleBtn = document.getElementById('classshowEconPanelToggleBtn');
     const saveBtn = document.getElementById('classshowEconSaveBtn');
     const themeBtn = document.getElementById('classshowEconThemeBtn');
     const teacherBtn = document.getElementById('classshowEconTeacherBtn');
-    if (!identityEl || !chipsEl || !syncEl || !saveBtn || !themeBtn || !teacherBtn) return;
+    if (!identityEl || !chipsEl || !syncEl || !detailsEl || !statsEl || !rankEl || !toggleBtn || !saveBtn || !themeBtn || !teacherBtn) return;
 
     const activityName = runtime.context.activity && runtime.context.activity.activity_name
       ? runtime.context.activity.activity_name
@@ -607,6 +643,8 @@
     chipsEl.innerHTML = chips.join('');
     syncEl.textContent = `进度同步：${runtime.syncLabel}`;
     syncEl.className = `classshow-econ-bridge-sync level-${runtime.syncLevel}`;
+    detailsEl.classList.toggle('is-collapsed', runtime.studentPanelCollapsed);
+    toggleBtn.textContent = runtime.studentPanelCollapsed ? '灞曞紑缁熻' : '鏀惰捣缁熻';
     renderStudentLearningPanel(statsEl, rankEl);
     saveBtn.style.display = '';
     saveBtn.disabled = runtime.cloudSaveBusy || !hasLoggedInStudent();
@@ -678,12 +716,14 @@ function updateBridgeShell() {
     const identityEl = document.getElementById('classshowEconIdentity');
     const chipsEl = document.getElementById('classshowEconChips');
     const syncEl = document.getElementById('classshowEconSync');
+    const detailsEl = document.getElementById('classshowEconDetails');
     const statsEl = document.getElementById('classshowEconStudentStats');
     const rankEl = document.getElementById('classshowEconRankPanel');
+    const toggleBtn = document.getElementById('classshowEconPanelToggleBtn');
     const saveBtn = document.getElementById('classshowEconSaveBtn');
     const themeBtn = document.getElementById('classshowEconThemeBtn');
     const teacherBtn = document.getElementById('classshowEconTeacherBtn');
-    if (!identityEl || !chipsEl || !syncEl || !saveBtn || !themeBtn || !teacherBtn) return;
+    if (!identityEl || !chipsEl || !syncEl || !detailsEl || !statsEl || !rankEl || !toggleBtn || !saveBtn || !themeBtn || !teacherBtn) return;
 
     const activityName = runtime.context.activity && runtime.context.activity.activity_name
       ? runtime.context.activity.activity_name
@@ -732,6 +772,8 @@ function updateBridgeShell() {
     chipsEl.innerHTML = chips.join('');
     syncEl.textContent = `进度同步：${runtime.syncLabel}`;
     syncEl.className = `classshow-econ-bridge-sync level-${runtime.syncLevel}`;
+    detailsEl.classList.toggle('is-collapsed', runtime.studentPanelCollapsed);
+    toggleBtn.textContent = runtime.studentPanelCollapsed ? '灞曞紑缁熻' : '鏀惰捣缁熻';
     renderStudentLearningPanel(statsEl, rankEl);
     saveBtn.style.display = '';
     saveBtn.disabled = runtime.cloudSaveBusy || !hasLoggedInStudent();
