@@ -530,7 +530,7 @@
         <div class="classshow-econ-rank-panel" id="classshowEconRankPanel"></div>
       </div>
       <div class="classshow-econ-actions">
-        <button type="button" class="primary" id="classshowEconSaveBtn">保存记录</button>
+        <button type="button" class="primary" id="classshowEconSaveBtn" data-econ-action="save-progress">保存记录</button>
         <button type="button" id="classshowEconThemeBtn">亮色</button>
         <button type="button" id="classshowEconTeacherBtn" style="display:none;">教师后台</button>
       </div>
@@ -612,7 +612,7 @@
     saveBtn.disabled = runtime.cloudSaveBusy || !hasLoggedInStudent();
     saveBtn.textContent = !hasLoggedInStudent()
       ? '登录后可保存'
-      : (runtime.cloudSaveBusy ? '保存中...' : (pendingCloudSaveSeconds() > 0 ? '保存记录' : '已保存'));
+      : (runtime.cloudSaveBusy ? '保存中...' : '保存记录');
     teacherBtn.style.display = hasTeacherSession() ? '' : 'none';
   }
 
@@ -737,7 +737,7 @@ function updateBridgeShell() {
     saveBtn.disabled = runtime.cloudSaveBusy || !hasLoggedInStudent();
     saveBtn.textContent = !hasLoggedInStudent()
       ? '登录后可保存'
-      : (runtime.cloudSaveBusy ? '保存中...' : (pendingCloudSaveSeconds() > 0 ? '保存记录' : '已保存'));
+      : (runtime.cloudSaveBusy ? '保存中...' : '保存记录');
     teacherBtn.style.display = hasTeacherSession() ? '' : 'none';
   }
 
@@ -1570,12 +1570,14 @@ function updateBridgeShell() {
     } catch {}
   }
 
-  function normalizeLocalProgressCheckpoint(value) {
+  function normalizeLocalProgressCheckpoint(value, context = {}) {
     const checkpoint = value && typeof value === 'object' ? value : {};
+    const activityId = context && (context.activity_id || context.activity && context.activity.id);
+    const userId = context && context.user && context.user.id;
     return {
       course_slug: typeof checkpoint.course_slug === 'string' ? checkpoint.course_slug : COURSE_SLUG,
-      activity_id: typeof checkpoint.activity_id === 'string' ? checkpoint.activity_id : String(runtime.context.activity_id || ''),
-      user_id: typeof checkpoint.user_id === 'string' ? checkpoint.user_id : String(runtime.context.user && runtime.context.user.id || ''),
+      activity_id: typeof checkpoint.activity_id === 'string' ? checkpoint.activity_id : String(activityId || ''),
+      user_id: typeof checkpoint.user_id === 'string' ? checkpoint.user_id : String(userId || ''),
       last_local_update_at: typeof checkpoint.last_local_update_at === 'string' ? checkpoint.last_local_update_at : '',
       last_remote_sync_at: typeof checkpoint.last_remote_sync_at === 'string' ? checkpoint.last_remote_sync_at : '',
       last_event: typeof checkpoint.last_event === 'string' ? checkpoint.last_event : '',
@@ -1586,14 +1588,14 @@ function updateBridgeShell() {
   function readLocalProgressCheckpoint(context = runtime.context) {
     try {
       const raw = localStorage.getItem(getLocalProgressStorageKey(context));
-      return normalizeLocalProgressCheckpoint(raw ? JSON.parse(raw) : null);
+      return normalizeLocalProgressCheckpoint(raw ? JSON.parse(raw) : null, context);
     } catch {
-      return normalizeLocalProgressCheckpoint(null);
+      return normalizeLocalProgressCheckpoint(null, context);
     }
   }
 
   function writeLocalProgressCheckpoint(checkpoint, context = runtime.context) {
-    const normalized = normalizeLocalProgressCheckpoint(checkpoint);
+    const normalized = normalizeLocalProgressCheckpoint(checkpoint, context);
     runtime.progressCheckpoint = normalized;
     try {
       localStorage.setItem(getLocalProgressStorageKey(context), JSON.stringify(normalized));
