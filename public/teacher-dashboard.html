@@ -1464,7 +1464,10 @@
             <button class="missing-media-filter" type="button" data-learning-evidence-filter="recent24h" data-learning-evidence-label="近24小时新保存" onclick="setLearningEvidenceFilter('recent24h')">近24小时新保存</button>
             <button class="missing-media-filter" type="button" data-learning-evidence-filter="reviewed" data-learning-evidence-label="老师已读闭环" onclick="setLearningEvidenceFilter('reviewed')">老师已读闭环</button>
           </div>
-          <input class="quarantine-search-input" type="search" id="learningEvidenceSearchInput" placeholder="按姓名 / 学号 / 班级 / 小组搜索模块复盘" oninput="setLearningEvidenceSearchQuery(this.value)">
+          <div class="quarantine-search-wrap">
+            <input class="quarantine-search-input" type="search" id="learningEvidenceSearchInput" placeholder="按姓名 / 学号 / 班级 / 小组搜索模块复盘" oninput="setLearningEvidenceSearchQuery(this.value)">
+            <button class="btn btn-secondary btn-sm" type="button" id="learningEvidenceResetBtn" onclick="resetLearningEvidenceView()">重置视图</button>
+          </div>
           <div class="learning-evidence-stat-grid" id="learningEvidenceQuickStats"></div>
           <div class="dashboard-panel-note" id="learningEvidenceFilterSummary">当前显示全部学生。</div>
           <div class="dashboard-list" id="learningModuleEvidenceList">
@@ -2738,6 +2741,11 @@ function renderLearningGroups(targetId, rows) {
       if (searchInput && searchInput.value !== learningEvidenceSearchQuery) {
         searchInput.value = learningEvidenceSearchQuery;
       }
+      const resetBtn = document.getElementById('learningEvidenceResetBtn');
+      if (resetBtn) {
+        const hasNonDefaultView = learningEvidenceFilter !== 'all' || !!normalizeLearningEvidenceSearch(learningEvidenceSearchQuery);
+        resetBtn.disabled = !hasNonDefaultView;
+      }
       const searchedRows = getLearningEvidenceSearchRows(rows);
       renderLearningEvidenceQuickStats(rows);
       const buttons = Array.from(document.querySelectorAll('[data-learning-evidence-filter]'));
@@ -2802,6 +2810,14 @@ function renderLearningGroups(targetId, rows) {
 
     function setLearningEvidenceSearchQuery(value = '') {
       learningEvidenceSearchQuery = String(value || '').trim();
+      writeLearningEvidencePreference('search', learningEvidenceSearchQuery);
+      renderLearningModuleEvidence(dashboardSummary?.learning_module_evidence || null);
+    }
+
+    function resetLearningEvidenceView() {
+      learningEvidenceFilter = 'all';
+      learningEvidenceSearchQuery = '';
+      writeLearningEvidencePreference('filter', learningEvidenceFilter);
       writeLearningEvidencePreference('search', learningEvidenceSearchQuery);
       renderLearningModuleEvidence(dashboardSummary?.learning_module_evidence || null);
     }
