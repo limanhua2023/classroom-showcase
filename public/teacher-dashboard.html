@@ -1415,6 +1415,7 @@
             <button class="missing-media-filter" type="button" data-learning-evidence-filter="recent24h" data-learning-evidence-label="近24小时新保存" onclick="setLearningEvidenceFilter('recent24h')">近24小时新保存</button>
             <button class="missing-media-filter" type="button" data-learning-evidence-filter="reviewed" data-learning-evidence-label="老师已读闭环" onclick="setLearningEvidenceFilter('reviewed')">老师已读闭环</button>
           </div>
+          <input class="quarantine-search-input" type="search" id="learningEvidenceSearchInput" placeholder="按姓名 / 学号 / 班级 / 小组搜索模块复盘" oninput="setLearningEvidenceSearchQuery(this.value)">
           <div class="dashboard-panel-note" id="learningEvidenceFilterSummary">当前显示全部学生。</div>
           <div class="dashboard-list" id="learningModuleEvidenceList">
             <div class="dashboard-panel-note">正在读取模块复盘证据...</div>
@@ -2022,6 +2023,7 @@
       const saved = readLearningEvidencePreference('filter', 'all');
       return ['all', 'pending', 'recent24h', 'reviewed'].includes(saved) ? saved : 'all';
     })();
+    let learningEvidenceSearchQuery = readLearningEvidencePreference('search', '').trim();
     let dashboardBaseTitle = '教师后台 - ClassShow';
     let lastQuarantineExpiryReminderKey = '';
     let lastLocalBackupAlertKey = '';
@@ -2499,6 +2501,30 @@ function renderLearningGroups(targetId, rows) {
       return '默认按老师待处理优先排序，其次按最近保存或处理时间靠前';
     }
 
+    function normalizeLearningEvidenceSearch(value) {
+      return String(value || '').trim().toLowerCase();
+    }
+
+    function getLearningEvidenceSearchRows(
+      rows = getLearningModuleEvidenceRows(),
+      query = learningEvidenceSearchQuery
+    ) {
+      const safeRows = Array.isArray(rows) ? rows : [];
+      const safeQuery = normalizeLearningEvidenceSearch(query);
+      if (!safeQuery) return safeRows;
+      return safeRows.filter(row => {
+        const haystack = [
+          row?.name,
+          row?.student_id,
+          row?.class_name,
+          row?.group_name,
+          row?.latest_module_title,
+          row?.latest_module_excerpt
+        ].map(value => String(value || '').toLowerCase()).join(' ');
+        return haystack.includes(safeQuery);
+      });
+    }
+
     function getLearningEvidenceFilterCounts(rows = getLearningModuleEvidenceRows()) {
       const safeRows = Array.isArray(rows) ? rows : [];
       return {
@@ -2538,9 +2564,10 @@ function renderLearningGroups(targetId, rows) {
 
     function getFilteredLearningModuleEvidenceRows(
       rows = getLearningModuleEvidenceRows(),
-      filter = learningEvidenceFilter
+      filter = learningEvidenceFilter,
+      query = learningEvidenceSearchQuery
     ) {
-      const safeRows = Array.isArray(rows) ? [...rows] : [];
+      const safeRows = [...getLearningEvidenceSearchRows(rows, query)];
       if (filter === 'pending') {
         return safeRows
           .filter(row => {
@@ -2608,8 +2635,13 @@ function renderLearningGroups(targetId, rows) {
     }
 
     function renderLearningEvidenceFilterState(rows = getLearningModuleEvidenceRows()) {
+      const searchInput = document.getElementById('learningEvidenceSearchInput');
+      if (searchInput && searchInput.value !== learningEvidenceSearchQuery) {
+        searchInput.value = learningEvidenceSearchQuery;
+      }
+      const searchedRows = getLearningEvidenceSearchRows(rows);
       const buttons = Array.from(document.querySelectorAll('[data-learning-evidence-filter]'));
-      const counts = getLearningEvidenceFilterCounts(rows);
+      const counts = getLearningEvidenceFilterCounts(searchedRows);
       buttons.forEach(button => {
         const isActive = (button.dataset.learningEvidenceFilter || 'all') === learningEvidenceFilter;
         const filterKey = button.dataset.learningEvidenceFilter || 'all';
@@ -2624,29 +2656,37 @@ function renderLearningGroups(targetId, rows) {
       if (!summary) return;
 
       const totalCount = Array.isArray(rows) ? rows.length : 0;
+      const searchedCount = searchedRows.length;
+      const safeQuery = normalizeLearningEvidenceSearch(learningEvidenceSearchQuery);
       if (!totalCount) {
         summary.textContent = '当前还没有可筛选的模块综合复盘学生记录。';
         return;
       }
 
+      if (safeQuery && !searchedCount) {
+        summary.textContent = `搜索“${learningEvidenceSearchQuery}”未命中任何学生记录。`;
+        return;
+      }
+
       const filteredRows = getFilteredLearningModuleEvidenceRows(rows);
       const filterLabel = getLearningEvidenceFilterLabel();
+      const searchPrefix = safeQuery ? `搜索“${learningEvidenceSearchQuery}”命中 ${searchedCount} / ${totalCount} 名学生。` : '';
       if (learningEvidenceFilter === 'all') {
-        summary.textContent = `当前显示全部 ${filteredRows.length} 名学生，默认按老师待处理优先排序。`;
+        summary.textContent = `${searchPrefix}${searchPrefix ? ' ' : ''}当前显示全部 ${filteredRows.length} 名学生，默认按老师待处理优先排序。`;
         return;
       }
 
       if (learningEvidenceFilter === 'pending') {
-        summary.textContent = `当前筛选：${filterLabel}。${filteredRows.length} / ${totalCount} 名学生还有模块复盘等待老师处理，已按待处理模块数和最近保存时间排序。`;
+        summary.textContent = `${searchPrefix}${searchPrefix ? ' ' : ''}当前筛选：${filterLabel}。${filteredRows.length} / ${searchedCount} 名学生还有模块复盘等待老师处理，已按待处理模块数和最近保存时间排序。`;
         return;
       }
 
       if (learningEvidenceFilter === 'recent24h') {
-        summary.textContent = `当前筛选：${filterLabel}。${filteredRows.length} / ${totalCount} 名学生在最近 24 小时内有新的模块复盘保存，已按最近保存时间排序。`;
+        summary.textContent = `${searchPrefix}${searchPrefix ? ' ' : ''}当前筛选：${filterLabel}。${filteredRows.length} / ${searchedCount} 名学生在最近 24 小时内有新的模块复盘保存，已按最近保存时间排序。`;
         return;
       }
 
-      summary.textContent = `当前筛选：${filterLabel}。${filteredRows.length} / ${totalCount} 名学生的已提交模块复盘已全部闭环，已按最近老师处理时间排序。`;
+      summary.textContent = `${searchPrefix}${searchPrefix ? ' ' : ''}当前筛选：${filterLabel}。${filteredRows.length} / ${searchedCount} 名学生的已提交模块复盘已全部闭环，已按最近老师处理时间排序。`;
     }
 
     function setLearningEvidenceFilter(filter = 'all') {
@@ -2657,6 +2697,12 @@ function renderLearningGroups(targetId, rows) {
       }
       learningEvidenceFilter = nextFilter;
       writeLearningEvidencePreference('filter', learningEvidenceFilter);
+      renderLearningModuleEvidence(dashboardSummary?.learning_module_evidence || null);
+    }
+
+    function setLearningEvidenceSearchQuery(value = '') {
+      learningEvidenceSearchQuery = String(value || '').trim();
+      writeLearningEvidencePreference('search', learningEvidenceSearchQuery);
       renderLearningModuleEvidence(dashboardSummary?.learning_module_evidence || null);
     }
 
@@ -2688,7 +2734,10 @@ function renderLearningGroups(targetId, rows) {
 
       const rows = getFilteredLearningModuleEvidenceRows(allRows);
       if (!rows.length) {
-        box.innerHTML = `<div class="dashboard-panel-note">当前筛选“${escapeHtml(getLearningEvidenceFilterLabel())}”下暂无学生记录。</div>`;
+        const emptySearchText = learningEvidenceSearchQuery
+          ? `搜索“${escapeHtml(learningEvidenceSearchQuery)}”下，当前筛选“${escapeHtml(getLearningEvidenceFilterLabel())}”暂无学生记录。`
+          : `当前筛选“${escapeHtml(getLearningEvidenceFilterLabel())}”下暂无学生记录。`;
+        box.innerHTML = `<div class="dashboard-panel-note">${emptySearchText}</div>`;
         setLearningEvidenceExportButtonsDisabled(true);
         return;
       }
@@ -4348,12 +4397,14 @@ function renderLearningGroups(targetId, rows) {
       const totals = dashboardSummary?.learning_module_evidence?.totals || {};
       const filterLabel = getLearningEvidenceFilterLabel();
       const sortDescription = getLearningEvidenceSortDescription();
+      const searchKeyword = learningEvidenceSearchQuery || '未启用';
       const sourceRows = getLearningModuleEvidenceRows();
       const summarySheet = XLSX.utils.aoa_to_sheet([
         ['活动名称', dashboardSummary?.activity?.activity_name || actId || ''],
         ['课程名称', dashboardSummary?.activity?.course_name || dashboardSummary?.learning_module_evidence?.course_name || ''],
         ['导出时间', formatBangkokTime(new Date())],
         ['当前筛选', filterLabel],
+        ['当前搜索', searchKeyword],
         ['当前排序', sortDescription],
         ['当前导出学生数', Number(rows.length)],
         ['面板总学生数', Number(sourceRows.length || totals.student_count || 0)],
