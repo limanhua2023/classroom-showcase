@@ -67,6 +67,18 @@ async function runAudit(studentBaseUrl, backendBaseUrl) {
   }
 
   try {
+    const { response, text } = await fetchText(`${backendBaseUrl}/teacher-dashboard.html`);
+    const ok = response.ok
+      && text.includes('learningEvidenceSearchInput')
+      && text.includes('learningEvidenceQuickStats')
+      && text.includes('learningEvidenceResetBtn')
+      && text.includes('data-learning-evidence-filter="recent24h"');
+    add('Backend teacher evidence tools', ok, `HTTP ${response.status}`);
+  } catch (error) {
+    add('Backend teacher evidence tools', false, error.message);
+  }
+
+  try {
     const response = await fetch(`${backendBaseUrl}/teacher`, { redirect: 'manual' });
     const location = response.headers.get('location') || '';
     const ok = response.status >= 300 && response.status < 400 && location.includes('/teacher-login.html');
