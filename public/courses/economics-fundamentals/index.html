@@ -8198,6 +8198,36 @@ function rKP(id) {
       }
     } catch(e) {}
 
+    const moduleSynthesis = ch.moduleSynthesis || null;
+    const moduleSynthesisHtml = moduleSynthesis ? `
+      <div class="kp-card" style="cursor:default;border-left:4px solid var(--gold);background:linear-gradient(135deg,rgba(245,158,11,.08),rgba(20,184,166,.05));">
+        <div class="kp-card-hd" style="cursor:default;">
+          <div class="kp-card-left"><span class="kp-card-icon">🧭</span><span class="kp-card-title">${moduleSynthesis.title || '模块综合复盘'}</span></div>
+          <div class="kp-card-gold-badge">前三章整合</div>
+        </div>
+        <div class="kp-card-bd" style="display:block;">
+          ${moduleSynthesis.subtitle ? `<p style="font-size:13px;color:var(--text-muted);line-height:1.7;margin-bottom:12px;">${moduleSynthesis.subtitle}</p>` : ''}
+          ${Array.isArray(moduleSynthesis.map) ? `
+            <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:14px;">
+              ${moduleSynthesis.map.map((item, index) => `
+                <div style="padding:10px 12px;border:1px solid rgba(245,158,11,.24);border-radius:10px;background:var(--bg-card);">
+                  <div style="font-size:11px;font-weight:900;color:var(--gold);margin-bottom:4px;">STEP ${index + 1}</div>
+                  <div style="font-size:13px;font-weight:800;color:var(--text);line-height:1.45;">${item}</div>
+                </div>
+              `).join('')}
+            </div>
+          ` : ''}
+          ${moduleSynthesis.scenario ? `<div style="font-size:13px;line-height:1.75;color:var(--text);padding:10px 12px;border-radius:10px;background:rgba(59,130,246,.07);border:1px solid rgba(59,130,246,.18);margin-bottom:12px;">${moduleSynthesis.scenario}</div>` : ''}
+          ${Array.isArray(moduleSynthesis.questions) ? `
+            <ol style="margin:0 0 12px 20px;padding:0;color:var(--text-muted);font-size:13px;line-height:1.8;">
+              ${moduleSynthesis.questions.map(q => `<li>${q}</li>`).join('')}
+            </ol>
+          ` : ''}
+          ${moduleSynthesis.takeaway ? `<div style="font-size:13px;font-weight:800;line-height:1.7;color:var(--gold);padding:10px 12px;border-radius:10px;background:rgba(245,158,11,.08);">${moduleSynthesis.takeaway}</div>` : ''}
+        </div>
+      </div>
+    ` : '';
+
     return `
       <!-- 教师课堂路径条 -->
       <div class="teacher-pathway-bar">
@@ -8349,6 +8379,8 @@ function rKP(id) {
         </div>
       </div>
 
+      ${moduleSynthesisHtml}
+
       <!-- F. 测验 -->
       <div class="kp-card" id="quiz-ch${id}" style="cursor:default;">
         <div class="kp-card-hd" style="cursor:default;">
@@ -8366,9 +8398,9 @@ function rKP(id) {
           <div class="kp-card-left"><span class="kp-card-icon">✍️</span><span class="kp-card-title">一句话反思</span></div>
         </div>
         <div class="kp-card-bd" style="display:block;">
-          <p class="reflection-prompt">学完第${id}章，我最大的收获是：</p>
+          <p class="reflection-prompt">${ch.reflectionPrompt || `学完第${id}章，我最大的收获是：`}</p>
           <textarea class="reflection-textarea" id="reflection-main-${id}"
-            placeholder="用一句话记下你今天的最大收获..."
+            placeholder="${moduleSynthesis ? '请用前三章框架写下你的真实生活分析...' : '用一句话记下你今天的最大收获...'}"
             rows="2"
             oninput="EconCourseApp.actions.saveReflection(${id}, this.value)">${savedReflection}</textarea>
         </div>
