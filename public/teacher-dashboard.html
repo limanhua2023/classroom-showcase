@@ -2490,32 +2490,90 @@ function renderLearningGroups(targetId, rows) {
       return '全部';
     }
 
+    function getLearningEvidenceSortDescription(filter = learningEvidenceFilter) {
+      if (filter === 'pending') return '待处理模块数多的优先，其次按最近保存时间靠前';
+      if (filter === 'reviewed') return '按最近老师处理时间靠前';
+      return '默认按老师待处理优先排序，其次按最近保存或处理时间靠前';
+    }
+
     function getLearningEvidenceCompletedModules(row) {
       return Array.isArray(row?.modules)
         ? row.modules.filter(module => module && module.completed)
         : [];
     }
 
+    function getLearningEvidenceRowSortMeta(row) {
+      const completedCount = Number(row?.module_completed_count || getLearningEvidenceCompletedModules(row).length || 0);
+      const reviewedCount = Number(row?.module_reviewed_count || 0);
+      const pendingCount = Math.max(completedCount - reviewedCount, 0);
+      const latestSaveTs = row?.last_saved_at ? (Date.parse(row.last_saved_at) || 0) : 0;
+      const latestTeacherTs = row?.latest_teacher_reviewed_at ? (Date.parse(row.latest_teacher_reviewed_at) || 0) : 0;
+      const rank = Number(row?.rank || Number.MAX_SAFE_INTEGER);
+      let bucket = 2;
+      if (pendingCount > 0) bucket = 0;
+      else if (!completedCount) bucket = 1;
+      return {
+        completedCount,
+        reviewedCount,
+        pendingCount,
+        latestSaveTs,
+        latestTeacherTs,
+        rank,
+        bucket
+      };
+    }
+
     function getFilteredLearningModuleEvidenceRows(
       rows = getLearningModuleEvidenceRows(),
       filter = learningEvidenceFilter
     ) {
-      const safeRows = Array.isArray(rows) ? rows : [];
+      const safeRows = Array.isArray(rows) ? [...rows] : [];
       if (filter === 'pending') {
-        return safeRows.filter(row => {
-          const completedCount = Number(row?.module_completed_count || getLearningEvidenceCompletedModules(row).length || 0);
-          const reviewedCount = Number(row?.module_reviewed_count || 0);
-          return completedCount > 0 && reviewedCount < completedCount;
-        });
+        return safeRows
+          .filter(row => {
+            const meta = getLearningEvidenceRowSortMeta(row);
+            return meta.completedCount > 0 && meta.reviewedCount < meta.completedCount;
+          })
+          .sort((a, b) => {
+            const metaA = getLearningEvidenceRowSortMeta(a);
+            const metaB = getLearningEvidenceRowSortMeta(b);
+            if (metaB.pendingCount !== metaA.pendingCount) return metaB.pendingCount - metaA.pendingCount;
+            if (metaB.latestSaveTs !== metaA.latestSaveTs) return metaB.latestSaveTs - metaA.latestSaveTs;
+            if (metaB.completedCount !== metaA.completedCount) return metaB.completedCount - metaA.completedCount;
+            return metaA.rank - metaB.rank;
+          });
       }
       if (filter === 'reviewed') {
-        return safeRows.filter(row => {
-          const completedCount = Number(row?.module_completed_count || getLearningEvidenceCompletedModules(row).length || 0);
-          const reviewedCount = Number(row?.module_reviewed_count || 0);
-          return completedCount > 0 && reviewedCount >= completedCount;
-        });
+        return safeRows
+          .filter(row => {
+            const meta = getLearningEvidenceRowSortMeta(row);
+            return meta.completedCount > 0 && meta.reviewedCount >= meta.completedCount;
+          })
+          .sort((a, b) => {
+            const metaA = getLearningEvidenceRowSortMeta(a);
+            const metaB = getLearningEvidenceRowSortMeta(b);
+            if (metaB.latestTeacherTs !== metaA.latestTeacherTs) return metaB.latestTeacherTs - metaA.latestTeacherTs;
+            if (metaB.completedCount !== metaA.completedCount) return metaB.completedCount - metaA.completedCount;
+            return metaA.rank - metaB.rank;
+          });
       }
-      return safeRows;
+      return safeRows.sort((a, b) => {
+        const metaA = getLearningEvidenceRowSortMeta(a);
+        const metaB = getLearningEvidenceRowSortMeta(b);
+        if (metaA.bucket !== metaB.bucket) return metaA.bucket - metaB.bucket;
+        if (metaA.bucket === 0) {
+          if (metaB.pendingCount !== metaA.pendingCount) return metaB.pendingCount - metaA.pendingCount;
+          if (metaB.latestSaveTs !== metaA.latestSaveTs) return metaB.latestSaveTs - metaA.latestSaveTs;
+        }
+        if (metaA.bucket === 1) {
+          if (metaB.latestSaveTs !== metaA.latestSaveTs) return metaB.latestSaveTs - metaA.latestSaveTs;
+        }
+        if (metaA.bucket === 2) {
+          if (metaB.latestTeacherTs !== metaA.latestTeacherTs) return metaB.latestTeacherTs - metaA.latestTeacherTs;
+        }
+        if (metaB.completedCount !== metaA.completedCount) return metaB.completedCount - metaA.completedCount;
+        return metaA.rank - metaB.rank;
+      });
     }
 
     function renderLearningEvidenceFilterState(rows = getLearningModuleEvidenceRows()) {
@@ -2538,16 +2596,16 @@ function renderLearningGroups(targetId, rows) {
       const filteredRows = getFilteredLearningModuleEvidenceRows(rows);
       const filterLabel = getLearningEvidenceFilterLabel();
       if (learningEvidenceFilter === 'all') {
-        summary.textContent = `当前显示全部 ${filteredRows.length} 名学生。`;
+        summary.textContent = `当前显示全部 ${filteredRows.length} 名学生，默认按老师待处理优先排序。`;
         return;
       }
 
       if (learningEvidenceFilter === 'pending') {
-        summary.textContent = `当前筛选：${filterLabel}。${filteredRows.length} / ${totalCount} 名学生还有模块复盘等待老师处理。`;
+        summary.textContent = `当前筛选：${filterLabel}。${filteredRows.length} / ${totalCount} 名学生还有模块复盘等待老师处理，已按待处理模块数和最近保存时间排序。`;
         return;
       }
 
-      summary.textContent = `当前筛选：${filterLabel}。${filteredRows.length} / ${totalCount} 名学生的已提交模块复盘已全部闭环。`;
+      summary.textContent = `当前筛选：${filterLabel}。${filteredRows.length} / ${totalCount} 名学生的已提交模块复盘已全部闭环，已按最近老师处理时间排序。`;
     }
 
     function setLearningEvidenceFilter(filter = 'all') {
@@ -4248,12 +4306,14 @@ function renderLearningGroups(targetId, rows) {
       });
       const totals = dashboardSummary?.learning_module_evidence?.totals || {};
       const filterLabel = getLearningEvidenceFilterLabel();
+      const sortDescription = getLearningEvidenceSortDescription();
       const sourceRows = getLearningModuleEvidenceRows();
       const summarySheet = XLSX.utils.aoa_to_sheet([
         ['活动名称', dashboardSummary?.activity?.activity_name || actId || ''],
         ['课程名称', dashboardSummary?.activity?.course_name || dashboardSummary?.learning_module_evidence?.course_name || ''],
         ['导出时间', formatBangkokTime(new Date())],
         ['当前筛选', filterLabel],
+        ['当前排序', sortDescription],
         ['当前导出学生数', Number(rows.length)],
         ['面板总学生数', Number(sourceRows.length || totals.student_count || 0)],
         ['模块数量', Number(totals.module_count || 0)],
