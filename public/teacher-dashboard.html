@@ -1409,6 +1409,12 @@
               <button class="btn btn-secondary btn-sm" type="button" id="exportLearningEvidenceCsvBtn" onclick="exportLearningModuleEvidenceCsv()">导出 CSV</button>
             </div>
           </div>
+          <div class="missing-media-filters" id="learningEvidenceFilterBar" style="margin: 12px 0 8px;">
+            <button class="missing-media-filter active" type="button" data-learning-evidence-filter="all" onclick="setLearningEvidenceFilter('all')">全部</button>
+            <button class="missing-media-filter" type="button" data-learning-evidence-filter="pending" onclick="setLearningEvidenceFilter('pending')">待老师处理</button>
+            <button class="missing-media-filter" type="button" data-learning-evidence-filter="reviewed" onclick="setLearningEvidenceFilter('reviewed')">老师已读闭环</button>
+          </div>
+          <div class="dashboard-panel-note" id="learningEvidenceFilterSummary">当前显示全部学生。</div>
           <div class="dashboard-list" id="learningModuleEvidenceList">
             <div class="dashboard-panel-note">正在读取模块复盘证据...</div>
           </div>
@@ -1984,6 +1990,25 @@
       } catch {}
     }
 
+    function getLearningEvidencePreferenceKey(name) {
+      return `classshow:learning-evidence:${name}:${actId || 'default'}`;
+    }
+
+    function readLearningEvidencePreference(name, fallback = '') {
+      try {
+        const saved = localStorage.getItem(getLearningEvidencePreferenceKey(name));
+        return saved == null ? fallback : saved;
+      } catch {
+        return fallback;
+      }
+    }
+
+    function writeLearningEvidencePreference(name, value) {
+      try {
+        localStorage.setItem(getLearningEvidencePreferenceKey(name), String(value ?? ''));
+      } catch {}
+    }
+
     let quarantineFilter = (() => {
       const saved = readQuarantinePreference('filter', 'all');
       return ['all', 'today', 'overdue'].includes(saved) ? saved : 'all';
@@ -1992,6 +2017,10 @@
     let quarantineSearchQuery = readQuarantinePreference('search', '').trim();
     let quarantineClassFilter = readQuarantinePreference('class', '').trim();
     let quarantineGroupFilter = readQuarantinePreference('group', '').trim();
+    let learningEvidenceFilter = (() => {
+      const saved = readLearningEvidencePreference('filter', 'all');
+      return ['all', 'pending', 'reviewed'].includes(saved) ? saved : 'all';
+    })();
     let dashboardBaseTitle = '教师后台 - ClassShow';
     let lastQuarantineExpiryReminderKey = '';
     let lastLocalBackupAlertKey = '';
@@ -2455,25 +2484,112 @@ function renderLearningGroups(targetId, rows) {
       return saveModuleEvidenceReview(userId, moduleId, null, button);
     }
 
+    function getLearningEvidenceFilterLabel(filter = learningEvidenceFilter) {
+      if (filter === 'pending') return '待老师处理';
+      if (filter === 'reviewed') return '老师已读闭环';
+      return '全部';
+    }
+
+    function getLearningEvidenceCompletedModules(row) {
+      return Array.isArray(row?.modules)
+        ? row.modules.filter(module => module && module.completed)
+        : [];
+    }
+
+    function getFilteredLearningModuleEvidenceRows(
+      rows = getLearningModuleEvidenceRows(),
+      filter = learningEvidenceFilter
+    ) {
+      const safeRows = Array.isArray(rows) ? rows : [];
+      if (filter === 'pending') {
+        return safeRows.filter(row => {
+          const completedCount = Number(row?.module_completed_count || getLearningEvidenceCompletedModules(row).length || 0);
+          const reviewedCount = Number(row?.module_reviewed_count || 0);
+          return completedCount > 0 && reviewedCount < completedCount;
+        });
+      }
+      if (filter === 'reviewed') {
+        return safeRows.filter(row => {
+          const completedCount = Number(row?.module_completed_count || getLearningEvidenceCompletedModules(row).length || 0);
+          const reviewedCount = Number(row?.module_reviewed_count || 0);
+          return completedCount > 0 && reviewedCount >= completedCount;
+        });
+      }
+      return safeRows;
+    }
+
+    function renderLearningEvidenceFilterState(rows = getLearningModuleEvidenceRows()) {
+      const buttons = Array.from(document.querySelectorAll('[data-learning-evidence-filter]'));
+      buttons.forEach(button => {
+        const isActive = (button.dataset.learningEvidenceFilter || 'all') === learningEvidenceFilter;
+        button.classList.toggle('active', isActive);
+        button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+      });
+
+      const summary = document.getElementById('learningEvidenceFilterSummary');
+      if (!summary) return;
+
+      const totalCount = Array.isArray(rows) ? rows.length : 0;
+      if (!totalCount) {
+        summary.textContent = '当前还没有可筛选的模块综合复盘学生记录。';
+        return;
+      }
+
+      const filteredRows = getFilteredLearningModuleEvidenceRows(rows);
+      const filterLabel = getLearningEvidenceFilterLabel();
+      if (learningEvidenceFilter === 'all') {
+        summary.textContent = `当前显示全部 ${filteredRows.length} 名学生。`;
+        return;
+      }
+
+      if (learningEvidenceFilter === 'pending') {
+        summary.textContent = `当前筛选：${filterLabel}。${filteredRows.length} / ${totalCount} 名学生还有模块复盘等待老师处理。`;
+        return;
+      }
+
+      summary.textContent = `当前筛选：${filterLabel}。${filteredRows.length} / ${totalCount} 名学生的已提交模块复盘已全部闭环。`;
+    }
+
+    function setLearningEvidenceFilter(filter = 'all') {
+      const nextFilter = ['all', 'pending', 'reviewed'].includes(filter) ? filter : 'all';
+      if (learningEvidenceFilter === nextFilter) {
+        renderLearningEvidenceFilterState();
+        return;
+      }
+      learningEvidenceFilter = nextFilter;
+      writeLearningEvidencePreference('filter', learningEvidenceFilter);
+      renderLearningModuleEvidence(dashboardSummary?.learning_module_evidence || null);
+    }
+
     function renderLearningModuleEvidence(evidence) {
       const box = document.getElementById('learningModuleEvidenceList');
       if (!box) return;
 
       if (!evidence) {
+        renderLearningEvidenceFilterState([]);
         box.innerHTML = '<div class="dashboard-panel-note">当前还没有返回模块综合复盘证据。</div>';
         setLearningEvidenceExportButtonsDisabled(true);
         return;
       }
 
       if (evidence.schema_ready === false) {
+        renderLearningEvidenceFilterState([]);
         box.innerHTML = `<div class="storage-warning warning-attention">${escapeHtml(evidence.error || '课程进度表尚未初始化，暂时无法读取模块综合复盘证据。')}</div>`;
         setLearningEvidenceExportButtonsDisabled(true);
         return;
       }
 
-      const rows = Array.isArray(evidence.rows) ? evidence.rows : [];
-      if (!rows.length) {
+      const allRows = Array.isArray(evidence.rows) ? evidence.rows : [];
+      renderLearningEvidenceFilterState(allRows);
+      if (!allRows.length) {
         box.innerHTML = '<div class="dashboard-panel-note">学生完成模块综合复盘并保存到云端后，这里会显示每个模块的完成状态和最新反思摘要。</div>';
+        setLearningEvidenceExportButtonsDisabled(true);
+        return;
+      }
+
+      const rows = getFilteredLearningModuleEvidenceRows(allRows);
+      if (!rows.length) {
+        box.innerHTML = `<div class="dashboard-panel-note">当前筛选“${escapeHtml(getLearningEvidenceFilterLabel())}”下暂无学生记录。</div>`;
         setLearningEvidenceExportButtonsDisabled(true);
         return;
       }
@@ -4100,8 +4216,8 @@ function renderLearningGroups(targetId, rows) {
     }
 
     function exportLearningModuleEvidenceCsv() {
-      const rows = getLearningModuleEvidenceRows();
-      if (!rows.length) return toast('当前没有可导出的模块综合复盘证据', 'error');
+      const rows = getFilteredLearningModuleEvidenceRows();
+      if (!rows.length) return toast('当前筛选下没有可导出的模块综合复盘证据', 'error');
       const exportRows = getLearningModuleEvidenceExportRows(rows);
       const headers = Object.keys(exportRows[0] || {});
       const csvRows = exportRows.map(row => headers.map(header => escapeCsvCell(row[header] || '')).join(','));
@@ -4110,12 +4226,12 @@ function renderLearningGroups(targetId, rows) {
         new Blob([csv], { type: 'text/csv;charset=utf-8;' }),
         `learning_module_evidence_${actId || 'activity'}_${getQuarantineExportTimestamp()}.csv`
       );
-      toast(`已导出 ${rows.length} 条模块综合复盘证据 CSV`, 'success');
+      toast(`已导出当前筛选结果 ${rows.length} 条模块综合复盘证据 CSV`, 'success');
     }
 
     function exportLearningModuleEvidenceWorkbook() {
-      const rows = getLearningModuleEvidenceRows();
-      if (!rows.length) return toast('当前没有可导出的模块综合复盘证据', 'error');
+      const rows = getFilteredLearningModuleEvidenceRows();
+      if (!rows.length) return toast('当前筛选下没有可导出的模块综合复盘证据', 'error');
       if (!window.XLSX) {
         exportLearningModuleEvidenceCsv();
         return toast('Excel 导出组件未就绪，已回退为 CSV 导出', 'error');
@@ -4131,11 +4247,15 @@ function renderLearningGroups(targetId, rows) {
         return { wch: 18 };
       });
       const totals = dashboardSummary?.learning_module_evidence?.totals || {};
+      const filterLabel = getLearningEvidenceFilterLabel();
+      const sourceRows = getLearningModuleEvidenceRows();
       const summarySheet = XLSX.utils.aoa_to_sheet([
         ['活动名称', dashboardSummary?.activity?.activity_name || actId || ''],
         ['课程名称', dashboardSummary?.activity?.course_name || dashboardSummary?.learning_module_evidence?.course_name || ''],
         ['导出时间', formatBangkokTime(new Date())],
-        ['学生人数', Number(totals.student_count || rows.length)],
+        ['当前筛选', filterLabel],
+        ['当前导出学生数', Number(rows.length)],
+        ['面板总学生数', Number(sourceRows.length || totals.student_count || 0)],
         ['模块数量', Number(totals.module_count || 0)],
         ['已交模块复盘学生', Number(totals.students_with_completed_reviews || 0)],
         ['五模块已闭环学生', Number(totals.fully_completed_students || 0)],
@@ -4152,7 +4272,7 @@ function renderLearningGroups(targetId, rows) {
         new Blob([xlsxBlob], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
         `learning_module_evidence_${actId || 'activity'}_${getQuarantineExportTimestamp()}.xlsx`
       );
-      toast(`已导出 ${rows.length} 条模块综合复盘证据 Excel`, 'success');
+      toast(`已导出当前筛选结果 ${rows.length} 条模块综合复盘证据 Excel`, 'success');
     }
 
     function renderMissingMedia(summary) {
