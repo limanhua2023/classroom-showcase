@@ -120,6 +120,21 @@ async function saveModuleReflection(activityId, user, pagePath, chapterId, refle
   });
 }
 
+async function saveTeacherModuleReview(activityId, teacherToken, userId, moduleId, teacherNote, reviewed) {
+  const payload = {
+    activity_id: activityId,
+    user_id: userId,
+    module_id: moduleId,
+    teacher_note: teacherNote
+  };
+  if (reviewed !== undefined) payload.reviewed = reviewed;
+  await api(BACKEND_BASE, '/api/teacher/module-evidence-review', {
+    method: 'PUT',
+    headers: { 'x-teacher-auth': teacherToken },
+    body: JSON.stringify(payload)
+  });
+}
+
 async function main() {
   const inviteCode = makeInviteCode();
   const teacherPassword = makeTeacherPassword();
@@ -246,6 +261,58 @@ async function main() {
     fail('Student B module synthesis evidence did not reach teacher dashboard');
   }
 
+  await saveTeacherModuleReview(
+    activity.id,
+    teacherToken,
+    studentA.id,
+    'module-1',
+    '老师点评：已经能把稀缺、机会成本和比较优势串起来分析大学生活选择。',
+    true
+  );
+  await saveTeacherModuleReview(
+    activity.id,
+    teacherToken,
+    studentB.id,
+    'module-2',
+    '老师点评：已经能把价格、供求与校园消费联系起来。',
+    false
+  );
+
+  const studentProgressAfterTeacherReview = await api(
+    BACKEND_BASE,
+    `/api/student/course-runtime/progress?activity_id=${encodeURIComponent(activity.id)}&user_id=${encodeURIComponent(studentA.id)}&course_slug=${encodeURIComponent(COURSE_SLUG)}`,
+    {
+      headers: { 'x-user-token': studentA.token }
+    }
+  );
+  if (studentProgressAfterTeacherReview?.progress?.snapshot?.teacher_module_reviews) {
+    fail('Student course runtime API should not expose teacher private review snapshot');
+  }
+
+  await saveModuleReflection(
+    activity.id,
+    studentA,
+    pagePath,
+    3,
+    '学生再次保存后，老师点评仍应保留，且模块一综合复盘证据不能被新的学生保存覆盖。',
+    22
+  );
+
+  const summaryReviewed = await api(BACKEND_BASE, `/api/teacher/dashboard-summary?activity_id=${encodeURIComponent(activity.id)}`, {
+    headers: { 'x-teacher-auth': teacherToken }
+  });
+  const reviewedEvidence = summaryReviewed?.learning_module_evidence || {};
+  const reviewedRowA = (reviewedEvidence?.rows || []).find(row => row.user_id === studentA.id) || null;
+  const reviewedRowB = (reviewedEvidence?.rows || []).find(row => row.user_id === studentB.id) || null;
+  const reviewedModuleA = (reviewedRowA?.modules || []).find(item => item.module_id === 'module-1') || null;
+  const reviewedModuleB = (reviewedRowB?.modules || []).find(item => item.module_id === 'module-2') || null;
+  if (!reviewedModuleA?.reviewed || !String(reviewedModuleA?.teacher_note || '').includes('机会成本')) {
+    fail('Teacher reviewed note for student A was not preserved on the dashboard');
+  }
+  if (reviewedModuleB?.reviewed || !String(reviewedModuleB?.teacher_note || '').includes('校园消费')) {
+    fail('Teacher note-only state for student B was not preserved on the dashboard');
+  }
+
   const deployedJs = await fetch(`${STUDENT_BASE}/js/economics-course-adapter.js?t=${Date.now()}`, {
     headers: { 'cache-control': 'no-cache, no-store' }
   }).then(res => res.text());
@@ -259,13 +326,16 @@ async function main() {
       && !deployedJs.includes('classshowEconIndexBtn')
       && !deployedJs.includes('classshowEconModularBtn'),
     teacher_module_panel_present: teacherHtml.includes('learningModuleEvidenceList'),
-    teacher_module_export_present: teacherHtml.includes('exportLearningModuleEvidenceWorkbook')
+    teacher_module_export_present: teacherHtml.includes('exportLearningModuleEvidenceWorkbook'),
+    teacher_module_review_present: teacherHtml.includes('saveModuleEvidenceReviewFromButton')
+      && teacherHtml.includes('/teacher/module-evidence-review')
   };
   if (!frontendChecks.save_button_present
     || !frontendChecks.save_button_primary
     || !frontendChecks.legacy_portal_removed
     || !frontendChecks.teacher_module_panel_present
-    || !frontendChecks.teacher_module_export_present) {
+    || !frontendChecks.teacher_module_export_present
+    || !frontendChecks.teacher_module_review_present) {
     fail(`Student frontend toolbar is not in expected state: ${JSON.stringify(frontendChecks)}`);
   }
 
@@ -314,6 +384,16 @@ async function main() {
         completed: moduleRowB.module_completed_count,
         latest_title: moduleRowB.latest_module_title,
         latest_excerpt: moduleRowB.latest_module_excerpt
+      }
+    },
+    teacher_reviews: {
+      student_a: {
+        reviewed: reviewedModuleA?.reviewed || false,
+        teacher_note: reviewedModuleA?.teacher_note || ''
+      },
+      student_b: {
+        reviewed: reviewedModuleB?.reviewed || false,
+        teacher_note: reviewedModuleB?.teacher_note || ''
       }
     }
   }, null, 2));

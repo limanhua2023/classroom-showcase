@@ -248,6 +248,97 @@
       white-space: pre-wrap;
       word-break: break-word;
     }
+    .learning-module-review-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .learning-module-review-card {
+      padding: 12px;
+      border-radius: 16px;
+      border: 1px solid rgba(148, 163, 184, 0.16);
+      background: rgba(255, 255, 255, 0.72);
+    }
+    .learning-module-review-card.pending {
+      opacity: 0.78;
+      background: rgba(148, 163, 184, 0.08);
+    }
+    .learning-module-review-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .learning-module-review-title {
+      font-size: 0.82rem;
+      font-weight: 800;
+      color: var(--text-main);
+    }
+    .learning-module-review-status {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 10px;
+      border-radius: 999px;
+      font-size: 0.72rem;
+      font-weight: 800;
+      line-height: 1;
+    }
+    .learning-module-review-status.reviewed {
+      background: rgba(34, 197, 94, 0.12);
+      color: #15803d;
+      border: 1px solid rgba(34, 197, 94, 0.18);
+    }
+    .learning-module-review-status.noted {
+      background: rgba(59, 130, 246, 0.12);
+      color: #1d4ed8;
+      border: 1px solid rgba(59, 130, 246, 0.16);
+    }
+    .learning-module-review-status.pending {
+      background: rgba(245, 158, 11, 0.12);
+      color: #b45309;
+      border: 1px solid rgba(245, 158, 11, 0.18);
+    }
+    .learning-module-review-snippet {
+      color: var(--text-light);
+      font-size: 0.75rem;
+      line-height: 1.6;
+      margin-bottom: 10px;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .learning-module-review-textarea {
+      width: 100%;
+      min-height: 84px;
+      resize: vertical;
+      border-radius: 14px;
+      border: 1px solid rgba(148, 163, 184, 0.22);
+      background: rgba(255, 255, 255, 0.94);
+      padding: 10px 12px;
+      font: inherit;
+      font-size: 0.78rem;
+      line-height: 1.6;
+      color: var(--text-main);
+      outline: none;
+    }
+    .learning-module-review-textarea:focus {
+      border-color: rgba(37, 99, 235, 0.35);
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.08);
+    }
+    .learning-module-review-meta {
+      margin-top: 8px;
+      color: var(--text-light);
+      font-size: 0.72rem;
+      line-height: 1.5;
+    }
+    .learning-module-review-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
     .dashboard-panel-actions {
       display: flex;
       flex-wrap: wrap;
@@ -2275,6 +2366,95 @@ function renderLearningGroups(targetId, rows) {
       if (csvBtn && disabled) csvBtn.textContent = '导出 CSV';
     }
 
+    function escapeHtmlAttribute(value) {
+      return escapeHtml(String(value ?? '')).replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    }
+
+    function makeModuleReviewDomKey(userId, moduleId) {
+      return `${String(userId || '').trim()}_${String(moduleId || '').trim()}`.replace(/[^a-zA-Z0-9_-]/g, '_');
+    }
+
+    function getModuleReviewTextareaId(userId, moduleId) {
+      return `learningModuleReviewNote_${makeModuleReviewDomKey(userId, moduleId)}`;
+    }
+
+    function getModuleReviewMeta(module) {
+      if (module?.reviewed) {
+        return {
+          className: 'reviewed',
+          label: '已读',
+          note: module?.reviewed_at ? `已读于 ${formatBangkokTime(module.reviewed_at)}` : '老师已确认阅读'
+        };
+      }
+      if (module?.teacher_note) {
+        return {
+          className: 'noted',
+          label: '已写点评',
+          note: module?.teacher_review_updated_at ? `点评更新于 ${formatBangkokTime(module.teacher_review_updated_at)}` : '已保存老师点评'
+        };
+      }
+      return {
+        className: 'pending',
+        label: '待处理',
+        note: '学生已提交，等待老师阅读或点评'
+      };
+    }
+
+    async function saveModuleEvidenceReview(userId, moduleId, reviewed, trigger = null) {
+      const safeUserId = String(userId || '').trim();
+      const safeModuleId = String(moduleId || '').trim();
+      if (!actId || !safeUserId || !safeModuleId) return;
+
+      const textarea = document.getElementById(getModuleReviewTextareaId(safeUserId, safeModuleId));
+      const noteValue = textarea ? textarea.value : '';
+      const payload = {
+        activity_id: actId,
+        user_id: safeUserId,
+        module_id: safeModuleId,
+        teacher_note: noteValue
+      };
+      if (reviewed !== null && reviewed !== undefined) {
+        payload.reviewed = !!reviewed;
+      }
+
+      const originalText = trigger ? trigger.textContent : '';
+      const scopeKey = makeModuleReviewDomKey(safeUserId, safeModuleId);
+      const scopedControls = Array.from(document.querySelectorAll(`[data-review-scope="${scopeKey}"]`));
+      scopedControls.forEach(el => { el.disabled = true; });
+      try {
+        await api('/teacher/module-evidence-review', {
+          method: 'PUT',
+          body: JSON.stringify(payload)
+        });
+        await reloadDashboard();
+        if (reviewed === true) {
+          toast('模块复盘已标记为老师已读', 'success');
+        } else if (reviewed === false && !String(noteValue || '').trim()) {
+          toast('模块复盘已撤回已读并清空点评', 'success');
+        } else if (reviewed === false) {
+          toast('模块复盘已撤回已读，点评已保留', 'success');
+        } else {
+          toast('模块点评已保存', 'success');
+        }
+      } catch (error) {
+        toast('保存模块点评失败：' + error.message, 'error');
+      } finally {
+        scopedControls.forEach(el => { el.disabled = false; });
+        if (trigger) trigger.textContent = originalText;
+      }
+    }
+
+    function saveModuleEvidenceReviewFromButton(button) {
+      if (!button) return;
+      const userId = button.dataset.userId || '';
+      const moduleId = button.dataset.moduleId || '';
+      const mode = button.dataset.mode || 'note';
+      if (!userId || !moduleId) return;
+      if (mode === 'review') return saveModuleEvidenceReview(userId, moduleId, true, button);
+      if (mode === 'unreview') return saveModuleEvidenceReview(userId, moduleId, false, button);
+      return saveModuleEvidenceReview(userId, moduleId, null, button);
+    }
+
     function renderLearningModuleEvidence(evidence) {
       const box = document.getElementById('learningModuleEvidenceList');
       if (!box) return;
@@ -2316,6 +2496,52 @@ function renderLearningGroups(targetId, rows) {
         const latestLine = row.latest_module_title && row.latest_module_excerpt
           ? `<div class="learning-module-excerpt"><strong>${escapeHtml(row.latest_module_title)}</strong>：${escapeHtml(row.latest_module_excerpt)}</div>`
           : '<div class="learning-module-excerpt">暂未保存任何模块综合复盘到云端。</div>';
+        const reviewCards = (Array.isArray(row.modules) ? row.modules : [])
+          .filter(module => module && module.completed)
+          .map(module => {
+            const reviewMeta = getModuleReviewMeta(module);
+            const domScope = makeModuleReviewDomKey(row.user_id, module.module_id);
+            const textareaId = getModuleReviewTextareaId(row.user_id, module.module_id);
+            return `
+              <div class="learning-module-review-card">
+                <div class="learning-module-review-head">
+                  <div class="learning-module-review-title">${escapeHtml(module.short_title || module.title || '模块')}</div>
+                  <span class="learning-module-review-status ${reviewMeta.className}">${escapeHtml(reviewMeta.label)}</span>
+                </div>
+                <div class="learning-module-review-snippet">${escapeHtml(module.reflection_excerpt || '学生已完成模块复盘，但暂未生成摘要。')}</div>
+                <textarea
+                  class="learning-module-review-textarea"
+                  id="${escapeHtmlAttribute(textareaId)}"
+                  data-review-scope="${escapeHtmlAttribute(domScope)}"
+                  placeholder="给学生留下模块点评，可选"
+                >${escapeHtml(module.teacher_note || '')}</textarea>
+                <div class="learning-module-review-meta">${escapeHtml(reviewMeta.note)}</div>
+                <div class="learning-module-review-actions">
+                  <button
+                    class="btn btn-secondary btn-sm"
+                    type="button"
+                    data-review-scope="${escapeHtmlAttribute(domScope)}"
+                    data-user-id="${escapeHtmlAttribute(row.user_id)}"
+                    data-module-id="${escapeHtmlAttribute(module.module_id)}"
+                    data-mode="note"
+                    onclick="saveModuleEvidenceReviewFromButton(this)"
+                  >保存点评</button>
+                  <button
+                    class="btn btn-secondary btn-sm"
+                    type="button"
+                    data-review-scope="${escapeHtmlAttribute(domScope)}"
+                    data-user-id="${escapeHtmlAttribute(row.user_id)}"
+                    data-module-id="${escapeHtmlAttribute(module.module_id)}"
+                    data-mode="${module.reviewed ? 'unreview' : 'review'}"
+                    onclick="saveModuleEvidenceReviewFromButton(this)"
+                  >${module.reviewed ? '撤回已读' : '标记已读'}</button>
+                </div>
+              </div>
+            `;
+          }).join('');
+        const reviewSection = reviewCards
+          ? `<div class="learning-module-review-grid">${reviewCards}</div>`
+          : '';
 
         return `
           <div class="dashboard-list-item">
@@ -2330,10 +2556,12 @@ function renderLearningGroups(targetId, rows) {
               <div class="learning-list-note">${escapeHtml(`已完成 ${Number(row.module_completed_count || 0)}/${Number(row.module_total_count || 0)} 个模块复盘 · ${formatLastSaveLabel(row.last_saved_at)}`)}</div>
               <div class="learning-module-meta">${moduleLine}</div>
               ${latestLine}
+              ${reviewSection}
             </div>
             <div class="dashboard-list-side">
               <strong>${escapeHtml(`${Number(row.module_completed_count || 0)}/${Number(row.module_total_count || 0)}`)}</strong>
               <span>模块复盘完成</span>
+              <span>${escapeHtml(`老师已读 ${Number(row.module_reviewed_count || 0)}`)}</span>
               <span class="save-status-chip ${saveState.className}">${escapeHtml(saveState.label)}</span>
             </div>
           </div>
@@ -2375,6 +2603,9 @@ function renderLearningGroups(targetId, rows) {
       const studentsWithCompletedReviews = Number(moduleTotals.students_with_completed_reviews || 0);
       const fullyCompletedStudents = Number(moduleTotals.fully_completed_students || 0);
       const completedReviewsTotal = Number(moduleTotals.completed_reviews_total || 0);
+      const studentsWithTeacherReviews = Number(moduleTotals.students_with_teacher_reviews || 0);
+      const fullyTeacherReviewedStudents = Number(moduleTotals.fully_teacher_reviewed_students || 0);
+      const teacherReviewedModulesTotal = Number(moduleTotals.teacher_reviewed_modules_total || 0);
       const moduleCount = Number(moduleTotals.module_count || 0);
       const windowSeconds = getLearningWindowSeconds(learning);
       const windowMinutes = Math.max(1, Math.round(windowSeconds / 60));
@@ -2426,6 +2657,16 @@ function renderLearningGroups(targetId, rows) {
             value: String(fullyCompletedStudents),
             label: '五模块已闭环',
             note: '表示五个模块的综合复盘都已写入云端'
+          },
+          {
+            value: String(teacherReviewedModulesTotal),
+            label: '老师已读模块',
+            note: `${studentsWithTeacherReviews} 名学生至少被老师处理过 1 个模块`
+          },
+          {
+            value: String(fullyTeacherReviewedStudents),
+            label: '老师批注已闭环',
+            note: '已提交的模块综合复盘，老师都完成了已读标记'
           }
         );
       }
@@ -3834,18 +4075,25 @@ function renderLearningGroups(targetId, rows) {
           '班级': row.class_name || '未分班',
           '小组': row.group_name || '未分组',
           '模块复盘完成度': `${Number(row.module_completed_count || 0)}/${Number(row.module_total_count || 0)}`,
+          '老师已读模块数': `${Number(row.module_reviewed_count || 0)}/${Number(row.module_completed_count || 0)}`,
           '上次保存时间': formatBangkokTime(row.last_saved_at),
           '保存状态': getSaveStateMeta(row).label,
           '当前章节': row.current_chapter ? `Ch${row.current_chapter}` : '',
           '课程进度': row.progress_percent ? `${Math.round(Number(row.progress_percent || 0))}%` : '',
           '最新复盘模块': row.latest_module_title || '',
-          '最新复盘摘要': row.latest_module_excerpt || ''
+          '最新复盘摘要': row.latest_module_excerpt || '',
+          '最新老师处理模块': row.latest_teacher_review_title || '',
+          '最新老师点评摘要': row.latest_teacher_note_excerpt || '',
+          '最新老师处理时间': formatBangkokTime(row.latest_teacher_reviewed_at)
         };
         moduleDefinitions.forEach(def => {
           const module = (row.modules || []).find(item => String(item.module_id || '') === String(def.module_id || ''));
           const label = def.short_title || def.title || '模块';
           exportRow[`${label} 状态`] = module?.completed ? '已完成' : '未完成';
           exportRow[`${label} 反思`] = module?.reflection_text || '';
+          exportRow[`${label} 老师状态`] = module?.reviewed ? '已读' : (module?.teacher_note ? '已写点评' : '待处理');
+          exportRow[`${label} 老师点评`] = module?.teacher_note || '';
+          exportRow[`${label} 老师处理时间`] = formatBangkokTime(module?.reviewed_at || module?.teacher_review_updated_at);
         });
         return exportRow;
       });
@@ -3891,7 +4139,10 @@ function renderLearningGroups(targetId, rows) {
         ['模块数量', Number(totals.module_count || 0)],
         ['已交模块复盘学生', Number(totals.students_with_completed_reviews || 0)],
         ['五模块已闭环学生', Number(totals.fully_completed_students || 0)],
-        ['累计已保存模块复盘', Number(totals.completed_reviews_total || 0)]
+        ['累计已保存模块复盘', Number(totals.completed_reviews_total || 0)],
+        ['至少被老师处理过的学生', Number(totals.students_with_teacher_reviews || 0)],
+        ['老师已读模块总数', Number(totals.teacher_reviewed_modules_total || 0)],
+        ['老师批注已闭环学生', Number(totals.fully_teacher_reviewed_students || 0)]
       ]);
       summarySheet['!cols'] = [{ wch: 18 }, { wch: 40 }];
       XLSX.utils.book_append_sheet(workbook, summarySheet, '导出说明');

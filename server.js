@@ -71,6 +71,7 @@ const COURSE_TEACHER_ASSET_DIR = path.join(__dirname, 'data', 'course-teacher-as
 const COURSE_REGISTRY_STORAGE_PATH = 'system/course-registry.json';
 const COURSE_REGISTRY_CACHE_TTL_MS = 30 * 1000;
 const COURSE_RUNTIME_PROGRESS_SNAPSHOT_MAX_BYTES = Math.max(16 * 1024, Number(process.env.COURSE_RUNTIME_PROGRESS_SNAPSHOT_MAX_BYTES || 128 * 1024));
+const COURSE_RUNTIME_PRIVATE_TEACHER_REVIEW_KEY = 'teacher_module_reviews';
 const COURSE_MODULE_EVIDENCE_CONFIG = Object.freeze([
   {
     slug: 'economics-fundamentals',
@@ -6519,6 +6520,65 @@ function sanitizeCourseRuntimeSnapshot(snapshot) {
   return JSON.parse(serialized);
 }
 
+function normalizeCourseRuntimeTeacherReviewMap(value, config = null) {
+  const source = value && typeof value === 'object' && !Array.isArray(value)
+    ? value
+    : {};
+  const allowedModuleIds = new Set(
+    Array.isArray(config?.modules)
+      ? config.modules
+          .map(item => String(item?.id || '').trim())
+          .filter(Boolean)
+      : []
+  );
+  const result = {};
+  Object.entries(source).forEach(([rawModuleId, rawEntry]) => {
+    const moduleId = String(rawModuleId || '').trim();
+    if (!moduleId) return;
+    if (allowedModuleIds.size > 0 && !allowedModuleIds.has(moduleId)) return;
+    const entry = rawEntry && typeof rawEntry === 'object' && !Array.isArray(rawEntry)
+      ? rawEntry
+      : {};
+    const teacherNote = normalizeModuleReflectionText(entry.teacher_note, 1200);
+    const reviewed = !!entry.reviewed;
+    const reviewedAt = normalizeOptionalIsoString(entry.reviewed_at || null);
+    const updatedAt = normalizeOptionalIsoString(entry.updated_at || entry.reviewed_at || null);
+    if (!reviewed && !teacherNote && !reviewedAt && !updatedAt) return;
+    result[moduleId] = {
+      reviewed,
+      teacher_note: teacherNote,
+      reviewed_at: reviewed ? (reviewedAt || updatedAt || null) : null,
+      updated_at: updatedAt || reviewedAt || null
+    };
+  });
+  return result;
+}
+
+function getCourseRuntimeTeacherReviewMap(snapshot, config = null) {
+  const safeSnapshot = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)
+    ? snapshot
+    : {};
+  return normalizeCourseRuntimeTeacherReviewMap(
+    safeSnapshot[COURSE_RUNTIME_PRIVATE_TEACHER_REVIEW_KEY],
+    config
+  );
+}
+
+function stripCourseRuntimePrivateSnapshot(snapshot) {
+  const safeSnapshot = sanitizeCourseRuntimeSnapshot(snapshot);
+  delete safeSnapshot[COURSE_RUNTIME_PRIVATE_TEACHER_REVIEW_KEY];
+  return safeSnapshot;
+}
+
+function mergeCourseRuntimeSnapshotWithPrivateData(publicSnapshot, existingSnapshot, config = null) {
+  const nextSnapshot = stripCourseRuntimePrivateSnapshot(publicSnapshot);
+  const teacherReviews = getCourseRuntimeTeacherReviewMap(existingSnapshot, config);
+  if (Object.keys(teacherReviews).length > 0) {
+    nextSnapshot[COURSE_RUNTIME_PRIVATE_TEACHER_REVIEW_KEY] = teacherReviews;
+  }
+  return sanitizeCourseRuntimeSnapshot(nextSnapshot);
+}
+
 function normalizeCourseRuntimeProgressPayload(input = {}) {
   return {
     runtime_version: sanitizeText(input.runtime_version, 80) || '',
@@ -6679,6 +6739,7 @@ function buildModuleEvidenceFromSnapshot(config, snapshot = {}) {
   const chapterProgress = safeSnapshot.chapterProgress && typeof safeSnapshot.chapterProgress === 'object' && !Array.isArray(safeSnapshot.chapterProgress)
     ? safeSnapshot.chapterProgress
     : {};
+  const teacherReviews = getCourseRuntimeTeacherReviewMap(safeSnapshot, config);
 
   const items = config.modules.map((module, index) => {
     const chapterId = Number(module.chapter_id || 0) || 0;
@@ -6691,6 +6752,11 @@ function buildModuleEvidenceFromSnapshot(config, snapshot = {}) {
       ? chapterProgress[chapterKey]
       : {};
     const completed = !!progress.reflectionDone || reflectionText.length > 5;
+    const review = teacherReviews[String(module.id || '').trim()] || {};
+    const teacherNote = normalizeModuleReflectionText(review.teacher_note, 1200);
+    const reviewed = !!review.reviewed;
+    const reviewedAt = normalizeOptionalIsoString(review.reviewed_at || null);
+    const reviewUpdatedAt = normalizeOptionalIsoString(review.updated_at || review.reviewed_at || null);
     return {
       module_id: module.id || `module-${index + 1}`,
       title: module.title || `模块${index + 1}综合复盘`,
@@ -6699,17 +6765,32 @@ function buildModuleEvidenceFromSnapshot(config, snapshot = {}) {
       completed,
       reflection_length: reflectionText.length,
       reflection_excerpt: makeModuleReflectionExcerpt(reflectionText),
-      reflection_text: reflectionText
+      reflection_text: reflectionText,
+      reviewed,
+      reviewed_at: reviewedAt,
+      teacher_note: teacherNote,
+      teacher_note_excerpt: makeModuleReflectionExcerpt(teacherNote, 72),
+      teacher_review_updated_at: reviewUpdatedAt,
+      teacher_review_status: reviewed ? 'reviewed' : (teacherNote ? 'noted' : 'pending')
     };
   });
 
   const completedItems = items.filter(item => item.completed);
   const latest = completedItems.length ? completedItems[completedItems.length - 1] : null;
+  const reviewedItems = items.filter(item => item.reviewed || item.teacher_note);
+  const latestTeacherReview = reviewedItems.length ? reviewedItems[reviewedItems.length - 1] : null;
   return {
     total_count: items.length,
     completed_count: completedItems.length,
     latest_title: latest ? latest.title : '',
     latest_excerpt: latest ? latest.reflection_excerpt : '',
+    reviewed_count: items.filter(item => item.reviewed).length,
+    noted_count: items.filter(item => item.teacher_note).length,
+    latest_teacher_review_title: latestTeacherReview ? latestTeacherReview.title : '',
+    latest_teacher_note_excerpt: latestTeacherReview ? latestTeacherReview.teacher_note_excerpt : '',
+    latest_teacher_reviewed_at: latestTeacherReview
+      ? (latestTeacherReview.reviewed_at || latestTeacherReview.teacher_review_updated_at || null)
+      : null,
     items
   };
 }
@@ -7073,7 +7154,11 @@ function emptyLearningModuleEvidenceSummary(error = null, options = {}) {
       module_count: moduleDefinitions.length,
       students_with_completed_reviews: 0,
       fully_completed_students: 0,
-      completed_reviews_total: 0
+      completed_reviews_total: 0,
+      students_with_teacher_reviews: 0,
+      fully_teacher_reviewed_students: 0,
+      teacher_reviewed_modules_total: 0,
+      teacher_noted_modules_total: 0
     }
   };
 }
@@ -7143,7 +7228,11 @@ async function buildLearningModuleEvidenceSummary(activityId, options = {}) {
         module_count: 0,
         students_with_completed_reviews: 0,
         fully_completed_students: 0,
-        completed_reviews_total: 0
+        completed_reviews_total: 0,
+        students_with_teacher_reviews: 0,
+        fully_teacher_reviewed_students: 0,
+        teacher_reviewed_modules_total: 0,
+        teacher_noted_modules_total: 0
       }
     };
   }
@@ -7174,8 +7263,13 @@ async function buildLearningModuleEvidenceSummary(activityId, options = {}) {
       progress_percent: Number(user.progress_percent || 0) || 0,
       module_completed_count: evidence.completed_count,
       module_total_count: evidence.total_count,
+      module_reviewed_count: Number(evidence.reviewed_count || 0),
+      module_noted_count: Number(evidence.noted_count || 0),
       latest_module_title: evidence.latest_title,
       latest_module_excerpt: evidence.latest_excerpt,
+      latest_teacher_review_title: evidence.latest_teacher_review_title || '',
+      latest_teacher_note_excerpt: evidence.latest_teacher_note_excerpt || '',
+      latest_teacher_reviewed_at: evidence.latest_teacher_reviewed_at || null,
       latest_module_saved_at: progress?.updated_at || progress?.client_updated_at || user.last_saved_at || null,
       modules: evidence.items
     };
@@ -7198,7 +7292,16 @@ async function buildLearningModuleEvidenceSummary(activityId, options = {}) {
         const total = Number(row.module_total_count || 0);
         return total > 0 && Number(row.module_completed_count || 0) >= total;
       }).length,
-      completed_reviews_total: rankedRows.reduce((sum, row) => sum + Number(row.module_completed_count || 0), 0)
+      completed_reviews_total: rankedRows.reduce((sum, row) => sum + Number(row.module_completed_count || 0), 0),
+      students_with_teacher_reviews: rankedRows.filter(row =>
+        Number(row.module_reviewed_count || 0) > 0 || Number(row.module_noted_count || 0) > 0
+      ).length,
+      fully_teacher_reviewed_students: rankedRows.filter(row => {
+        const completedModules = Array.isArray(row.modules) ? row.modules.filter(item => item.completed) : [];
+        return completedModules.length > 0 && completedModules.every(item => item.reviewed);
+      }).length,
+      teacher_reviewed_modules_total: rankedRows.reduce((sum, row) => sum + Number(row.module_reviewed_count || 0), 0),
+      teacher_noted_modules_total: rankedRows.reduce((sum, row) => sum + Number(row.module_noted_count || 0), 0)
     }
   };
 }
@@ -9383,7 +9486,8 @@ app.post('/api/student/learning/presence', studentAuth, async (req, res) => {
   try {
     const activityId = String(req.body.activity_id ?? '').trim();
     const userId = String(req.body.user_id ?? '').trim();
-    const courseSlug = normalizeCourseSlug(req.body.course_slug);
+    const courseSlugRaw = String(req.body.course_slug ?? '').trim();
+    const courseSlug = courseSlugRaw ? normalizeCourseSlug(courseSlugRaw) : '';
     if (!activityId || !userId || !courseSlug) {
       return res.status(400).json({ error: 'Missing activity_id, user_id, or course_slug' });
     }
@@ -9527,7 +9631,8 @@ app.get('/api/student/course-runtime/progress', async (req, res) => {
   try {
     const activityId = String(req.query.activity_id ?? '').trim();
     const userId = String(req.query.user_id ?? '').trim();
-    const courseSlug = normalizeCourseSlug(req.query.course_slug);
+    const courseSlugRaw = String(req.query.course_slug ?? '').trim();
+    const courseSlug = courseSlugRaw ? normalizeCourseSlug(courseSlugRaw) : '';
     if (!activityId || !userId || !courseSlug) {
       return res.status(400).json({ error: 'Missing activity_id, user_id, or course_slug' });
     }
@@ -9556,7 +9661,13 @@ app.get('/api/student/course-runtime/progress', async (req, res) => {
       throw error;
     }
 
-    res.json({ ok: true, schema_ready: true, progress: data || null });
+    const publicProgress = data
+      ? {
+          ...data,
+          snapshot: stripCourseRuntimePrivateSnapshot(data.snapshot)
+        }
+      : null;
+    res.json({ ok: true, schema_ready: true, progress: publicProgress });
   } catch (e) {
     if (isCourseRuntimeSchemaError(e.message)) {
       return res.json({ ok: false, schema_ready: false, error: courseRuntimeSchemaNotReadyMessage(), progress: null });
@@ -9569,7 +9680,8 @@ app.post('/api/student/course-runtime/progress', studentAuth, async (req, res) =
   try {
     const activityId = String(req.body.activity_id ?? '').trim();
     const userId = String(req.body.user_id ?? '').trim();
-    const courseSlug = normalizeCourseSlug(req.body.course_slug);
+    const courseSlugRaw = String(req.body.course_slug ?? '').trim();
+    const courseSlug = courseSlugRaw ? normalizeCourseSlug(courseSlugRaw) : '';
     if (!activityId || !userId || !courseSlug) {
       return res.status(400).json({ error: 'Missing activity_id, user_id, or course_slug' });
     }
@@ -9578,6 +9690,24 @@ app.post('/api/student/course-runtime/progress', studentAuth, async (req, res) =
     if (!courseMatch.ok) return res.status(courseMatch.status).json({ error: courseMatch.error });
 
     const normalized = normalizeCourseRuntimeProgressPayload(req.body);
+    const existingProgressResult = await supabase.from('student_course_runtime_progress')
+      .select('snapshot')
+      .eq('activity_id', activityId)
+      .eq('user_id', userId)
+      .eq('course_slug', courseSlug)
+      .maybeSingle();
+
+    if (existingProgressResult.error) {
+      if (isCourseRuntimeSchemaError(existingProgressResult.error.message)) {
+        return res.json({ ok: false, schema_ready: false, error: courseRuntimeSchemaNotReadyMessage(), progress: null });
+      }
+      throw existingProgressResult.error;
+    }
+
+    const mergedSnapshot = mergeCourseRuntimeSnapshotWithPrivateData(
+      normalized.snapshot,
+      existingProgressResult.data?.snapshot || {}
+    );
     const nowIso = new Date().toISOString();
 
     const { data, error } = await supabase.from('student_course_runtime_progress')
@@ -9598,7 +9728,7 @@ app.post('/api/student/course-runtime/progress', studentAuth, async (req, res) =
         last_event: normalized.last_event,
         page_path: normalized.page_path,
         client_updated_at: normalized.client_updated_at,
-        snapshot: normalized.snapshot,
+        snapshot: mergedSnapshot,
         updated_at: nowIso,
         last_seen_at: nowIso
       }], {
@@ -9614,7 +9744,13 @@ app.post('/api/student/course-runtime/progress', studentAuth, async (req, res) =
       throw error;
     }
 
-    res.json({ ok: true, schema_ready: true, progress: data || null });
+    const publicProgress = data
+      ? {
+          ...data,
+          snapshot: stripCourseRuntimePrivateSnapshot(data.snapshot)
+        }
+      : null;
+    res.json({ ok: true, schema_ready: true, progress: publicProgress });
   } catch (e) {
     if (isCourseRuntimeSchemaError(e.message)) {
       return res.json({ ok: false, schema_ready: false, error: courseRuntimeSchemaNotReadyMessage(), progress: null });
@@ -10606,6 +10742,128 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
       feedback_likes_enabled: !!(latestFeedback.likes_enabled || hotFeedback.likes_enabled || feedbackLikesEnabled)
     });
   } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put('/api/teacher/module-evidence-review', teacherAuth, async (req, res) => {
+  try {
+    const activityId = String(req.body?.activity_id ?? '').trim();
+    const userId = String(req.body?.user_id ?? '').trim();
+    const moduleId = String(req.body?.module_id ?? '').trim();
+    if (!activityId || !userId || !moduleId) {
+      return res.status(400).json({ error: 'Missing activity_id, user_id, or module_id' });
+    }
+
+    const auth = await ensureTeacherCanAccessActivity(req, activityId);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const activityResult = await fetchActivityById(activityId);
+    if (activityResult.error) throw activityResult.error;
+    const activity = sanitizeActivity(activityResult.data);
+
+    const requestedCourseSlugRaw = String(req.body?.course_slug ?? '').trim();
+    const requestedCourseSlug = requestedCourseSlugRaw ? normalizeCourseSlug(requestedCourseSlugRaw) : '';
+    let progressQuery = supabase.from('student_course_runtime_progress')
+      .select('activity_id,user_id,course_slug,snapshot,updated_at,client_updated_at,current_chapter,progress_percent')
+      .eq('activity_id', activityId)
+      .eq('user_id', userId);
+    if (requestedCourseSlug) {
+      progressQuery = progressQuery.eq('course_slug', requestedCourseSlug);
+    }
+    const progressResult = await progressQuery
+      .order('updated_at', { ascending: false })
+      .limit(1);
+
+    if (progressResult.error) {
+      if (isCourseRuntimeSchemaError(progressResult.error.message)) {
+        return res.json({ ok: false, schema_ready: false, error: courseRuntimeSchemaNotReadyMessage() });
+      }
+      throw progressResult.error;
+    }
+
+    const progressRow = Array.isArray(progressResult.data) ? progressResult.data[0] : null;
+    if (!progressRow) {
+      return res.status(404).json({ error: 'Student has not saved any course runtime progress yet.' });
+    }
+
+    const config = resolveCourseModuleEvidenceConfig({
+      courseSlug: progressRow.course_slug || requestedCourseSlug || normalizeCourseSlug(activity.course_name || ''),
+      courseName: activity.course_name || ''
+    });
+    if (!config) {
+      return res.status(400).json({ error: 'This course does not have a module synthesis review configuration yet.' });
+    }
+    const moduleConfig = config.modules.find(item => String(item?.id || '').trim() === moduleId);
+    if (!moduleConfig) {
+      return res.status(400).json({ error: 'Unknown module_id for this course.' });
+    }
+
+    const existingSnapshot = sanitizeCourseRuntimeSnapshot(progressRow.snapshot || {});
+    const existingReviews = getCourseRuntimeTeacherReviewMap(existingSnapshot, config);
+    const existingReview = existingReviews[moduleId] || {};
+    const hasReviewedInput = Object.prototype.hasOwnProperty.call(req.body || {}, 'reviewed');
+    const hasTeacherNoteInput = Object.prototype.hasOwnProperty.call(req.body || {}, 'teacher_note');
+    const teacherNote = hasTeacherNoteInput
+      ? normalizeModuleReflectionText(req.body?.teacher_note, 1200)
+      : normalizeModuleReflectionText(existingReview.teacher_note, 1200);
+    const nextReviewed = hasReviewedInput ? !!req.body.reviewed : !!existingReview.reviewed;
+    const nowIso = new Date().toISOString();
+    const nextReviews = { ...existingReviews };
+
+    if (!nextReviewed && !teacherNote) {
+      delete nextReviews[moduleId];
+    } else {
+      nextReviews[moduleId] = {
+        reviewed: nextReviewed,
+        teacher_note: teacherNote,
+        reviewed_at: nextReviewed
+          ? (existingReview.reviewed_at || nowIso)
+          : null,
+        updated_at: nowIso
+      };
+    }
+
+    const nextSnapshot = stripCourseRuntimePrivateSnapshot(existingSnapshot);
+    if (Object.keys(nextReviews).length > 0) {
+      nextSnapshot[COURSE_RUNTIME_PRIVATE_TEACHER_REVIEW_KEY] = nextReviews;
+    }
+
+    const { data, error } = await supabase.from('student_course_runtime_progress')
+      .update({
+        snapshot: sanitizeCourseRuntimeSnapshot(nextSnapshot)
+      })
+      .eq('activity_id', progressRow.activity_id)
+      .eq('user_id', progressRow.user_id)
+      .eq('course_slug', progressRow.course_slug)
+      .select('activity_id,user_id,course_slug,snapshot,updated_at,client_updated_at,current_chapter,progress_percent')
+      .single();
+
+    if (error) {
+      if (isCourseRuntimeSchemaError(error.message)) {
+        return res.json({ ok: false, schema_ready: false, error: courseRuntimeSchemaNotReadyMessage() });
+      }
+      throw error;
+    }
+
+    const evidence = buildModuleEvidenceFromSnapshot(config, data?.snapshot || {});
+    const moduleEvidence = evidence.items.find(item => String(item.module_id || '') === moduleId) || null;
+    return res.json({
+      ok: true,
+      schema_ready: true,
+      activity_id: activityId,
+      user_id: userId,
+      course_slug: data?.course_slug || progressRow.course_slug || config.slug,
+      module_id: moduleId,
+      module_evidence: moduleEvidence,
+      latest_teacher_review_title: evidence.latest_teacher_review_title || '',
+      latest_teacher_note_excerpt: evidence.latest_teacher_note_excerpt || '',
+      latest_teacher_reviewed_at: evidence.latest_teacher_reviewed_at || null
+    });
+  } catch (e) {
+    if (isCourseRuntimeSchemaError(e.message)) {
+      return res.json({ ok: false, schema_ready: false, error: courseRuntimeSchemaNotReadyMessage() });
+    }
     res.status(500).json({ error: e.message });
   }
 });
