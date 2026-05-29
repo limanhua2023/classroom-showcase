@@ -339,6 +339,49 @@
       gap: 8px;
       margin-top: 10px;
     }
+    .learning-evidence-stat-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      gap: 10px;
+      margin: 12px 0 10px;
+    }
+    .learning-evidence-stat {
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      border-radius: 18px;
+      padding: 12px 14px;
+      background: rgba(255, 255, 255, 0.76);
+      cursor: pointer;
+      text-align: left;
+      transition: transform 0.16s ease, border-color 0.16s ease, box-shadow 0.16s ease;
+    }
+    .learning-evidence-stat:hover {
+      transform: translateY(-1px);
+      border-color: rgba(37, 99, 235, 0.22);
+      box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+    }
+    .learning-evidence-stat.active {
+      border-color: rgba(37, 99, 235, 0.34);
+      background: linear-gradient(180deg, rgba(37, 99, 235, 0.1), rgba(255, 255, 255, 0.88));
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.55);
+    }
+    .learning-evidence-stat-value {
+      font-size: 1.18rem;
+      font-weight: 900;
+      color: var(--text-main);
+      line-height: 1.15;
+    }
+    .learning-evidence-stat-label {
+      margin-top: 4px;
+      font-size: 0.82rem;
+      font-weight: 800;
+      color: #1d4ed8;
+    }
+    .learning-evidence-stat-meta {
+      margin-top: 6px;
+      font-size: 0.74rem;
+      line-height: 1.5;
+      color: var(--text-muted);
+    }
     .dashboard-panel-actions {
       display: flex;
       flex-wrap: wrap;
@@ -552,9 +595,15 @@
       .learning-monitor-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
       }
+      .learning-evidence-stat-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+      }
     }
     @media (max-width: 640px) {
       .learning-monitor-grid {
+        grid-template-columns: 1fr;
+      }
+      .learning-evidence-stat-grid {
         grid-template-columns: 1fr;
       }
       .learning-list-head {
@@ -1416,6 +1465,7 @@
             <button class="missing-media-filter" type="button" data-learning-evidence-filter="reviewed" data-learning-evidence-label="老师已读闭环" onclick="setLearningEvidenceFilter('reviewed')">老师已读闭环</button>
           </div>
           <input class="quarantine-search-input" type="search" id="learningEvidenceSearchInput" placeholder="按姓名 / 学号 / 班级 / 小组搜索模块复盘" oninput="setLearningEvidenceSearchQuery(this.value)">
+          <div class="learning-evidence-stat-grid" id="learningEvidenceQuickStats"></div>
           <div class="dashboard-panel-note" id="learningEvidenceFilterSummary">当前显示全部学生。</div>
           <div class="dashboard-list" id="learningModuleEvidenceList">
             <div class="dashboard-panel-note">正在读取模块复盘证据...</div>
@@ -2535,6 +2585,55 @@ function renderLearningGroups(targetId, rows) {
       };
     }
 
+    function renderLearningEvidenceQuickStats(rows = getLearningModuleEvidenceRows()) {
+      const box = document.getElementById('learningEvidenceQuickStats');
+      if (!box) return;
+      const searchedRows = getLearningEvidenceSearchRows(rows);
+      const counts = getLearningEvidenceFilterCounts(searchedRows);
+      const hasSearch = !!normalizeLearningEvidenceSearch(learningEvidenceSearchQuery);
+      const items = [
+        {
+          filter: 'all',
+          value: counts.all,
+          label: '搜索后总人数',
+          meta: hasSearch ? `当前搜索命中 ${counts.all} 人` : '默认按老师待处理优先排序'
+        },
+        {
+          filter: 'pending',
+          value: counts.pending,
+          label: '待老师处理',
+          meta: '优先处理未闭环的模块复盘'
+        },
+        {
+          filter: 'recent24h',
+          value: counts.recent24h,
+          label: '近24小时新保存',
+          meta: '适合老师每天跟进新提交内容'
+        },
+        {
+          filter: 'reviewed',
+          value: counts.reviewed,
+          label: '老师已读闭环',
+          meta: '回看已处理完成的学生记录'
+        }
+      ];
+      box.innerHTML = items.map(item => {
+        const active = item.filter === learningEvidenceFilter;
+        return `
+          <button
+            type="button"
+            class="learning-evidence-stat ${active ? 'active' : ''}"
+            onclick="setLearningEvidenceFilter('${item.filter}')"
+            aria-pressed="${active ? 'true' : 'false'}"
+          >
+            <div class="learning-evidence-stat-value">${escapeHtml(item.value)}</div>
+            <div class="learning-evidence-stat-label">${escapeHtml(item.label)}</div>
+            <div class="learning-evidence-stat-meta">${escapeHtml(item.meta)}</div>
+          </button>
+        `;
+      }).join('');
+    }
+
     function getLearningEvidenceCompletedModules(row) {
       return Array.isArray(row?.modules)
         ? row.modules.filter(module => module && module.completed)
@@ -2640,6 +2739,7 @@ function renderLearningGroups(targetId, rows) {
         searchInput.value = learningEvidenceSearchQuery;
       }
       const searchedRows = getLearningEvidenceSearchRows(rows);
+      renderLearningEvidenceQuickStats(rows);
       const buttons = Array.from(document.querySelectorAll('[data-learning-evidence-filter]'));
       const counts = getLearningEvidenceFilterCounts(searchedRows);
       buttons.forEach(button => {
