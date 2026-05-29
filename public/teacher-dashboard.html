@@ -1410,10 +1410,10 @@
             </div>
           </div>
           <div class="missing-media-filters" id="learningEvidenceFilterBar" style="margin: 12px 0 8px;">
-            <button class="missing-media-filter active" type="button" data-learning-evidence-filter="all" onclick="setLearningEvidenceFilter('all')">全部</button>
-            <button class="missing-media-filter" type="button" data-learning-evidence-filter="pending" onclick="setLearningEvidenceFilter('pending')">待老师处理</button>
-            <button class="missing-media-filter" type="button" data-learning-evidence-filter="recent24h" onclick="setLearningEvidenceFilter('recent24h')">近24小时新保存</button>
-            <button class="missing-media-filter" type="button" data-learning-evidence-filter="reviewed" onclick="setLearningEvidenceFilter('reviewed')">老师已读闭环</button>
+            <button class="missing-media-filter active" type="button" data-learning-evidence-filter="all" data-learning-evidence-label="全部" onclick="setLearningEvidenceFilter('all')">全部</button>
+            <button class="missing-media-filter" type="button" data-learning-evidence-filter="pending" data-learning-evidence-label="待老师处理" onclick="setLearningEvidenceFilter('pending')">待老师处理</button>
+            <button class="missing-media-filter" type="button" data-learning-evidence-filter="recent24h" data-learning-evidence-label="近24小时新保存" onclick="setLearningEvidenceFilter('recent24h')">近24小时新保存</button>
+            <button class="missing-media-filter" type="button" data-learning-evidence-filter="reviewed" data-learning-evidence-label="老师已读闭环" onclick="setLearningEvidenceFilter('reviewed')">老师已读闭环</button>
           </div>
           <div class="dashboard-panel-note" id="learningEvidenceFilterSummary">当前显示全部学生。</div>
           <div class="dashboard-list" id="learningModuleEvidenceList">
@@ -2499,6 +2499,16 @@ function renderLearningGroups(targetId, rows) {
       return '默认按老师待处理优先排序，其次按最近保存或处理时间靠前';
     }
 
+    function getLearningEvidenceFilterCounts(rows = getLearningModuleEvidenceRows()) {
+      const safeRows = Array.isArray(rows) ? rows : [];
+      return {
+        all: safeRows.length,
+        pending: getFilteredLearningModuleEvidenceRows(safeRows, 'pending').length,
+        recent24h: getFilteredLearningModuleEvidenceRows(safeRows, 'recent24h').length,
+        reviewed: getFilteredLearningModuleEvidenceRows(safeRows, 'reviewed').length
+      };
+    }
+
     function getLearningEvidenceCompletedModules(row) {
       return Array.isArray(row?.modules)
         ? row.modules.filter(module => module && module.completed)
@@ -2599,8 +2609,13 @@ function renderLearningGroups(targetId, rows) {
 
     function renderLearningEvidenceFilterState(rows = getLearningModuleEvidenceRows()) {
       const buttons = Array.from(document.querySelectorAll('[data-learning-evidence-filter]'));
+      const counts = getLearningEvidenceFilterCounts(rows);
       buttons.forEach(button => {
         const isActive = (button.dataset.learningEvidenceFilter || 'all') === learningEvidenceFilter;
+        const filterKey = button.dataset.learningEvidenceFilter || 'all';
+        const baseLabel = button.dataset.learningEvidenceLabel || button.textContent || '';
+        const count = Number(counts?.[filterKey] || 0);
+        button.textContent = `${baseLabel} ${count}`;
         button.classList.toggle('active', isActive);
         button.setAttribute('aria-pressed', isActive ? 'true' : 'false');
       });
