@@ -1412,6 +1412,7 @@
           <div class="missing-media-filters" id="learningEvidenceFilterBar" style="margin: 12px 0 8px;">
             <button class="missing-media-filter active" type="button" data-learning-evidence-filter="all" onclick="setLearningEvidenceFilter('all')">全部</button>
             <button class="missing-media-filter" type="button" data-learning-evidence-filter="pending" onclick="setLearningEvidenceFilter('pending')">待老师处理</button>
+            <button class="missing-media-filter" type="button" data-learning-evidence-filter="recent24h" onclick="setLearningEvidenceFilter('recent24h')">近24小时新保存</button>
             <button class="missing-media-filter" type="button" data-learning-evidence-filter="reviewed" onclick="setLearningEvidenceFilter('reviewed')">老师已读闭环</button>
           </div>
           <div class="dashboard-panel-note" id="learningEvidenceFilterSummary">当前显示全部学生。</div>
@@ -2019,7 +2020,7 @@
     let quarantineGroupFilter = readQuarantinePreference('group', '').trim();
     let learningEvidenceFilter = (() => {
       const saved = readLearningEvidencePreference('filter', 'all');
-      return ['all', 'pending', 'reviewed'].includes(saved) ? saved : 'all';
+      return ['all', 'pending', 'recent24h', 'reviewed'].includes(saved) ? saved : 'all';
     })();
     let dashboardBaseTitle = '教师后台 - ClassShow';
     let lastQuarantineExpiryReminderKey = '';
@@ -2486,12 +2487,14 @@ function renderLearningGroups(targetId, rows) {
 
     function getLearningEvidenceFilterLabel(filter = learningEvidenceFilter) {
       if (filter === 'pending') return '待老师处理';
+      if (filter === 'recent24h') return '近24小时新保存';
       if (filter === 'reviewed') return '老师已读闭环';
       return '全部';
     }
 
     function getLearningEvidenceSortDescription(filter = learningEvidenceFilter) {
       if (filter === 'pending') return '待处理模块数多的优先，其次按最近保存时间靠前';
+      if (filter === 'recent24h') return '按最近保存时间靠前';
       if (filter === 'reviewed') return '按最近老师处理时间靠前';
       return '默认按老师待处理优先排序，其次按最近保存或处理时间靠前';
     }
@@ -2539,6 +2542,24 @@ function renderLearningGroups(targetId, rows) {
             const metaB = getLearningEvidenceRowSortMeta(b);
             if (metaB.pendingCount !== metaA.pendingCount) return metaB.pendingCount - metaA.pendingCount;
             if (metaB.latestSaveTs !== metaA.latestSaveTs) return metaB.latestSaveTs - metaA.latestSaveTs;
+            if (metaB.completedCount !== metaA.completedCount) return metaB.completedCount - metaA.completedCount;
+            return metaA.rank - metaB.rank;
+          });
+      }
+      if (filter === 'recent24h') {
+        const nowTs = Date.now();
+        const recentWindowMs = 24 * 60 * 60 * 1000;
+        return safeRows
+          .filter(row => {
+            const meta = getLearningEvidenceRowSortMeta(row);
+            return meta.completedCount > 0 && meta.latestSaveTs > 0 && (nowTs - meta.latestSaveTs) <= recentWindowMs;
+          })
+          .sort((a, b) => {
+            const metaA = getLearningEvidenceRowSortMeta(a);
+            const metaB = getLearningEvidenceRowSortMeta(b);
+            if (metaB.latestSaveTs !== metaA.latestSaveTs) return metaB.latestSaveTs - metaA.latestSaveTs;
+            if (metaA.bucket !== metaB.bucket) return metaA.bucket - metaB.bucket;
+            if (metaB.pendingCount !== metaA.pendingCount) return metaB.pendingCount - metaA.pendingCount;
             if (metaB.completedCount !== metaA.completedCount) return metaB.completedCount - metaA.completedCount;
             return metaA.rank - metaB.rank;
           });
@@ -2605,11 +2626,16 @@ function renderLearningGroups(targetId, rows) {
         return;
       }
 
+      if (learningEvidenceFilter === 'recent24h') {
+        summary.textContent = `当前筛选：${filterLabel}。${filteredRows.length} / ${totalCount} 名学生在最近 24 小时内有新的模块复盘保存，已按最近保存时间排序。`;
+        return;
+      }
+
       summary.textContent = `当前筛选：${filterLabel}。${filteredRows.length} / ${totalCount} 名学生的已提交模块复盘已全部闭环，已按最近老师处理时间排序。`;
     }
 
     function setLearningEvidenceFilter(filter = 'all') {
-      const nextFilter = ['all', 'pending', 'reviewed'].includes(filter) ? filter : 'all';
+      const nextFilter = ['all', 'pending', 'recent24h', 'reviewed'].includes(filter) ? filter : 'all';
       if (learningEvidenceFilter === nextFilter) {
         renderLearningEvidenceFilterState();
         return;
