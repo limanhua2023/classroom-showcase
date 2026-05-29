@@ -71,6 +71,19 @@ const COURSE_TEACHER_ASSET_DIR = path.join(__dirname, 'data', 'course-teacher-as
 const COURSE_REGISTRY_STORAGE_PATH = 'system/course-registry.json';
 const COURSE_REGISTRY_CACHE_TTL_MS = 30 * 1000;
 const COURSE_RUNTIME_PROGRESS_SNAPSHOT_MAX_BYTES = Math.max(16 * 1024, Number(process.env.COURSE_RUNTIME_PROGRESS_SNAPSHOT_MAX_BYTES || 128 * 1024));
+const COURSE_MODULE_EVIDENCE_CONFIG = Object.freeze([
+  {
+    slug: 'economics-fundamentals',
+    course_names: ['经济学基础'],
+    modules: [
+      { id: 'module-1', title: '模块一综合复盘', short_title: '思维工具', chapter_id: 3 },
+      { id: 'module-2', title: '模块二综合复盘', short_title: '市场供求', chapter_id: 6 },
+      { id: 'module-3', title: '模块三综合复盘', short_title: '效率与福利', chapter_id: 10 },
+      { id: 'module-4', title: '模块四综合复盘', short_title: '厂商行为', chapter_id: 15 },
+      { id: 'module-5', title: '模块五综合复盘', short_title: '宏观基础', chapter_id: 33 }
+    ]
+  }
+]);
 const MEDIA_MANIFEST_FOLDER = 'manifests';
 const MEDIA_THUMBNAIL_FOLDER = 'thumbs';
 const STORAGE_TRASH_FOLDER = 'trash';
@@ -6629,7 +6642,92 @@ function rankLearningRows(rows, primaryKey = 'active_seconds') {
   return sorted;
 }
 
-async function buildLearningEngagementSummary(activityId, viewerUserId = null) {
+function resolveCourseModuleEvidenceConfig({ courseSlug = '', courseName = '' } = {}) {
+  const normalizedSlug = normalizeCourseSlug(courseSlug);
+  const normalizedName = String(courseName || '').trim();
+  return COURSE_MODULE_EVIDENCE_CONFIG.find(entry =>
+    normalizeCourseSlug(entry.slug) === normalizedSlug
+    || (normalizedName && Array.isArray(entry.course_names) && entry.course_names.includes(normalizedName))
+  ) || null;
+}
+
+function normalizeModuleReflectionText(value, maxLength = 1200) {
+  const text = String(value ?? '').replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  if (!Number.isFinite(maxLength) || maxLength <= 0 || text.length <= maxLength) return text;
+  return `${text.slice(0, Math.max(1, maxLength)).trim()}…`;
+}
+
+function makeModuleReflectionExcerpt(text, maxLength = 88) {
+  const normalized = normalizeModuleReflectionText(text, Math.max(maxLength, 0) * 4);
+  if (!normalized) return '';
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(1, maxLength)).trim()}…`;
+}
+
+function buildModuleEvidenceFromSnapshot(config, snapshot = {}) {
+  if (!config || !Array.isArray(config.modules) || config.modules.length === 0) {
+    return { total_count: 0, completed_count: 0, latest_title: '', latest_excerpt: '', items: [] };
+  }
+
+  const safeSnapshot = snapshot && typeof snapshot === 'object' && !Array.isArray(snapshot)
+    ? snapshot
+    : {};
+  const reflections = safeSnapshot.reflections && typeof safeSnapshot.reflections === 'object' && !Array.isArray(safeSnapshot.reflections)
+    ? safeSnapshot.reflections
+    : {};
+  const chapterProgress = safeSnapshot.chapterProgress && typeof safeSnapshot.chapterProgress === 'object' && !Array.isArray(safeSnapshot.chapterProgress)
+    ? safeSnapshot.chapterProgress
+    : {};
+
+  const items = config.modules.map((module, index) => {
+    const chapterId = Number(module.chapter_id || 0) || 0;
+    const chapterKey = chapterId > 0 ? String(chapterId) : '';
+    const reflectionText = normalizeModuleReflectionText(
+      chapterKey ? (reflections[`ch${chapterKey}`] ?? reflections[chapterKey] ?? '') : '',
+      1200
+    );
+    const progress = chapterKey && chapterProgress[chapterKey] && typeof chapterProgress[chapterKey] === 'object'
+      ? chapterProgress[chapterKey]
+      : {};
+    const completed = !!progress.reflectionDone || reflectionText.length > 5;
+    return {
+      module_id: module.id || `module-${index + 1}`,
+      title: module.title || `模块${index + 1}综合复盘`,
+      short_title: module.short_title || module.title || `模块${index + 1}`,
+      chapter_id: chapterId,
+      completed,
+      reflection_length: reflectionText.length,
+      reflection_excerpt: makeModuleReflectionExcerpt(reflectionText),
+      reflection_text: reflectionText
+    };
+  });
+
+  const completedItems = items.filter(item => item.completed);
+  const latest = completedItems.length ? completedItems[completedItems.length - 1] : null;
+  return {
+    total_count: items.length,
+    completed_count: completedItems.length,
+    latest_title: latest ? latest.title : '',
+    latest_excerpt: latest ? latest.reflection_excerpt : '',
+    items
+  };
+}
+
+function rankModuleEvidenceRows(rows = []) {
+  const sorted = rows.slice().sort((a, b) => {
+    const completed = Number(b.module_completed_count || 0) - Number(a.module_completed_count || 0);
+    if (completed) return completed;
+    const activeSeconds = Number(b.active_seconds || 0) - Number(a.active_seconds || 0);
+    if (activeSeconds) return activeSeconds;
+    return String(a.student_id || '').localeCompare(String(b.student_id || ''), 'zh-CN');
+  });
+  sorted.forEach((row, index) => { row.rank = index + 1; });
+  return sorted;
+}
+
+async function buildLearningEngagementSummary(activityId, viewerUserId = null, options = {}) {
+  const includeAllRows = options && options.includeAllRows === true;
   let [
     usersResult,
     sessionsResult,
@@ -6646,7 +6744,7 @@ async function buildLearningEngagementSummary(activityId, viewerUserId = null) {
       .select('user_id,active_seconds,last_seen_at,updated_at')
       .eq('activity_id', activityId),
     supabase.from('student_course_runtime_progress')
-      .select('user_id,current_chapter,current_lesson,current_stage,progress_percent,updated_at,client_updated_at,last_event')
+      .select('user_id,course_slug,current_chapter,current_lesson,current_stage,progress_percent,updated_at,client_updated_at,last_event')
       .eq('activity_id', activityId),
     supabase.from('submissions')
       .select('id,user_id,average_rating,rating_count,view_count,status')
@@ -6908,6 +7006,7 @@ async function buildLearningEngagementSummary(activityId, viewerUserId = null) {
     progress_schema_ready: progressSchemaReady,
     generated_at: new Date().toISOString(),
     my: me,
+    ...(includeAllRows ? { all_rows: rankedIndividuals } : {}),
     leaderboard: rankedIndividuals.slice(0, LEARNING_LEADERBOARD_LIMIT),
     engagement_leaderboard: rankedByEngagement.slice(0, LEARNING_LEADERBOARD_LIMIT),
     group_leaderboard: rankedGroups.slice(0, LEARNING_LEADERBOARD_LIMIT),
@@ -6943,6 +7042,163 @@ function emptyLearningEngagementSummary(error = null) {
       recently_active_window_seconds: Math.round(Math.max(2 * 60 * 1000, LEARNING_RECENT_ACTIVE_WINDOW_SECONDS * 1000) / 1000),
       student_count: 0,
       group_count: 0
+    }
+  };
+}
+
+function emptyLearningModuleEvidenceSummary(error = null, options = {}) {
+  const config = resolveCourseModuleEvidenceConfig({
+    courseSlug: options.courseSlug || '',
+    courseName: options.courseName || ''
+  });
+  const moduleDefinitions = config
+    ? config.modules.map(item => ({
+        module_id: item.id,
+        title: item.title,
+        short_title: item.short_title,
+        chapter_id: item.chapter_id
+      }))
+    : [];
+  const studentCount = Math.max(0, Number(options.studentCount || 0));
+  return {
+    schema_ready: false,
+    course_slug: config?.slug || normalizeCourseSlug(options.courseSlug || ''),
+    course_name: options.courseName || config?.course_names?.[0] || '',
+    generated_at: new Date().toISOString(),
+    error: error ? String(error.message || error) : null,
+    module_definitions: moduleDefinitions,
+    rows: [],
+    totals: {
+      student_count: studentCount,
+      module_count: moduleDefinitions.length,
+      students_with_completed_reviews: 0,
+      fully_completed_students: 0,
+      completed_reviews_total: 0
+    }
+  };
+}
+
+async function buildLearningModuleEvidenceSummary(activityId, options = {}) {
+  const learningRows = Array.isArray(options.learningRows) ? options.learningRows : [];
+  let users = learningRows;
+  if (!users.length) {
+    const usersResult = await supabase.from('users')
+      .select('id,name,student_id,class_name,group_name')
+      .eq('activity_id', activityId);
+    if (usersResult.error) throw usersResult.error;
+    users = usersResult.data || [];
+  }
+
+  const progressResult = await supabase.from('student_course_runtime_progress')
+    .select('user_id,course_slug,snapshot,updated_at,client_updated_at')
+    .eq('activity_id', activityId);
+
+  let progressRows = progressResult.data || [];
+  let schemaReady = true;
+  if (progressResult.error) {
+    if (isCourseRuntimeSchemaError(progressResult.error.message)) {
+      schemaReady = false;
+      progressRows = [];
+    } else {
+      throw progressResult.error;
+    }
+  }
+
+  let inferredCourseSlug = String(options.courseSlug || '').trim();
+  const progressByUser = new Map();
+  progressRows.forEach(row => {
+    const key = String(row.user_id || '').trim();
+    if (!key) return;
+    if (!inferredCourseSlug && row.course_slug) inferredCourseSlug = String(row.course_slug || '').trim();
+    const updatedAtMs = row.updated_at ? new Date(row.updated_at).getTime() : 0;
+    const existing = progressByUser.get(key);
+    const existingUpdatedAtMs = existing?.updated_at ? new Date(existing.updated_at).getTime() : 0;
+    if (!existing || updatedAtMs >= existingUpdatedAtMs) {
+      progressByUser.set(key, row);
+    }
+  });
+
+  const config = resolveCourseModuleEvidenceConfig({
+    courseSlug: inferredCourseSlug,
+    courseName: options.courseName || ''
+  });
+  if (!schemaReady) {
+    return emptyLearningModuleEvidenceSummary('Course runtime progress schema is not ready yet.', {
+      courseSlug: inferredCourseSlug,
+      courseName: options.courseName || '',
+      studentCount: users.length
+    });
+  }
+  if (!config) {
+    return {
+      schema_ready: true,
+      course_slug: normalizeCourseSlug(inferredCourseSlug || ''),
+      course_name: options.courseName || '',
+      generated_at: new Date().toISOString(),
+      error: null,
+      module_definitions: [],
+      rows: [],
+      totals: {
+        student_count: users.length,
+        module_count: 0,
+        students_with_completed_reviews: 0,
+        fully_completed_students: 0,
+        completed_reviews_total: 0
+      }
+    };
+  }
+
+  const moduleDefinitions = config.modules.map(item => ({
+    module_id: item.id,
+    title: item.title,
+    short_title: item.short_title,
+    chapter_id: item.chapter_id
+  }));
+
+  const rows = users.map(user => {
+    const userId = String(user.user_id || user.id || '').trim();
+    const progress = progressByUser.get(userId) || null;
+    const evidence = buildModuleEvidenceFromSnapshot(config, progress?.snapshot || {});
+    return {
+      user_id: userId,
+      name: user.name || '',
+      student_id: user.student_id || '',
+      class_name: user.class_name || '',
+      group_name: user.group_name || '',
+      active_seconds: Number(user.active_seconds || 0),
+      active_minutes: Number(user.active_minutes || 0),
+      last_saved_at: user.last_saved_at || null,
+      pending_save: !!user.pending_save,
+      save_state: user.save_state || 'never',
+      current_chapter: Number(user.current_chapter || 0) || null,
+      progress_percent: Number(user.progress_percent || 0) || 0,
+      module_completed_count: evidence.completed_count,
+      module_total_count: evidence.total_count,
+      latest_module_title: evidence.latest_title,
+      latest_module_excerpt: evidence.latest_excerpt,
+      latest_module_saved_at: progress?.updated_at || progress?.client_updated_at || user.last_saved_at || null,
+      modules: evidence.items
+    };
+  });
+
+  const rankedRows = rankModuleEvidenceRows(rows);
+  return {
+    schema_ready: true,
+    course_slug: config.slug,
+    course_name: options.courseName || config.course_names?.[0] || '',
+    generated_at: new Date().toISOString(),
+    error: null,
+    module_definitions: moduleDefinitions,
+    rows: rankedRows,
+    totals: {
+      student_count: rankedRows.length,
+      module_count: moduleDefinitions.length,
+      students_with_completed_reviews: rankedRows.filter(row => Number(row.module_completed_count || 0) > 0).length,
+      fully_completed_students: rankedRows.filter(row => {
+        const total = Number(row.module_total_count || 0);
+        return total > 0 && Number(row.module_completed_count || 0) >= total;
+      }).length,
+      completed_reviews_total: rankedRows.reduce((sum, row) => sum + Number(row.module_completed_count || 0), 0)
     }
   };
 }
@@ -10093,7 +10349,7 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
       getCachedStorageSummary(activity_id),
       listActivityFeedback({ activityId: activity_id, sort: 'latest', includeUsers: true, limit: 5 }).catch(() => ({ likes_enabled: false, items: [] })),
       listActivityFeedback({ activityId: activity_id, sort: 'hot', includeUsers: true, limit: 5 }).catch(() => ({ likes_enabled: false, items: [] })),
-      buildLearningEngagementSummary(activity_id).catch(error => emptyLearningEngagementSummary(error))
+      buildLearningEngagementSummary(activity_id, null, { includeAllRows: true }).catch(error => emptyLearningEngagementSummary(error))
     ]);
 
     if (activityResult.error) throw activityResult.error;
@@ -10129,6 +10385,21 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
 
     const users = usersResult.data || [];
     const activitySafe = sanitizeActivity(activityResult.data);
+    const learningModuleEvidence = await buildLearningModuleEvidenceSummary(activity_id, {
+      learningRows: Array.isArray(learningEngagement?.all_rows) ? learningEngagement.all_rows : [],
+      courseName: activitySafe.course_name || '',
+      courseSlug: normalizeCourseSlug(activitySafe.course_name || '')
+    }).catch(error => emptyLearningModuleEvidenceSummary(error, {
+      courseName: activitySafe.course_name || '',
+      courseSlug: normalizeCourseSlug(activitySafe.course_name || ''),
+      studentCount: users.length
+    }));
+    const learningEngagementPublic = learningEngagement && typeof learningEngagement === 'object'
+      ? { ...learningEngagement }
+      : emptyLearningEngagementSummary();
+    if (learningEngagementPublic && Object.prototype.hasOwnProperty.call(learningEngagementPublic, 'all_rows')) {
+      delete learningEngagementPublic.all_rows;
+    }
     const archivePolicy = resolveActivityArchivePolicy(activitySafe);
     const quarantinePolicy = resolveActivityQuarantinePolicy(activitySafe);
     const submissions = await enrichSubmissionMediaRows((subsResult.data || []).map(item => ({
@@ -10330,7 +10601,8 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
       },
       latest_feedback: latestFeedback.items || [],
       hot_feedback: hotFeedback.items || [],
-      learning_engagement: learningEngagement,
+      learning_engagement: learningEngagementPublic,
+      learning_module_evidence: learningModuleEvidence,
       feedback_likes_enabled: !!(latestFeedback.likes_enabled || hotFeedback.likes_enabled || feedbackLikesEnabled)
     });
   } catch (e) {

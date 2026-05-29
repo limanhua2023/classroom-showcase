@@ -207,6 +207,54 @@
       font-size: 0.76rem;
       line-height: 1.55;
     }
+    .learning-module-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .learning-module-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      border: 1px solid rgba(148, 163, 184, 0.2);
+      background: rgba(148, 163, 184, 0.12);
+      color: #475569;
+      font-size: 0.74rem;
+      font-weight: 800;
+      line-height: 1;
+    }
+    .learning-module-chip.completed {
+      background: rgba(34, 197, 94, 0.12);
+      border-color: rgba(34, 197, 94, 0.18);
+      color: #15803d;
+    }
+    .learning-module-chip.pending {
+      background: rgba(245, 158, 11, 0.12);
+      border-color: rgba(245, 158, 11, 0.18);
+      color: #b45309;
+    }
+    .learning-module-excerpt {
+      margin-top: 10px;
+      padding: 10px 12px;
+      border-radius: 14px;
+      background: rgba(15, 23, 42, 0.04);
+      border: 1px solid rgba(15, 23, 42, 0.06);
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      line-height: 1.65;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .dashboard-panel-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: flex-end;
+    }
     .archive-gauge-layout {
       display: grid;
       grid-template-columns: minmax(280px, 340px) minmax(0, 1fr);
@@ -1258,6 +1306,24 @@
         </div>
       </div>
 
+      <div class="dashboard-panel" style="grid-column: span 12;">
+        <div class="dashboard-panel-body">
+          <div class="dashboard-panel-head">
+            <div>
+              <div class="dashboard-panel-title">模块综合复盘证据</div>
+              <div class="dashboard-panel-note">老师可直接查看每位学生已保存到云端的模块复盘进度与最新摘要，并导出为 CSV / Excel 留档。</div>
+            </div>
+            <div class="dashboard-panel-actions">
+              <button class="btn btn-secondary btn-sm" type="button" id="exportLearningEvidenceXlsxBtn" onclick="exportLearningModuleEvidenceWorkbook()">导出 Excel</button>
+              <button class="btn btn-secondary btn-sm" type="button" id="exportLearningEvidenceCsvBtn" onclick="exportLearningModuleEvidenceCsv()">导出 CSV</button>
+            </div>
+          </div>
+          <div class="dashboard-list" id="learningModuleEvidenceList">
+            <div class="dashboard-panel-note">正在读取模块复盘证据...</div>
+          </div>
+        </div>
+      </div>
+
       <div class="dashboard-two-col" style="grid-column: span 12;">
         <div class="dashboard-panel">
           <div class="dashboard-panel-body">
@@ -2163,7 +2229,7 @@
       }).join('');
     }
 
-    function renderLearningGroups(targetId, rows) {
+function renderLearningGroups(targetId, rows) {
       const box = document.getElementById(targetId);
       if (!box) return;
       if (!rows?.length) {
@@ -2200,10 +2266,92 @@
       }).join('');
     }
 
+    function setLearningEvidenceExportButtonsDisabled(disabled) {
+      const xlsxBtn = document.getElementById('exportLearningEvidenceXlsxBtn');
+      const csvBtn = document.getElementById('exportLearningEvidenceCsvBtn');
+      if (xlsxBtn) xlsxBtn.disabled = !!disabled;
+      if (csvBtn) csvBtn.disabled = !!disabled;
+      if (xlsxBtn && disabled) xlsxBtn.textContent = '导出 Excel';
+      if (csvBtn && disabled) csvBtn.textContent = '导出 CSV';
+    }
+
+    function renderLearningModuleEvidence(evidence) {
+      const box = document.getElementById('learningModuleEvidenceList');
+      if (!box) return;
+
+      if (!evidence) {
+        box.innerHTML = '<div class="dashboard-panel-note">当前还没有返回模块综合复盘证据。</div>';
+        setLearningEvidenceExportButtonsDisabled(true);
+        return;
+      }
+
+      if (evidence.schema_ready === false) {
+        box.innerHTML = `<div class="storage-warning warning-attention">${escapeHtml(evidence.error || '课程进度表尚未初始化，暂时无法读取模块综合复盘证据。')}</div>`;
+        setLearningEvidenceExportButtonsDisabled(true);
+        return;
+      }
+
+      const rows = Array.isArray(evidence.rows) ? evidence.rows : [];
+      if (!rows.length) {
+        box.innerHTML = '<div class="dashboard-panel-note">学生完成模块综合复盘并保存到云端后，这里会显示每个模块的完成状态和最新反思摘要。</div>';
+        setLearningEvidenceExportButtonsDisabled(true);
+        return;
+      }
+
+      const moduleDefinitions = Array.isArray(evidence.module_definitions) ? evidence.module_definitions : [];
+      box.innerHTML = rows.map((row, index) => {
+        const rank = Number(row.rank || index + 1);
+        const rankClass = rank === 1 ? 'top-1' : rank === 2 ? 'top-2' : rank === 3 ? 'top-3' : '';
+        const saveState = getSaveStateMeta(row);
+        const metaLine = [
+          row.student_id || '-',
+          row.class_name || '未分班',
+          row.group_name || '未分组'
+        ].join(' · ');
+        const moduleLine = moduleDefinitions.map(def => {
+          const module = (row.modules || []).find(item => String(item.module_id || '') === String(def.module_id || ''));
+          const completed = !!module?.completed;
+          return `<span class="learning-module-chip ${completed ? 'completed' : 'pending'}">${escapeHtml(def.short_title || def.title || '模块')} · ${completed ? '已交' : '未交'}</span>`;
+        }).join('');
+        const latestLine = row.latest_module_title && row.latest_module_excerpt
+          ? `<div class="learning-module-excerpt"><strong>${escapeHtml(row.latest_module_title)}</strong>：${escapeHtml(row.latest_module_excerpt)}</div>`
+          : '<div class="learning-module-excerpt">暂未保存任何模块综合复盘到云端。</div>';
+
+        return `
+          <div class="dashboard-list-item">
+            <div class="dashboard-list-main">
+              <div class="learning-list-head">
+                <span class="learning-rank ${rankClass}">#${rank}</span>
+                <div>
+                  <div class="dashboard-list-title">${escapeHtml(row.name || '未实名学生')}</div>
+                  <div class="dashboard-list-sub">${escapeHtml(metaLine)}</div>
+                </div>
+              </div>
+              <div class="learning-list-note">${escapeHtml(`已完成 ${Number(row.module_completed_count || 0)}/${Number(row.module_total_count || 0)} 个模块复盘 · ${formatLastSaveLabel(row.last_saved_at)}`)}</div>
+              <div class="learning-module-meta">${moduleLine}</div>
+              ${latestLine}
+            </div>
+            <div class="dashboard-list-side">
+              <strong>${escapeHtml(`${Number(row.module_completed_count || 0)}/${Number(row.module_total_count || 0)}`)}</strong>
+              <span>模块复盘完成</span>
+              <span class="save-status-chip ${saveState.className}">${escapeHtml(saveState.label)}</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+
+      setLearningEvidenceExportButtonsDisabled(false);
+      const xlsxBtn = document.getElementById('exportLearningEvidenceXlsxBtn');
+      const csvBtn = document.getElementById('exportLearningEvidenceCsvBtn');
+      if (xlsxBtn) xlsxBtn.textContent = `导出 Excel ${rows.length}`;
+      if (csvBtn) csvBtn.textContent = `导出 CSV ${rows.length}`;
+    }
+
     function renderLearningMonitor(summary) {
       const badge = document.getElementById('learningMonitorBadge');
       const box = document.getElementById('learningMonitorSummary');
       const learning = summary?.learning_engagement || null;
+      const moduleEvidence = summary?.learning_module_evidence || null;
       if (!badge || !box) return;
 
       if (!learning) {
@@ -2212,16 +2360,22 @@
         renderLearningLeaderboard('learningDurationList', [], 'duration');
         renderLearningLeaderboard('learningEngagementList', [], 'engagement');
         renderLearningGroups('learningGroupList', []);
+        renderLearningModuleEvidence(moduleEvidence);
         return;
       }
 
       const totals = learning.totals || {};
+      const moduleTotals = moduleEvidence?.totals || {};
       const totalMinutes = Number(totals.active_minutes || 0);
       const trackedStudents = Number(totals.tracked_students || 0);
       const studentCount = Number(totals.student_count || 0);
       const groupCount = Number(totals.group_count || 0);
       const recentlyActiveCount = Number(totals.recently_active_count || 0);
       const pendingSaveCount = Number(totals.pending_save_count || 0);
+      const studentsWithCompletedReviews = Number(moduleTotals.students_with_completed_reviews || 0);
+      const fullyCompletedStudents = Number(moduleTotals.fully_completed_students || 0);
+      const completedReviewsTotal = Number(moduleTotals.completed_reviews_total || 0);
+      const moduleCount = Number(moduleTotals.module_count || 0);
       const windowSeconds = getLearningWindowSeconds(learning);
       const windowMinutes = Math.max(1, Math.round(windowSeconds / 60));
       const averageMinutes = trackedStudents > 0 ? totalMinutes / trackedStudents : 0;
@@ -2261,6 +2415,20 @@
           note: `当前聚合 ${groupCount} 个班级 / 小组单元`
         }
       ];
+      if (moduleCount > 0) {
+        cards.push(
+          {
+            value: `${studentsWithCompletedReviews}/${studentCount}`,
+            label: '已交模块复盘',
+            note: `累计已保存 ${completedReviewsTotal} 份模块综合复盘`
+          },
+          {
+            value: String(fullyCompletedStudents),
+            label: '五模块已闭环',
+            note: '表示五个模块的综合复盘都已写入云端'
+          }
+        );
+      }
 
       const warning = learning.schema_ready === false
         ? `<div class="storage-warning warning-attention">${escapeHtml(learning.error || '学习监控表还没有完成初始化，请先执行升级 SQL。')}</div>`
@@ -2286,6 +2454,7 @@
       renderLearningLeaderboard('learningDurationList', learning.leaderboard || [], 'duration');
       renderLearningLeaderboard('learningEngagementList', learning.engagement_leaderboard || [], 'engagement');
       renderLearningGroups('learningGroupList', learning.group_leaderboard || []);
+      renderLearningModuleEvidence(moduleEvidence);
     }
 
     function renderStatusPills(activity) {
@@ -3645,6 +3814,94 @@
 
     function exportFilteredQuarantinedSubmissions() {
       exportFilteredQuarantinedWorkbook();
+    }
+
+    function getLearningModuleEvidenceRows() {
+      return Array.isArray(dashboardSummary?.learning_module_evidence?.rows)
+        ? dashboardSummary.learning_module_evidence.rows
+        : [];
+    }
+
+    function getLearningModuleEvidenceExportRows(rows = getLearningModuleEvidenceRows()) {
+      const moduleDefinitions = Array.isArray(dashboardSummary?.learning_module_evidence?.module_definitions)
+        ? dashboardSummary.learning_module_evidence.module_definitions
+        : [];
+      return rows.map(row => {
+        const exportRow = {
+          '排名': Number(row.rank || 0),
+          '姓名': row.name || '',
+          '学号': row.student_id || '',
+          '班级': row.class_name || '未分班',
+          '小组': row.group_name || '未分组',
+          '模块复盘完成度': `${Number(row.module_completed_count || 0)}/${Number(row.module_total_count || 0)}`,
+          '上次保存时间': formatBangkokTime(row.last_saved_at),
+          '保存状态': getSaveStateMeta(row).label,
+          '当前章节': row.current_chapter ? `Ch${row.current_chapter}` : '',
+          '课程进度': row.progress_percent ? `${Math.round(Number(row.progress_percent || 0))}%` : '',
+          '最新复盘模块': row.latest_module_title || '',
+          '最新复盘摘要': row.latest_module_excerpt || ''
+        };
+        moduleDefinitions.forEach(def => {
+          const module = (row.modules || []).find(item => String(item.module_id || '') === String(def.module_id || ''));
+          const label = def.short_title || def.title || '模块';
+          exportRow[`${label} 状态`] = module?.completed ? '已完成' : '未完成';
+          exportRow[`${label} 反思`] = module?.reflection_text || '';
+        });
+        return exportRow;
+      });
+    }
+
+    function exportLearningModuleEvidenceCsv() {
+      const rows = getLearningModuleEvidenceRows();
+      if (!rows.length) return toast('当前没有可导出的模块综合复盘证据', 'error');
+      const exportRows = getLearningModuleEvidenceExportRows(rows);
+      const headers = Object.keys(exportRows[0] || {});
+      const csvRows = exportRows.map(row => headers.map(header => escapeCsvCell(row[header] || '')).join(','));
+      const csv = '\uFEFF' + [headers.map(escapeCsvCell).join(','), ...csvRows].join('\r\n');
+      downloadBlobFile(
+        new Blob([csv], { type: 'text/csv;charset=utf-8;' }),
+        `learning_module_evidence_${actId || 'activity'}_${getQuarantineExportTimestamp()}.csv`
+      );
+      toast(`已导出 ${rows.length} 条模块综合复盘证据 CSV`, 'success');
+    }
+
+    function exportLearningModuleEvidenceWorkbook() {
+      const rows = getLearningModuleEvidenceRows();
+      if (!rows.length) return toast('当前没有可导出的模块综合复盘证据', 'error');
+      if (!window.XLSX) {
+        exportLearningModuleEvidenceCsv();
+        return toast('Excel 导出组件未就绪，已回退为 CSV 导出', 'error');
+      }
+
+      const exportRows = getLearningModuleEvidenceExportRows(rows);
+      const workbook = XLSX.utils.book_new();
+      const detailSheet = XLSX.utils.json_to_sheet(exportRows);
+      detailSheet['!cols'] = Object.keys(exportRows[0] || {}).map((key, index) => {
+        if (index <= 4) return { wch: 14 };
+        if (/摘要|反思/.test(key)) return { wch: 48 };
+        if (/保存|进度|模块复盘完成度/.test(key)) return { wch: 20 };
+        return { wch: 18 };
+      });
+      const totals = dashboardSummary?.learning_module_evidence?.totals || {};
+      const summarySheet = XLSX.utils.aoa_to_sheet([
+        ['活动名称', dashboardSummary?.activity?.activity_name || actId || ''],
+        ['课程名称', dashboardSummary?.activity?.course_name || dashboardSummary?.learning_module_evidence?.course_name || ''],
+        ['导出时间', formatBangkokTime(new Date())],
+        ['学生人数', Number(totals.student_count || rows.length)],
+        ['模块数量', Number(totals.module_count || 0)],
+        ['已交模块复盘学生', Number(totals.students_with_completed_reviews || 0)],
+        ['五模块已闭环学生', Number(totals.fully_completed_students || 0)],
+        ['累计已保存模块复盘', Number(totals.completed_reviews_total || 0)]
+      ]);
+      summarySheet['!cols'] = [{ wch: 18 }, { wch: 40 }];
+      XLSX.utils.book_append_sheet(workbook, summarySheet, '导出说明');
+      XLSX.utils.book_append_sheet(workbook, detailSheet, '模块复盘证据');
+      const xlsxBlob = XLSX.write(workbook, { bookType: 'xlsx', type: 'array' });
+      downloadBlobFile(
+        new Blob([xlsxBlob], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }),
+        `learning_module_evidence_${actId || 'activity'}_${getQuarantineExportTimestamp()}.xlsx`
+      );
+      toast(`已导出 ${rows.length} 条模块综合复盘证据 Excel`, 'success');
     }
 
     function renderMissingMedia(summary) {

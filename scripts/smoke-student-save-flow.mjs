@@ -85,6 +85,41 @@ async function saveStudentCheckpoint(inviteCode, activityId, user, pagePath, rea
   });
 }
 
+async function saveModuleReflection(activityId, user, pagePath, chapterId, reflectionText, progressPercent = 0) {
+  await api(BACKEND_BASE, '/api/student/course-runtime/progress', {
+    method: 'POST',
+    headers: { 'x-user-token': user.token },
+    body: JSON.stringify({
+      activity_id: activityId,
+      user_id: user.id,
+      course_slug: COURSE_SLUG,
+      runtime_version: 'smoke-reflection-v1',
+      learning_mode: 'selflearn',
+      current_chapter: chapterId,
+      current_lesson: chapterId,
+      current_stage: 'reflection',
+      progress_percent: progressPercent,
+      completed_chapters: Math.max(0, Math.floor(chapterId / 3)),
+      total_chapters: 16,
+      xp: 100 + chapterId,
+      active: true,
+      last_event: 'reflection_submit',
+      page_path: pagePath,
+      client_updated_at: new Date().toISOString(),
+      snapshot: {
+        chapterProgress: {
+          [String(chapterId)]: {
+            reflectionDone: true
+          }
+        },
+        reflections: {
+          [`ch${chapterId}`]: reflectionText
+        }
+      }
+    })
+  });
+}
+
 async function main() {
   const inviteCode = makeInviteCode();
   const teacherPassword = makeTeacherPassword();
@@ -142,6 +177,23 @@ async function main() {
   const studentA = registered[0];
   const studentB = registered[1];
 
+  await saveModuleReflection(
+    activity.id,
+    studentA,
+    pagePath,
+    3,
+    '我开始能用稀缺、机会成本和比较优势去分析大学生活中的课程选择与时间分配。',
+    18
+  );
+  await saveModuleReflection(
+    activity.id,
+    studentB,
+    pagePath,
+    6,
+    '我能把价格、激励和供求变化联系到校园饮品、手机和日常消费决策中。',
+    36
+  );
+
   await api(BACKEND_BASE, '/api/student/learning/presence', {
     method: 'POST',
     headers: { 'x-user-token': studentA.token },
@@ -183,7 +235,21 @@ async function main() {
   if (rowAAfter.pending_save || rowAAfter.save_state !== 'saved' || !rowAAfter.last_saved_at) fail('Student A manual save did not reach teacher dashboard');
   if (Number(learningAfter?.totals?.pending_save_count || 0) !== 0) fail('Pending save count should be zero after both saves');
 
+  const moduleEvidence = summaryAfter?.learning_module_evidence || {};
+  const moduleRowA = (moduleEvidence?.rows || []).find(row => row.user_id === studentA.id) || null;
+  const moduleRowB = (moduleEvidence?.rows || []).find(row => row.user_id === studentB.id) || null;
+  if (!moduleRowA || !moduleRowB) fail('Teacher dashboard module evidence rows are missing');
+  if (Number(moduleRowA.module_completed_count || 0) < 1 || moduleRowA.latest_module_title !== '模块一综合复盘') {
+    fail('Student A module synthesis evidence did not reach teacher dashboard');
+  }
+  if (Number(moduleRowB.module_completed_count || 0) < 1 || moduleRowB.latest_module_title !== '模块二综合复盘') {
+    fail('Student B module synthesis evidence did not reach teacher dashboard');
+  }
+
   const deployedJs = await fetch(`${STUDENT_BASE}/js/economics-course-adapter.js?t=${Date.now()}`, {
+    headers: { 'cache-control': 'no-cache, no-store' }
+  }).then(res => res.text());
+  const teacherHtml = await fetch(`${BACKEND_BASE}/teacher-dashboard.html?t=${Date.now()}`, {
     headers: { 'cache-control': 'no-cache, no-store' }
   }).then(res => res.text());
   const frontendChecks = {
@@ -191,9 +257,15 @@ async function main() {
     save_button_primary: deployedJs.includes('class="primary" id="classshowEconSaveBtn"'),
     legacy_portal_removed: !deployedJs.includes('classshowEconPortalBtn')
       && !deployedJs.includes('classshowEconIndexBtn')
-      && !deployedJs.includes('classshowEconModularBtn')
+      && !deployedJs.includes('classshowEconModularBtn'),
+    teacher_module_panel_present: teacherHtml.includes('learningModuleEvidenceList'),
+    teacher_module_export_present: teacherHtml.includes('exportLearningModuleEvidenceWorkbook')
   };
-  if (!frontendChecks.save_button_present || !frontendChecks.save_button_primary || !frontendChecks.legacy_portal_removed) {
+  if (!frontendChecks.save_button_present
+    || !frontendChecks.save_button_primary
+    || !frontendChecks.legacy_portal_removed
+    || !frontendChecks.teacher_module_panel_present
+    || !frontendChecks.teacher_module_export_present) {
     fail(`Student frontend toolbar is not in expected state: ${JSON.stringify(frontendChecks)}`);
   }
 
@@ -230,6 +302,18 @@ async function main() {
         pending_save: rowBAfter.pending_save,
         pending_local_seconds: rowBAfter.pending_local_seconds,
         last_saved_at: rowBAfter.last_saved_at
+      }
+    },
+    module_evidence: {
+      student_a: {
+        completed: moduleRowA.module_completed_count,
+        latest_title: moduleRowA.latest_module_title,
+        latest_excerpt: moduleRowA.latest_module_excerpt
+      },
+      student_b: {
+        completed: moduleRowB.module_completed_count,
+        latest_title: moduleRowB.latest_module_title,
+        latest_excerpt: moduleRowB.latest_module_excerpt
       }
     }
   }, null, 2));
