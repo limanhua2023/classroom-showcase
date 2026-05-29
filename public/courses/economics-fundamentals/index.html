@@ -8616,7 +8616,38 @@ function _layerQuizBtn(id) {
   </div>`;
 }
 
+function _layerModuleSynthesis(ch) {
+  const moduleSynthesis = ch?.moduleSynthesis || null;
+  if (!moduleSynthesis) return '';
+  return `
+    <div style="background:linear-gradient(135deg,rgba(245,158,11,.08),rgba(20,184,166,.05));border:1px solid rgba(245,158,11,.24);border-left:4px solid var(--gold);border-radius:12px;padding:14px 16px;margin-bottom:14px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:8px;flex-wrap:wrap;">
+        <div style="font-size:15px;font-weight:900;color:var(--text);">🧭 ${moduleSynthesis.title || '模块综合复盘'}</div>
+        <span style="font-size:11px;font-weight:800;color:var(--gold);background:rgba(245,158,11,.1);padding:4px 10px;border-radius:999px;">模块整合</span>
+      </div>
+      ${moduleSynthesis.subtitle ? `<p style="font-size:13px;color:var(--text-muted);line-height:1.7;margin:0 0 12px 0;">${moduleSynthesis.subtitle}</p>` : ''}
+      ${Array.isArray(moduleSynthesis.map) ? `
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:8px;margin-bottom:12px;">
+          ${moduleSynthesis.map.map((item, index) => `
+            <div style="padding:10px 12px;border:1px solid rgba(245,158,11,.22);border-radius:10px;background:var(--bg-card);">
+              <div style="font-size:11px;font-weight:900;color:var(--gold);margin-bottom:4px;">STEP ${index + 1}</div>
+              <div style="font-size:13px;font-weight:800;color:var(--text);line-height:1.45;">${item}</div>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
+      ${moduleSynthesis.scenario ? `<div style="font-size:13px;line-height:1.75;color:var(--text);padding:10px 12px;border-radius:10px;background:rgba(59,130,246,.07);border:1px solid rgba(59,130,246,.18);margin-bottom:12px;">${moduleSynthesis.scenario}</div>` : ''}
+      ${Array.isArray(moduleSynthesis.questions) ? `
+        <ol style="margin:0 0 12px 20px;padding:0;color:var(--text-muted);font-size:13px;line-height:1.8;">
+          ${moduleSynthesis.questions.map(q => `<li>${q}</li>`).join('')}
+        </ol>
+      ` : ''}
+      ${moduleSynthesis.takeaway ? `<div style="font-size:13px;font-weight:800;line-height:1.7;color:var(--gold);padding:10px 12px;border-radius:10px;background:rgba(245,158,11,.08);">${moduleSynthesis.takeaway}</div>` : ''}
+    </div>`;
+}
+
 function _layerReflection(id) {
+  const ch = C[id] || {};
   const savedRef = (() => {
     try {
       // v1.17.4 读取主 state
@@ -8625,11 +8656,15 @@ function _layerReflection(id) {
       return '';
     } catch(e) { return ''; }
   })();
+  const prompt = ch.reflectionPrompt || `学完第${id}章，我最大的收获是：`;
+  const placeholder = ch.moduleSynthesis
+    ? '请用本模块的整套框架写下你的真实生活、市场或政策分析...'
+    : '用一句话记录你的最大收获...';
   return `<div style="background:rgba(255,255,255,0.03);border:1px solid var(--border-color);border-radius:8px;padding:12px 14px;margin-top:8px;">
     <div style="font-size:12px;font-weight:700;color:var(--text-muted);margin-bottom:4px;">✍️ 一句话反思</div>
-    <p style="font-size:12px;color:var(--text-dim);margin:0 0 7px;">学完第${id}章，我最大的收获是：</p>
+    <p style="font-size:12px;color:var(--text-dim);margin:0 0 7px;">${prompt}</p>
     <textarea rows="2" style="width:100%;background:var(--bg);border:1px solid var(--border-color);border-radius:6px;padding:8px;color:var(--text);font-size:12.5px;font-family:inherit;resize:vertical;"
-      placeholder="用一句话记录你的最大收获..."
+      placeholder="${placeholder}"
       oninput="EconCourseApp.actions.saveReflection(${id}, this.value)">${savedRef}</textarea>
   </div>`;
 }
@@ -8662,6 +8697,7 @@ function rKP_B(id) {
       <div style="font-size:11px;font-weight:800;color:#60a5fa;margin-bottom:6px;">👨‍🏫 教师扩展提示</div>
       <p style="font-size:12.5px;color:var(--text-muted);margin:0;line-height:1.6;">${db.teacher_note}</p>
     </div>` : ''}
+    ${_layerModuleSynthesis(ch)}
     ${_layerQuizBtn(id)}
     ${_layerChallengeBtn(id)}
     ${_layerReflection(id)}`;
@@ -8694,6 +8730,7 @@ function rKP_C(id) {
       <div style="font-size:11px;font-weight:800;color:#60a5fa;margin-bottom:6px;">👨‍🏫 教师扩展说明</div>
       <p style="font-size:12.5px;color:var(--text-muted);margin:0;line-height:1.6;">${db.teacher_note}</p>
     </div>` : ''}
+    ${_layerModuleSynthesis(ch)}
     ${_layerQuizBtn(id)}
     ${_layerChallengeBtn(id)}
     ${_layerReflection(id)}`;
