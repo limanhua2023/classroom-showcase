@@ -1,5 +1,23 @@
 # ClassShow 还原点记录
 
+## 2026-06-01 系统完整签收与稳定备份
+
+- 还原点分支：`restore/2026-06-01-stable-system-signoff`
+- 还原点标签：`restore-2026-06-01-stable-system-signoff`
+- 对应提交：`476d9dcac3474aa6d796aacdbdd620ef0af11aa9`
+- 状态说明：这是学生端、教师端、超级管理员端都已完成验收的稳定版本，并且已经完成项目代码快照、加密 secrets 备份、业务数据本地备份。详见：`STABLE_BACKUP_2026-06-01.md`
+
+### 回滚步骤
+
+仅在确认需要回到该版本时执行：
+
+```powershell
+git fetch origin
+git checkout main
+git reset --hard restore-2026-06-01-stable-system-signoff
+git push --force-with-lease origin main
+```
+
 ## 2026-05-09 课业竞技与学习时长升级前
 
 - 还原点分支：`restore/2026-05-09-pre-engagement-upgrade`

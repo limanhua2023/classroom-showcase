@@ -1,5 +1,6 @@
 # ClassShow 维护日志
 
+
 ## 2026-05-21
 ### Teacher Backup Hover Detail and Super-Admin Backup-Only Refresh
 - Added hover/focus backup detail popovers to the sticky teacher backup-status strip in `public/teacher-dashboard.html`, so operators can inspect the latest successful backup time, heartbeat, host, coverage, and cloud object anchor without leaving the top of the page.
@@ -356,3 +357,10 @@
 - Extended the public course portal homepage with a backup-risk bridge into `super-admin.html`: the `超级管理` entry now raises a red badge when backup health is degraded, and an inline operations alert appears above the course grid with direct navigation to the super-admin console.
 - The portal risk bridge reads `/api/health` only, so the homepage can expose backup/restore risk early while staying decoupled from course registry payloads and without refreshing the rest of the portal content.
 - Added responsive support for the portal operations alert block so the warning banner collapses cleanly on mobile while preserving the direct maintenance entry point.
+## 2026-06-01
+### Stable System Sign-Off, Restore Point, and Full Backup Snapshot
+- Added `SYSTEM_USAGE_MANUAL.md` as the operator-facing system handbook covering the current student, teacher, and super-admin production entry points plus the standard daily usage flow.
+- Added `STABLE_BACKUP_2026-06-01.md` to record the stable restore branch/tag, project-code snapshot, encrypted secrets bundle, and local business-data backup artifacts for the signed-off system state.
+- Created the Git restore branch `restore/2026-06-01-stable-system-signoff` and tag `restore-2026-06-01-stable-system-signoff`, both anchored to stable commit `476d9dcac3474aa6d796aacdbdd620ef0af11aa9`.
+- Executed the project-code backup chain, encrypted secrets backup chain, and local business-data backup chain successfully; captured the resulting local paths, cloud object keys, and checksums in the stable backup note.
+- Re-ran the authenticated super-admin production smoke flow using the configured credential source and confirmed `check-public-readiness` passes with full super-admin mutation coverage.
