@@ -125,7 +125,15 @@ export async function runSuperAdminSmoke({
     ? overview.registry.courses.map(entry => String(entry?.slug || '')).filter(Boolean)
     : [];
   if (!originalSlugs.length) fail('Super-admin overview returned no registry courses.');
-  if (!overview?.summary || !overview?.registry || !egress?.snapshot) {
+  if (
+    !overview?.summary
+    || !overview?.registry
+    || !egress
+    || !Array.isArray(egress.metrics)
+    || !Array.isArray(egress.recent_events)
+    || !Array.isArray(egress.throttle_checklist)
+    || typeof egress.totals !== 'object'
+  ) {
     fail('Super-admin overview or egress payload is incomplete.');
   }
 
@@ -298,7 +306,7 @@ export async function runSuperAdminSmoke({
     registered_course_count: Number(status.registered_course_count || 0),
     ready_course_count: Number(status.ready_course_count || 0),
     registry_backend: status.registry_backend || '',
-    egress_snapshot_ready: !!egress?.snapshot,
+    egress_payload_ready: true,
     exercised_mutations: !!exerciseMutations
   };
 }
