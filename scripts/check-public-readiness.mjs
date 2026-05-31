@@ -1,4 +1,5 @@
 import { auditEconomicsStudentGate } from './check-economics-student-gate.mjs';
+import { resolveSuperAdminPassword, runSuperAdminSmoke } from './smoke-super-admin-flow.mjs';
 
 const DEFAULT_STUDENT_BASE_URL = 'https://classshow-student.pages.dev';
 const DEFAULT_BACKEND_BASE_URL = 'https://classroom-showcase.onrender.com';
@@ -113,6 +114,18 @@ async function runAudit(studentBaseUrl, backendBaseUrl) {
   }
 
   try {
+    const { response, text } = await fetchText(`${backendBaseUrl}/super-admin.html`);
+    const ok = response.ok
+      && text.includes('loginSuperAdmin()')
+      && text.includes('/super-admin/overview')
+      && text.includes('registryEditorForm')
+      && text.includes('superAdminConsoleShell');
+    add('Backend super admin shell', ok, `HTTP ${response.status}`);
+  } catch (error) {
+    add('Backend super admin shell', false, error.message);
+  }
+
+  try {
     const response = await fetch(`${backendBaseUrl}/teacher`, { redirect: 'manual' });
     const location = response.headers.get('location') || '';
     const ok = response.status >= 300 && response.status < 400 && location.includes('/teacher-login.html');
@@ -128,6 +141,34 @@ async function runAudit(studentBaseUrl, backendBaseUrl) {
     add('Backend short alias /admin', ok, `HTTP ${response.status}; location=${location || '-'}`);
   } catch (error) {
     add('Backend short alias /admin', false, error.message);
+  }
+
+  try {
+    const configured = (await fetchJson(`${backendBaseUrl}/api/super-admin/status`)).json?.configured === true;
+    const smokeEnabled = String(process.env.CLASSSHOW_ENABLE_SUPER_ADMIN_SMOKE || '').trim() === '1';
+    const password = smokeEnabled ? await resolveSuperAdminPassword() : '';
+    if (configured && smokeEnabled) {
+      const result = await runSuperAdminSmoke({
+        backendBase: backendBaseUrl,
+        password,
+        exerciseMutations: true
+      });
+      add(
+        'Backend super admin auth smoke',
+        !!result?.ok,
+        `configured=${configured}; registry=${result?.registered_course_count || 0}; mutations=${result?.exercised_mutations === true}`
+      );
+    } else {
+      add(
+        'Backend super admin auth smoke',
+        true,
+        configured
+          ? 'SKIP - set CLASSSHOW_ENABLE_SUPER_ADMIN_SMOKE=1 and CLASSSHOW_SUPER_ADMIN_PASSWORD to exercise authenticated super-admin smoke.'
+          : 'SKIP - super-admin password is not configured on this backend.'
+      );
+    }
+  } catch (error) {
+    add('Backend super admin auth smoke', false, error.message);
   }
 
   try {
