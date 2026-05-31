@@ -530,8 +530,7 @@ body.low-perf * {
     max-width: none;
     padding-right: 10px;
   }
-  #low-perf-btn,
-  #teacher-btn {
+  #low-perf-btn {
     display: none !important;
   }
   #theme-btn {
@@ -5339,12 +5338,6 @@ body.projector-mode .teacher-question-card {
       <div class="track-card-desc">适合想深入学习的同学。完整开放 <b>16 章</b>，每章都有练习、测验、错题反馈与挑战任务。</div>
       <button class="track-card-btn" onclick="enterTrack('selflearn')">进入 16 章自主学习 →</button>
     </div>
-    <div class="track-card teacher">
-      <span class="track-card-icon">👨‍🏫</span>
-      <div class="track-card-title">教师课堂模式</div>
-      <div class="track-card-desc">适合教师投影、备课、查看标准答案与控制课堂节奏。</div>
-      <button class="track-card-btn" onclick="EconCourseApp.ui.toggleTeacherMode()">进入教师模式 →</button>
-    </div>
   </div>
   <div style="margin-top:16px;font-size:12px;color:var(--text-dim);">
     💡 课堂上按主线学习 · 课后可进入自主进阶轨道完成全部 16 章
@@ -5365,7 +5358,6 @@ body.projector-mode .teacher-question-card {
     <span id="chip-xp">0 XP</span>
   </div>
   <button id="low-perf-btn" class="qz-btn" onclick="EconCourseApp.ui.toggleLowPerfMode()" title="切换低性能模式" style="min-height:44px;margin-right:8px;font-size:12.5px;padding:4px 10px;border-radius:20px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:var(--text-muted);cursor:pointer;">⚡ 性能: 正常</button>
-  <button id="teacher-btn" class="qz-btn" onclick="EconCourseApp.ui.toggleTeacherMode()" title="切换教师课堂模式" style="min-height:44px;margin-right:8px;font-size:12.5px;padding:4px 10px;border-radius:20px;background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);color:var(--text-muted);cursor:pointer;">👨‍🏫 教师模式</button>
   <button id="theme-btn" onclick="toggleTheme()" title="切换亮/暗主题" style="min-height:44px;">🌙 暗色</button>
 </nav>
 
@@ -5952,11 +5944,6 @@ window.EconCourseApp = {
       const savedTheme = localStorage.getItem(prefix + 'theme') || 'dark';
       document.documentElement.setAttribute('data-theme', savedTheme);
 
-      // URL 参数覆盖
-      const params = new URLSearchParams(window.location.search);
-      if (params.get('teacher') === '1') app.state.teacherMode = true;
-      else if (params.get('teacher') === '0') app.state.teacherMode = false;
-
       // 学习模式恢复
       const savedMode = localStorage.getItem(prefix + 'learningMode');
       if (savedMode) app.state.learningMode = savedMode;
@@ -6015,11 +6002,6 @@ window.EconCourseApp = {
       if (lpBtn) {
         lpBtn.textContent = app.state.lowPerf ? "⚡ 性能: 省电" : "⚡ 性能: 正常";
         lpBtn.classList.toggle('active', app.state.lowPerf);
-      }
-      const tBtn = document.getElementById('teacher-btn');
-      if (tBtn) {
-        tBtn.textContent = app.state.teacherMode ? "👨‍🏫 教师模式: 开" : "👨‍🏫 教师模式: 关";
-        tBtn.classList.toggle('active', app.state.teacherMode);
       }
     },
     

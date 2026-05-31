@@ -3,246 +3,27 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>课程作品场 - ClassShow</title>
+  <title>课程入口已合并 - ClassShow</title>
   <link rel="stylesheet" href="css/main.css">
 </head>
-<body class="course-page">
-  <header class="topbar">
-    <a class="topbar-logo" href="index.html" onclick="navigateToStudent('/index.html'); return false;">Class<span>Show</span></a>
-    <div class="topbar-right">
-      <button class="btn btn-secondary btn-sm" onclick="location.href='index.html'">总门户</button>
-      <button class="btn btn-secondary btn-sm" onclick="location.href='teacher-login.html'">教师管理</button>
+<body>
+  <div class="page-center">
+    <div class="auth-box" style="text-align:center;">
+      <h1>课程<span>入口</span></h1>
+      <p class="subtitle">课程总页已并入学生单一入口，正在跳转到新的学生登录页。</p>
+      <p class="form-hint" style="margin-top:14px;">
+        如果没有自动跳转，请点击
+        <a id="studentRedirectLink" href="student-entry.html">这里继续进入课程</a>。
+      </p>
     </div>
-  </header>
-
-  <main class="container">
-    <section class="course-hero">
-      <div class="course-hero-copy">
-        <div class="brand-kicker">COURSE ARENA</div>
-        <h1 id="courseTitle">经济学基础</h1>
-        <p id="courseSubtitle">这里汇集课程活动、作品展示与课程专页入口。学生身份跨课程共享，邀请码按课程和活动继续隔离。</p>
-        <div class="course-hero-actions">
-          <button class="btn btn-primary" onclick="focusInviteBox()">输入邀请码进入</button>
-          <button class="btn btn-secondary" id="courseDedicatedBtn" style="display:none;" onclick="openDedicatedCoursePage()">打开课程专页</button>
-          <button class="btn btn-secondary" onclick="location.href='teacher-login.html?create=1'">创建课程活动</button>
-        </div>
-      </div>
-      <div class="course-scoreboard" aria-label="课程统计">
-        <div><strong id="courseActivityCount">0</strong><span>活动</span></div>
-        <div><strong id="courseStudentCount">0</strong><span>学生</span></div>
-        <div><strong id="courseSubmissionCount">0</strong><span>作品</span></div>
-        <div><strong id="courseVideoCount">0</strong><span>视频</span></div>
-      </div>
-    </section>
-
-    <section class="course-entry-panel" id="courseEntryPanel">
-      <div>
-        <strong>课程邀请码入口</strong>
-        <span>教师为不同课程发放不同邀请码；门户只展示课程概况，不公开邀请码。</span>
-      </div>
-      <div class="course-entry-actions">
-        <input id="courseInviteCode" type="password" placeholder="输入本课程邀请码">
-        <button class="btn btn-primary btn-sm" onclick="studentJoinFromInput()">学生进入</button>
-        <button class="btn btn-secondary btn-sm" onclick="guestJoinFromInput()">访客浏览</button>
-        <button class="btn btn-secondary btn-sm" onclick="displayFromInput()">大屏展示</button>
-      </div>
-    </section>
-
-    <section class="course-control-strip">
-      <div>
-        <strong>课程活动</strong>
-        <span id="courseUpdatedAt">正在读取课程目录...</span>
-      </div>
-      <div class="course-search">
-        <input id="activitySearch" type="search" placeholder="按活动 / 班级搜索" oninput="renderActivities()">
-        <button class="btn btn-secondary btn-sm" onclick="loadCourse()">刷新</button>
-      </div>
-    </section>
-
-    <section class="course-identity-note">
-      <strong>身份规则：</strong>
-      同一学生、同一学号在所有课程中使用同一个学习身份；课程之间通过不同邀请码隔离，便于后续逐步接入经济学基础、AI 学习、数学与统计、英语等课程页面。
-      <span id="courseIntegrationLine" style="display:block;margin-top:8px;"></span>
-    </section>
-
-    <section class="course-activity-grid" id="activityGrid">
-      <div class="course-loading">正在加载活动...</div>
-    </section>
-  </main>
+  </div>
 
   <script>window.CLASSSHOW_SURFACE = 'student';</script>
   <script src="js/deployment-config.js"></script>
   <script src="js/app-config.js"></script>
-  <script src="js/api.js"></script>
+  <script src="js/student-entry-redirect.js"></script>
   <script>
-    const params = new URLSearchParams(location.search);
-    const courseName = (params.get('course') || '经济学基础').trim();
-    let currentCourse = null;
-    let activities = [];
-
-    document.getElementById('courseTitle').textContent = courseName;
-    loadCourse();
-
-    async function loadCourse() {
-      const grid = document.getElementById('activityGrid');
-      grid.innerHTML = '<div class="course-loading">正在加载活动...</div>';
-      try {
-        const data = await api('/portal/course-activities?course_name=' + encodeURIComponent(courseName));
-        currentCourse = data.course || null;
-        activities = currentCourse?.activities || [];
-        renderCourseSummary();
-        renderActivities();
-      } catch (e) {
-        grid.innerHTML = '<div class="course-loading error">课程活动读取失败，请稍后刷新或直接用邀请码进入。</div>';
-      }
-    }
-
-    function renderCourseSummary() {
-      const course = currentCourse || {};
-      const integration = course.integration || {};
-      document.getElementById('courseActivityCount').textContent = Number(course.activity_count || 0);
-      document.getElementById('courseStudentCount').textContent = Number(course.student_count || 0);
-      document.getElementById('courseSubmissionCount').textContent = Number(course.submission_count || 0);
-      document.getElementById('courseVideoCount').textContent = Number(course.video_count || 0);
-      document.getElementById('courseSubtitle').textContent = integration.description
-        || '这里汇集课程活动、作品展示与课程专页入口。学生身份跨课程共享，邀请码按课程和活动继续隔离。';
-      const latest = course.latest_upload_at || course.latest_activity_at;
-      document.getElementById('courseUpdatedAt').textContent = latest
-        ? `最近更新：${formatBangkokTime(latest, { withSeconds: false })}`
-        : '还没有课程活动';
-      const dedicatedBtn = document.getElementById('courseDedicatedBtn');
-      dedicatedBtn.style.display = integration.entry_path ? 'inline-flex' : 'none';
-      document.getElementById('courseIntegrationLine').textContent = integration.entry_path
-        ? `课程专页接口：${integration.entry_path} | 接入状态：${integration.integration_status || 'planned'}`
-        : '课程专页接口尚未登记。';
-    }
-
-    function renderActivities() {
-      const grid = document.getElementById('activityGrid');
-      const keyword = document.getElementById('activitySearch').value.trim().toLowerCase();
-      const filtered = activities.filter(activity => {
-        const text = [
-          activity.activity_name,
-          activity.class_name,
-          activity.description
-        ].join(' ').toLowerCase();
-        return !keyword || text.includes(keyword);
-      });
-
-      if (!filtered.length) {
-        grid.innerHTML = `
-          <div class="course-empty">
-            <h3>${activities.length ? '没有匹配的活动' : '这个课程还没有活动'}</h3>
-            <p>${activities.length ? '换一个关键词继续搜索。' : '教师创建活动时把课程名称填为“' + escapeHtml(courseName) + '”，这里会自动出现入口。'}</p>
-            <button class="btn btn-primary btn-sm" onclick="location.href='teacher-login.html?create=1'">创建课程活动</button>
-          </div>
-        `;
-        return;
-      }
-
-      grid.innerHTML = filtered.map((activity, index) => {
-        const updated = activity.latest_upload_at || activity.created_at;
-        return `
-          <article class="course-activity-card" id="activity-${index}">
-            <div class="course-card-top">
-              <span class="course-status">${activity.upload_open ? '上传开放' : '上传关闭'}</span>
-              <span class="course-status alt">${activity.voting_open ? '评分开放' : '评分关闭'}</span>
-              <span class="course-code">邀请码由教师发放</span>
-            </div>
-            <h3>${escapeHtml(activity.activity_name || '未命名活动')}</h3>
-            <p>${escapeHtml(activity.description || '暂无活动说明')}</p>
-            <div class="course-stats">
-              <span><strong>${Number(activity.student_count || 0)}</strong> 学生</span>
-              <span><strong>${Number(activity.submission_count || 0)}</strong> 作品</span>
-              <span><strong>${Number(activity.video_count || 0)}</strong> 视频</span>
-            </div>
-            <div class="course-media-row">
-              <span>${escapeHtml(activity.class_name || '未分班')}</span>
-              <span>${updated ? escapeHtml(timeAgo(updated)) : '待启动'}</span>
-            </div>
-            <div class="course-card-actions">
-              <button class="btn btn-primary btn-sm" onclick="focusInviteBox()">输入邀请码进入</button>
-              <button class="btn btn-secondary btn-sm" onclick="focusInviteBox()">用邀请码打开大屏</button>
-            </div>
-          </article>
-        `;
-      }).join('');
-    }
-
-    function getCourseInviteCode() {
-      return document.getElementById('courseInviteCode').value.trim().toUpperCase();
-    }
-
-    async function studentJoinFromInput() {
-      const code = getCourseInviteCode();
-      if (!code) return toast('活动邀请码为空', 'error');
-      try {
-        const activity = await api('/activities/code/' + encodeURIComponent(code));
-        sessionStorage.removeItem('classshow_guest');
-        setActivityId(activity.id);
-        sessionStorage.setItem('classshow_activity', JSON.stringify(activity));
-        const nextPath = await resolveActivityStudentTarget(activity);
-        if (typeof setActivityEntryPath === 'function') setActivityEntryPath(nextPath);
-        if (typeof setPostLoginTarget === 'function') setPostLoginTarget(nextPath);
-        location.href = nextPath
-          ? `student-register.html?next=${encodeURIComponent(nextPath)}`
-          : 'student-register.html';
-      } catch (e) {
-        toast('活动入口不可用，请刷新后重试', 'error');
-      }
-    }
-
-    async function guestJoinFromInput() {
-      const code = getCourseInviteCode();
-      if (!code) return toast('活动邀请码为空', 'error');
-      try {
-        const activity = await api('/activities/code/' + encodeURIComponent(code));
-        if (typeof clearPostLoginTarget === 'function') clearPostLoginTarget();
-        const nextPath = await resolveActivityStudentTarget(activity);
-        if (typeof setActivityEntryPath === 'function') setActivityEntryPath(nextPath);
-        setGuestSession(activity);
-        location.href = nextPath || 'student-gallery.html';
-      } catch (e) {
-        toast('访客入口不可用，请刷新后重试', 'error');
-      }
-    }
-
-    function displayFromInput() {
-      const code = getCourseInviteCode();
-      if (!code) return toast('请先输入邀请码', 'error');
-      location.href = 'display.html?code=' + encodeURIComponent(code);
-    }
-
-    function focusInviteBox() {
-      const panel = document.getElementById('courseEntryPanel');
-      const input = document.getElementById('courseInviteCode');
-      if (panel) panel.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      if (input) {
-        input.focus();
-        input.classList.add('pulse-focus');
-        setTimeout(() => input.classList.remove('pulse-focus'), 1400);
-      }
-      if (!activities.length) {
-        toast('这个课程还没有活动，教师创建后即可使用邀请码进入。', 'error');
-        return;
-      }
-    }
-
-    function openDedicatedCoursePage() {
-      const integration = currentCourse?.integration || {};
-      if (!integration.entry_path) return toast('这个课程还没有专属页面接口', 'error');
-      const joiner = integration.entry_path.includes('?') ? '&' : '?';
-      location.href = integration.entry_path + joiner + 'course=' + encodeURIComponent(courseName);
-    }
-    async function resolveActivityStudentTarget(activity) {
-      const currentPath = String(currentCourse?.integration?.entry_path || '').trim();
-      if (currentPath) return currentPath;
-      if (typeof resolveCourseEntryPath === 'function') {
-        const registryPath = await resolveCourseEntryPath(activity?.course_name || courseName);
-        if (registryPath) return registryPath;
-      }
-      return '';
-    }
+    redirectLegacyStudentPage();
   </script>
 </body>
 </html>

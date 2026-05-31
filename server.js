@@ -6032,7 +6032,7 @@ app.use(express.json({ limit: '10mb' }));
 app.get('/favicon.ico', (_req, res) => res.status(204).end());
 app.use(express.static(path.join(__dirname, 'public')));
 app.get(['/portal', '/portal/'], (_req, res) => {
-  res.redirect(302, '/index.html');
+  res.redirect(302, '/student-entry.html');
 });
 app.get(['/student', '/student/'], (_req, res) => {
   res.redirect(302, '/student-entry.html');
@@ -6044,7 +6044,7 @@ app.get(['/admin', '/admin/', '/super-admin', '/super-admin/'], (_req, res) => {
   res.redirect(302, '/super-admin.html');
 });
 app.get(['/course/economics', '/course/economics/'], (_req, res) => {
-  res.redirect(302, `/course.html?course=${encodeURIComponent('经济学基础')}`);
+  res.redirect(302, '/courses/economics-fundamentals/');
 });
 app.get(['/economics', '/economics/', '/econ', '/econ/'], (_req, res) => {
   res.redirect(302, '/courses/economics-fundamentals/');
@@ -7753,8 +7753,9 @@ function renderCourseScaffoldPage(entry = {}) {
   const audience = escapeHtml(entry.audience || '未设置');
   const visualStyle = escapeHtml(entry.visual_style || '未设置');
   const moduleKey = escapeHtml(entry.module_key || entry.slug || '-');
-  const entryPath = escapeHtml(entry.entry_path || '/');
-  const portalLink = `/course.html?course=${encodeURIComponent(entry.course_name || '')}`;
+  const entryPathRaw = entry.entry_path || '/';
+  const entryPath = escapeHtml(entryPathRaw);
+  const studentEntryLink = `/student-entry.html?next=${encodeURIComponent(entryPathRaw)}`;
   const title = `${courseName} - ClassShow`;
 
   return `<!DOCTYPE html>
@@ -7767,10 +7768,9 @@ function renderCourseScaffoldPage(entry = {}) {
 </head>
 <body class="course-page">
   <header class="topbar">
-    <a class="topbar-logo" href="/index.html">Class<span>Show</span></a>
+    <a class="topbar-logo" href="/student-entry.html">Class<span>Show</span></a>
     <div class="topbar-right">
-      <button class="btn btn-secondary btn-sm" onclick="location.href='${portalLink}'">课程页</button>
-      <button class="btn btn-secondary btn-sm" onclick="location.href='/teacher-login.html'">教师入口</button>
+      <button class="btn btn-secondary btn-sm" onclick="location.href='${studentEntryLink}'">学生入口</button>
     </div>
   </header>
 
@@ -7781,8 +7781,8 @@ function renderCourseScaffoldPage(entry = {}) {
         <h1>${courseName}</h1>
         <p>${description}</p>
         <div class="course-hero-actions">
-          <button class="btn btn-primary" onclick="location.href='${portalLink}'">返回课程总页</button>
-          <button class="btn btn-secondary" onclick="location.href='/index.html'">返回总门户</button>
+          <button class="btn btn-primary" onclick="location.href='${studentEntryLink}'">前往学生入口</button>
+          <button class="btn btn-secondary" onclick="location.href='${entryPathRaw}'">保持当前课程页</button>
         </div>
       </div>
       <div class="course-scoreboard" aria-label="课程骨架信息">

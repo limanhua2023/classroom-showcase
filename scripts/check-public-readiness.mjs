@@ -1,7 +1,15 @@
+import { auditEconomicsStudentGate } from './check-economics-student-gate.mjs';
+
 const DEFAULT_STUDENT_BASE_URL = 'https://classshow-student.pages.dev';
 const DEFAULT_BACKEND_BASE_URL = 'https://classroom-showcase.onrender.com';
 const COURSE_NAME = '经济学基础';
 const COURSE_SLUG = 'economics-fundamentals';
+const LEGACY_STUDENT_FORBIDDEN_MARKERS = [
+  'teacher-login.html',
+  'super-admin.html',
+  'student-register.html?next=',
+  'course.html?course='
+];
 
 function normalizeBaseUrl(input, fallback) {
   const value = String(input || fallback).trim().replace(/\/+$/, '');
@@ -14,6 +22,10 @@ function formatStatus(ok) {
 
 function marker(ok) {
   return ok ? 'OK' : 'XX';
+}
+
+function includesNone(source, forbidden) {
+  return forbidden.every(item => !source.includes(item));
 }
 
 async function fetchText(url, options = {}) {
@@ -36,6 +48,13 @@ async function runAudit(studentBaseUrl, backendBaseUrl) {
   const checks = [];
   const add = (name, ok, detail) => checks.push({ name, ok, detail });
   const encodedCourse = encodeURIComponent(COURSE_NAME);
+
+  try {
+    const result = await auditEconomicsStudentGate();
+    add('Local economics student gate audit', true, result.detail || 'passed');
+  } catch (error) {
+    add('Local economics student gate audit', false, error.message);
+  }
 
   try {
     const { response, json } = await fetchJson(`${backendBaseUrl}/api/health`);
@@ -109,24 +128,67 @@ async function runAudit(studentBaseUrl, backendBaseUrl) {
 
   try {
     const { response, text } = await fetchText(`${studentBaseUrl}/index.html`);
-    add('Student portal shell', response.ok && text.includes('deployment-config.js'), `HTTP ${response.status}`);
+    const ok = response.ok
+      && text.includes('student-entry-redirect.js')
+      && includesNone(text, LEGACY_STUDENT_FORBIDDEN_MARKERS);
+    add('Student legacy index redirects cleanly', ok, `HTTP ${response.status}`);
   } catch (error) {
-    add('Student portal shell', false, error.message);
+    add('Student legacy index redirects cleanly', false, error.message);
   }
 
   try {
     const { response, text } = await fetchText(`${studentBaseUrl}/course.html?course=${encodedCourse}`);
-    add('Student course portal shell', response.ok && text.includes('deployment-config.js'), `HTTP ${response.status}`);
+    const ok = response.ok
+      && text.includes('student-entry-redirect.js')
+      && includesNone(text, LEGACY_STUDENT_FORBIDDEN_MARKERS);
+    add('Student legacy course page redirects cleanly', ok, `HTTP ${response.status}`);
   } catch (error) {
-    add('Student course portal shell', false, error.message);
+    add('Student legacy course page redirects cleanly', false, error.message);
+  }
+
+  try {
+    const { response, text } = await fetchText(`${studentBaseUrl}/student-register.html?next=%2Fcourses%2Feconomics-fundamentals%2F`);
+    const ok = response.ok
+      && text.includes('student-entry-redirect.js')
+      && text.includes('studentRedirectLink')
+      && !text.includes('teacher-login.html');
+    add('Student legacy register redirects cleanly', ok, `HTTP ${response.status}`);
+  } catch (error) {
+    add('Student legacy register redirects cleanly', false, error.message);
+  }
+
+  try {
+    const { response, text } = await fetchText(`${studentBaseUrl}/student-entry`);
+    const ok = response.ok
+      && text.includes('studentEnter(event)')
+      && text.includes('normalizeRequestedEntryPath')
+      && !text.includes('teacher-login.html')
+      && !text.includes('super-admin.html');
+    add('Student simplified entry page', ok, `HTTP ${response.status}`);
+  } catch (error) {
+    add('Student simplified entry page', false, error.message);
   }
 
   try {
     const { response, text } = await fetchText(`${studentBaseUrl}/courses/economics-fundamentals/`);
-    const ok = response.ok && text.includes('economics-course-adapter.js') && text.includes('deployment-config.js');
+    const ok = response.ok
+      && text.includes('economics-course-adapter.js')
+      && text.includes('deployment-config.js')
+      && !text.includes('进入教师模式')
+      && !text.includes('id="teacher-btn"')
+      && !text.includes("params.get('teacher')");
     add('Student dedicated economics page', ok, `HTTP ${response.status}`);
   } catch (error) {
     add('Student dedicated economics page', false, error.message);
+  }
+
+  try {
+    const response = await fetch(`${studentBaseUrl}/student`, { redirect: 'manual' });
+    const location = response.headers.get('location') || '';
+    const ok = response.status >= 300 && response.status < 400 && location.includes('/student-entry');
+    add('Student short alias /student', ok, `HTTP ${response.status}; location=${location || '-'}`);
+  } catch (error) {
+    add('Student short alias /student', false, error.message);
   }
 
   try {
@@ -141,7 +203,7 @@ async function runAudit(studentBaseUrl, backendBaseUrl) {
   try {
     const response = await fetch(`${studentBaseUrl}/course/economics`, { redirect: 'manual' });
     const location = response.headers.get('location') || '';
-    const ok = response.status >= 300 && response.status < 400 && location.includes('/course.html?course=');
+    const ok = response.status >= 300 && response.status < 400 && location.includes('/courses/economics-fundamentals/');
     add('Student short alias /course/economics', ok, `HTTP ${response.status}; location=${location || '-'}`);
   } catch (error) {
     add('Student short alias /course/economics', false, error.message);
@@ -174,7 +236,7 @@ async function main() {
   const checks = await runAudit(studentBaseUrl, backendBaseUrl);
   const failed = checks.filter(item => !item.ok);
 
-  console.log(`Public readiness audit`);
+  console.log('Public readiness audit');
   console.log(`  student: ${studentBaseUrl}`);
   console.log(`  backend: ${backendBaseUrl}`);
   for (const check of checks) {

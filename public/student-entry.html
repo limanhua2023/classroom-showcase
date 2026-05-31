@@ -106,12 +106,31 @@
     }
 
     async function resolveEntryPath(activity) {
-      const fromRegistry = await resolveCourseEntryPath(activity?.course_name || '');
-      const normalizedRegistry = normalizeRelativeStudentPath(fromRegistry);
-      if (normalizedRegistry && !/student-gallery|student-upload|student-detail/i.test(normalizedRegistry)) {
-        return canonicalCourseEntryPath(normalizedRegistry);
+      const requestedPath = normalizeRequestedEntryPath();
+      const registryPath = normalizeAllowedEntryPath(await resolveCourseEntryPath(activity?.course_name || ''));
+
+      if (requestedPath && registryPath && requestedPath !== registryPath) {
+        return registryPath;
       }
+      if (requestedPath) return requestedPath;
+      if (registryPath) return registryPath;
       return '/courses/economics-fundamentals/';
+    }
+
+    function normalizeRequestedEntryPath() {
+      const params = new URLSearchParams(location.search);
+      return normalizeAllowedEntryPath(params.get('next') || '');
+    }
+
+    function normalizeAllowedEntryPath(path) {
+      const normalized = canonicalCourseEntryPath(normalizeRelativeStudentPath(path));
+      if (!normalized) return '';
+      if (/^\/(?:student-gallery|student-upload|student-detail)(?:[/?#]|$)/i.test(normalized)) return '';
+      if (/^\/(?:teacher|admin|super-admin)(?:[/?#]|$)/i.test(normalized)) return '';
+      if (/^\/(?:index(?:\.html)?|portal(?:\/)?|student(?:-entry)?(?:\.html)?|student-register(?:\.html)?|course(?:\.html)?)(?:[/?#]|$)/i.test(normalized)) {
+        return '';
+      }
+      return normalized;
     }
 
     function normalizeRelativeStudentPath(path) {
@@ -128,6 +147,12 @@
     function canonicalCourseEntryPath(path) {
       const value = String(path || '').trim();
       if (/^\/(?:economics|econ)(?:\/)?(?:\?.*)?$/i.test(value)) {
+        return '/courses/economics-fundamentals/';
+      }
+      if (/^\/course\/economics(?:\/)?(?:\?.*)?$/i.test(value)) {
+        return '/courses/economics-fundamentals/';
+      }
+      if (/^\/courses\/economics-fundamentals(?:\/)?(?:\?.*)?$/i.test(value)) {
         return '/courses/economics-fundamentals/';
       }
       return value;

@@ -3,47 +3,17 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>学生登录 - ClassShow</title>
+  <title>学生登录入口升级中 - ClassShow</title>
   <link rel="stylesheet" href="css/main.css">
 </head>
 <body>
   <div class="page-center">
-    <div class="auth-box">
-      <a href="index.html" class="back-link">← 返回首页</a>
-      <h1>加入<span>课堂</span></h1>
-      <p class="subtitle" id="activityInfo">输入姓名和学号进入课堂</p>
-
-      <form onsubmit="register(event)">
-        <div class="form-group">
-          <label>姓名 *</label>
-          <input type="text" id="name" placeholder="请输入名单中的姓名" required>
-        </div>
-
-        <div class="form-group">
-          <label>学号 *</label>
-          <input type="text" id="studentId" placeholder="请输入名单中的学号" required>
-        </div>
-
-        <div class="form-group" id="pinGroup" style="display:none;">
-          <label>课堂 PIN *</label>
-          <input type="password" id="studentPin" placeholder="输入老师发放的 PIN">
-        </div>
-
-        <div class="form-group" id="classGroup">
-          <label>班级 *</label>
-          <input type="text" id="className" placeholder="例如：AIOT 59-1" required>
-        </div>
-
-        <div class="form-group" id="groupGroup">
-          <label>小组名称</label>
-          <input type="text" id="groupName" placeholder="选填">
-        </div>
-
-        <button type="submit" class="btn btn-primary btn-block btn-lg">确认进入</button>
-      </form>
-
-      <p class="form-hint" style="margin-top:12px;text-align:center;">
-        开启名单后，系统会校验姓名和学号是否同时匹配教师上传的名单。
+    <div class="auth-box" style="text-align:center;">
+      <h1>学生<span>登录</span></h1>
+      <p class="subtitle">旧版注册页已经下线，学生现在统一从精简登录页进入。</p>
+      <p class="form-hint" style="margin-top:14px;">
+        如果没有自动跳转，请点击
+        <a id="studentRedirectLink" href="student-entry.html">这里进入学生入口</a>。
       </p>
     </div>
   </div>
@@ -51,77 +21,9 @@
   <script>window.CLASSSHOW_SURFACE = 'student';</script>
   <script src="js/deployment-config.js"></script>
   <script src="js/app-config.js"></script>
-  <script src="js/api.js"></script>
+  <script src="js/student-entry-redirect.js"></script>
   <script>
-    const actId = getActivityId();
-    const nextTarget = resolveNextTarget(new URLSearchParams(location.search).get('next'));
-    if (!actId) location.href = 'index.html';
-
-    const act = JSON.parse(sessionStorage.getItem('classshow_activity') || '{}');
-    const rosterEnabled = !!act.roster_enabled;
-    const pinRequired = !!act.pin_required;
-
-    document.getElementById('activityInfo').textContent = act.activity_name || '课堂活动';
-
-    if (rosterEnabled) {
-      document.getElementById('activityInfo').textContent = (act.activity_name || '课堂活动') + '（姓名 + 学号登录）';
-      document.getElementById('classGroup').style.display = 'none';
-      document.getElementById('groupGroup').style.display = 'none';
-      document.getElementById('className').required = false;
-    } else if (pinRequired) {
-      document.getElementById('pinGroup').style.display = 'block';
-      document.getElementById('studentPin').required = true;
-    }
-
-    const existing = getSession();
-    if (existing) {
-      sessionStorage.removeItem('classshow_guest');
-      document.getElementById('name').value = existing.name || '';
-      document.getElementById('studentId').value = existing.student_id || '';
-      document.getElementById('className').value = existing.class_name || '';
-      document.getElementById('groupName').value = existing.group_name || '';
-    } else if (act.class_name) {
-      document.getElementById('className').value = act.class_name;
-    }
-
-    async function register(e) {
-      e.preventDefault();
-      const payload = {
-        activity_id: actId,
-        name: document.getElementById('name').value.trim(),
-        student_id: document.getElementById('studentId').value.trim(),
-        pin: document.getElementById('studentPin').value.trim(),
-        class_name: document.getElementById('className').value.trim() || (act.class_name || '').trim(),
-        group_name: document.getElementById('groupName').value.trim() || null
-      };
-
-      try {
-        const user = await api('/users', {
-          method: 'POST',
-          body: JSON.stringify(payload)
-        });
-        sessionStorage.removeItem('classshow_guest');
-        setSession(user);
-        clearPostLoginTarget();
-        location.href = nextTarget;
-      } catch (err) {
-        toast('进入失败: ' + err.message, 'error');
-      }
-    }
-
-    function resolveNextTarget(rawValue) {
-      const candidate = rawValue
-        || (typeof getPostLoginTarget === 'function' ? getPostLoginTarget() : '')
-        || (typeof getActivityEntryPath === 'function' ? getActivityEntryPath() : '');
-      if (!candidate) return 'student-gallery.html';
-      try {
-        const nextUrl = new URL(String(candidate), location.origin);
-        if (nextUrl.origin !== location.origin) return 'student-gallery.html';
-        return `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}` || 'student-gallery.html';
-      } catch {
-        return 'student-gallery.html';
-      }
-    }
+    redirectLegacyStudentPage();
   </script>
 </body>
 </html>

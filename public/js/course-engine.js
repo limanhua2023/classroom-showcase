@@ -75,7 +75,7 @@
         window.ClassShowCourseRuntime.openPortal(courseName);
         return;
       }
-      location.href = studentUrl(`/course.html?course=${encodeURIComponent(courseName)}`);
+      location.href = studentUrl(resolveCourseLandingPath(courseName));
     });
     els.legacyButton.addEventListener('click', () => {
       const path = state.manifest?.course?.legacy_entry_path || `/courses/${state.slug}/`;
@@ -86,7 +86,7 @@
         window.ClassShowCourseRuntime.openIndex();
         return;
       }
-      location.href = studentUrl('/index.html');
+      location.href = studentUrl('/student');
     });
     els.prevButton.addEventListener('click', () => moveModule(-1));
     els.nextButton.addEventListener('click', () => moveModule(1));
@@ -387,25 +387,34 @@
         <p>${escapeHtmlSafe(statusLabel)}</p>
         <div class="player-quiz-actions" style="margin-top:16px;flex-wrap:wrap;">
           <a class="btn btn-primary" href="${escapeHtmlSafe(primaryAction.href)}">${escapeHtmlSafe(primaryAction.label)}</a>
-          <a class="btn btn-secondary" href="${escapeHtmlSafe(studentUrl(`/course.html?course=${encodeURIComponent(courseName || '')}`))}">返回课程总页</a>
-          <a class="btn btn-secondary" href="${escapeHtmlSafe(studentUrl('/index.html'))}">去总门户</a>
+          <a class="btn btn-secondary" href="${escapeHtmlSafe(studentUrl(resolveCourseLandingPath(courseName || '')))}">返回课程页</a>
+          <a class="btn btn-secondary" href="${escapeHtmlSafe(studentUrl('/student'))}">去学生入口</a>
         </div>
       </section>
     `;
   }
 
   function buildPrimaryAccessAction(access, courseName) {
+    const context = readRuntimeContext();
+    const inviteCode = String(context.activity && context.activity.invite_code || '').trim();
     if (access.activityReady && access.courseMatched !== false) {
+      const search = new URLSearchParams();
+      search.set('next', currentStudentPath());
+      if (inviteCode) search.set('code', inviteCode);
       return {
-        href: studentUrl(`/student-register.html?next=${encodeURIComponent(currentStudentPath())}`),
+        href: studentUrl(`/student?${search.toString()}`),
         label: access.isGuest ? '退出访客并实名登录' : '继续学生登录'
       };
     }
     const fallbackCourseName = courseName || getExpectedCourseName();
+    const search = new URLSearchParams();
+    const nextPath = resolveCourseLandingPath(fallbackCourseName);
+    if (nextPath && nextPath !== '/student') search.set('next', nextPath);
+    if (inviteCode) search.set('code', inviteCode);
     return {
-      href: fallbackCourseName
-        ? studentUrl(`/course.html?course=${encodeURIComponent(fallbackCourseName)}`)
-        : studentUrl('/index.html'),
+      href: search.toString()
+        ? studentUrl(`/student?${search.toString()}`)
+        : studentUrl('/student'),
       label: '输入邀请码进入'
     };
   }
@@ -418,7 +427,17 @@
     if (!path) return '';
     try {
       const url = new URL(String(path), location.origin);
-      return `${url.pathname}${url.search}`.replace(/\/+$/, match => match === '/' ? '/' : '');
+      let normalized = `${url.pathname}${url.search}`.replace(/\/+$/, match => match === '/' ? '/' : '');
+      if (/^\/(?:economics|econ)(?:\/)?(?:\?.*)?$/i.test(normalized)) {
+        normalized = '/courses/economics-fundamentals/';
+      }
+      if (/^\/course\/economics(?:\/)?(?:\?.*)?$/i.test(normalized)) {
+        normalized = '/courses/economics-fundamentals/';
+      }
+      if (/^\/courses\/economics-fundamentals(?:\/)?(?:\?.*)?$/i.test(normalized)) {
+        normalized = '/courses/economics-fundamentals/';
+      }
+      return normalized;
     } catch {
       return '';
     }
@@ -469,7 +488,21 @@
   }
 
   function normalizeCourseName(value) {
-    return String(value || '').trim().toLowerCase();
+    return String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '')
+      .replace(/课程$/u, '');
+  }
+
+  function resolveCourseLandingPath(courseName = '') {
+    const manifestCourse = state.manifest?.course || {};
+    const manifestPath = normalizeEntryPath(manifestCourse.entry_path || manifestCourse.legacy_entry_path || '');
+    if (manifestPath) return manifestPath;
+    if (normalizeCourseName(courseName) === normalizeCourseName('经济学基础')) {
+      return '/courses/economics-fundamentals/';
+    }
+    return '/student';
   }
 
   function readRuntimeContext() {

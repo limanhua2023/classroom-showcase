@@ -9,6 +9,14 @@
     return (new URLSearchParams(location.search).get('course') || '').trim();
   }
 
+  function normalizeCourseName(value) {
+    return String(value || '')
+      .trim()
+      .toLowerCase()
+      .replace(/\s+/g, '')
+      .replace(/课程$/u, '');
+  }
+
   function readActivity() {
     try {
       const raw = sessionStorage.getItem('classshow_activity');
@@ -39,13 +47,24 @@
     return api('/portal/course-activities?course_name=' + encodeURIComponent(courseName || getCourseParam()));
   }
 
+  function resolveCourseLandingPath(courseName = '') {
+    const normalizedCourse = normalizeCourseName(courseName || getCourseParam() || readActivity()?.course_name || '');
+    if (normalizedCourse === normalizeCourseName('\u7ecf\u6d4e\u5b66\u57fa\u7840')) {
+      return '/courses/economics-fundamentals/';
+    }
+    const currentPath = `${location.pathname}`.replace(/\/+$/, '/');
+    if (/^\/courses\/[^/]+\/$/i.test(currentPath)) {
+      return currentPath;
+    }
+    return '/student';
+  }
+
   function openPortal(courseName = '') {
-    const target = courseName || getCourseParam() || '';
-    location.href = studentUrl('/course.html?course=' + encodeURIComponent(target));
+    location.href = studentUrl(resolveCourseLandingPath(courseName));
   }
 
   function openIndex() {
-    location.href = studentUrl('/index.html');
+    location.href = studentUrl('/student');
   }
 
   window.ClassShowCourseRuntime = {

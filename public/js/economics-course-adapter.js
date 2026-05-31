@@ -89,8 +89,6 @@
     ...PROGRESS_STATE_KEYS
   ]));
 
-  const params = new URLSearchParams(location.search);
-  const wantsTeacherMode = params.get('teacher') === '1';
   const initialContext = readContext();
   const runtime = {
     context: initialContext,
@@ -588,72 +586,6 @@
     }
   }
 
-  function updateBridgeShell() {
-    const identityEl = document.getElementById('classshowEconIdentity');
-    const chipsEl = document.getElementById('classshowEconChips');
-    const syncEl = document.getElementById('classshowEconSync');
-    const detailsEl = document.getElementById('classshowEconDetails');
-    const statsEl = document.getElementById('classshowEconStudentStats');
-    const rankEl = document.getElementById('classshowEconRankPanel');
-    const toggleBtn = document.getElementById('classshowEconPanelToggleBtn');
-    const saveBtn = document.getElementById('classshowEconSaveBtn');
-    const themeBtn = document.getElementById('classshowEconThemeBtn');
-    const teacherBtn = document.getElementById('classshowEconTeacherBtn');
-    if (!identityEl || !chipsEl || !syncEl || !detailsEl || !statsEl || !rankEl || !toggleBtn || !saveBtn || !themeBtn || !teacherBtn) return;
-
-    const activityName = runtime.context.activity && runtime.context.activity.activity_name
-      ? runtime.context.activity.activity_name
-      : '未绑定活动';
-    const userName = runtime.context.user && runtime.context.user.name
-      ? runtime.context.user.name
-      : hasTeacherSession()
-        ? '教师会话'
-      : (runtime.context.is_guest ? '访客' : '设备自学');
-    identityEl.textContent = `${userName} · ${activityName}`;
-
-    const chips = [];
-    chips.push(renderChip(
-      runtime.context.activity_id ? '活动上下文已连接' : '仅设备自学模式',
-      runtime.context.activity_id ? 'ok' : 'warn'
-    ));
-    if (hasLoggedInStudent()) {
-      const pendingSeconds = pendingCloudSaveSeconds();
-      chips.push(renderChip(`累计 ${formatStudyDuration(displayedStudyTotalSeconds())}`, 'ok'));
-      chips.push(renderChip(
-        pendingSeconds > 0 ? `待保存 ${formatStudyDuration(pendingSeconds)}` : '云端已保存',
-        pendingSeconds > 0 ? 'warn' : 'ok'
-      ));
-      if (runtime.localStudy && runtime.localStudy.last_cloud_save_at) {
-        chips.push(renderChip(`上次保存 ${formatClockTime(runtime.localStudy.last_cloud_save_at)}`, 'ok'));
-      }
-    } else if (runtime.context.is_guest) {
-      chips.push(renderChip('访客模式不记录个人进度', 'warn'));
-    } else {
-      chips.push(renderChip('未登录，保留本地记录', 'warn'));
-      chips.push(renderChip(localStudyIsActive() ? '当前学习中' : '当前未学习', localStudyIsActive() ? 'ok' : 'warn'));
-    }
-    if (runtime.teacherReady) {
-      chips.push(renderChip('教师补充数据已解锁', 'ok'));
-    } else if (runtime.teacherLoading) {
-      chips.push(renderChip('教师补充数据加载中', 'warn'));
-    } else if (hasTeacherSession()) {
-      chips.push(renderChip('教师权限待验证', 'warn'));
-    }
-
-    chipsEl.innerHTML = chips.join('');
-    syncEl.textContent = `进度同步：${runtime.syncLabel}`;
-    syncEl.className = `classshow-econ-bridge-sync level-${runtime.syncLevel}`;
-    detailsEl.classList.toggle('is-collapsed', runtime.studentPanelCollapsed);
-    toggleBtn.textContent = runtime.studentPanelCollapsed ? '\u5c55\u5f00\u7edf\u8ba1' : '\u6536\u8d77\u7edf\u8ba1';
-    renderStudentLearningPanel(statsEl, rankEl);
-    saveBtn.style.display = '';
-    saveBtn.disabled = runtime.cloudSaveBusy || !hasLoggedInStudent();
-    saveBtn.textContent = !hasLoggedInStudent()
-      ? '登录后可保存'
-      : (runtime.cloudSaveBusy ? '保存中...' : '保存记录');
-    teacherBtn.style.display = hasTeacherSession() ? '' : 'none';
-  }
-
   function renderChip(label, level) {
     return `<span class="classshow-econ-chip ${level || ''}">${escapeText(label)}</span>`;
   }
@@ -843,8 +775,7 @@ function updateBridgeShell() {
   function hideTeacherEntrypoints() {
     runtime.teacherEntrypoints = Array.from(document.querySelectorAll([
       '[onclick*="toggleTeacherMode"]',
-      '[onclick*="toggleTeacherQuestions"]',
-      '#teacher-btn'
+      '[onclick*="toggleTeacherQuestions"]'
     ].join(',')));
     runtime.teacherEntrypoints.forEach(node => {
       if (!node.dataset.classshowOriginalDisplay) {
@@ -1041,7 +972,7 @@ function updateBridgeShell() {
       updateBridgeShell();
       return;
     }
-    bootstrapTeacherSupplement(wantsTeacherMode);
+    bootstrapTeacherSupplement(false);
   }
 
   function scheduleRemoteHydration() {
