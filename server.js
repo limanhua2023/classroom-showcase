@@ -6040,6 +6040,9 @@ app.get(['/student', '/student/'], (_req, res) => {
 app.get(['/teacher', '/teacher/'], (_req, res) => {
   res.redirect(302, '/teacher-login.html');
 });
+app.get(['/help', '/help/', '/help-center', '/help-center/'], (_req, res) => {
+  res.redirect(302, '/help-center.html');
+});
 app.get(['/teacher-manual', '/teacher-manual/', '/teacher-guide', '/teacher-guide/'], (_req, res) => {
   res.redirect(302, '/teacher-quick-manual.html');
 });

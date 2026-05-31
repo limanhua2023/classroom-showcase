@@ -148,6 +148,18 @@ async function runAudit(studentBaseUrl, backendBaseUrl) {
   }
 
   try {
+    const { response, text } = await fetchText(`${backendBaseUrl}/help-center.html`);
+    const ok = response.ok
+      && text.includes('ClassShow 帮助中心')
+      && text.includes('teacher-quick-manual.html')
+      && text.includes('super-admin-quick-manual.html')
+      && text.includes('student-quick-manual.html');
+    add('Backend help center page', ok, `HTTP ${response.status}`);
+  } catch (error) {
+    add('Backend help center page', false, error.message);
+  }
+
+  try {
     const response = await fetch(`${backendBaseUrl}/teacher`, { redirect: 'manual' });
     const location = response.headers.get('location') || '';
     const ok = response.status >= 300 && response.status < 400 && location.includes('/teacher-login.html');
@@ -181,6 +193,15 @@ async function runAudit(studentBaseUrl, backendBaseUrl) {
     add('Backend short alias /admin-manual', ok, `HTTP ${response.status}; location=${location || '-'}`);
   } catch (error) {
     add('Backend short alias /admin-manual', false, error.message);
+  }
+
+  try {
+    const response = await fetch(`${backendBaseUrl}/help`, { redirect: 'manual' });
+    const location = response.headers.get('location') || '';
+    const ok = response.status >= 300 && response.status < 400 && location.includes('/help-center.html');
+    add('Backend short alias /help', ok, `HTTP ${response.status}; location=${location || '-'}`);
+  } catch (error) {
+    add('Backend short alias /help', false, error.message);
   }
 
   try {
@@ -300,12 +321,33 @@ async function runAudit(studentBaseUrl, backendBaseUrl) {
   }
 
   try {
+    const { response, text } = await fetchText(`${studentBaseUrl}/help-center.html`);
+    const ok = response.ok
+      && text.includes('ClassShow 帮助中心')
+      && text.includes('student-quick-manual')
+      && text.includes('teacher-quick-manual')
+      && text.includes('super-admin-quick-manual');
+    add('Student help center page', ok, `HTTP ${response.status}`);
+  } catch (error) {
+    add('Student help center page', false, error.message);
+  }
+
+  try {
     const response = await fetch(`${studentBaseUrl}/student-manual`, { redirect: 'manual' });
     const location = response.headers.get('location') || '';
     const ok = response.status >= 300 && response.status < 400 && location.includes('/student-quick-manual.html');
     add('Student short alias /student-manual', ok, `HTTP ${response.status}; location=${location || '-'}`);
   } catch (error) {
     add('Student short alias /student-manual', false, error.message);
+  }
+
+  try {
+    const response = await fetch(`${studentBaseUrl}/help`, { redirect: 'manual' });
+    const location = response.headers.get('location') || '';
+    const ok = response.status >= 300 && response.status < 400 && location.includes('/help-center.html');
+    add('Student short alias /help', ok, `HTTP ${response.status}; location=${location || '-'}`);
+  } catch (error) {
+    add('Student short alias /help', false, error.message);
   }
 
   try {

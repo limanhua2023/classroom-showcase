@@ -32,6 +32,7 @@
       <button class="btn btn-primary btn-block btn-lg" type="button" onclick="loginSuperAdmin()">登录控制台</button>
       <div class="auth-divider">管理状态</div>
       <p class="subtitle" id="superAdminStatusHint">正在检查服务端配置...</p>
+      <button class="btn btn-secondary btn-block" style="margin-top:8px;" onclick="location.href='help-center.html'">帮助中心</button>
       <button class="btn btn-secondary btn-block" style="margin-top:8px;" onclick="location.href='super-admin-quick-manual.html'">超级管理员手册</button>
       <button class="btn btn-secondary btn-block" style="margin-top:8px;" onclick="location.href='teacher-login.html'">教师后台入口</button>
     </div>
@@ -45,6 +46,7 @@
         <p>这里统一维护课程注册表、总门户展示顺序、课程专页挂载状态和后续课程接入规范。教师后台继续按活动维度管理，超级管理员只管理课程层。</p>
         <div class="course-hero-actions">
           <button class="btn btn-primary" onclick="loadOverview()">刷新总览</button>
+          <button class="btn btn-secondary" type="button" onclick="openHelpCenter()">帮助中心</button>
           <button class="btn btn-secondary" type="button" onclick="openSuperAdminQuickManual()">超管手册</button>
           <button id="superFeaturedCourseButton" class="btn btn-secondary" type="button" onclick="openFeaturedCourse()" hidden>打开首门课程页</button>
         </div>
@@ -1503,6 +1505,10 @@
 
     function openSuperAdminQuickManual() {
       location.href = 'super-admin-quick-manual.html';
+    }
+
+    function openHelpCenter() {
+      location.href = 'help-center.html';
     }
 
     function openDisasterRecoveryHandbook() {
