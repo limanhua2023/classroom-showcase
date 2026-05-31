@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>帮助中心 - ClassShow</title>
+  <link rel="stylesheet" href="../css/main.css">
+  <style>
+    .help-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 18px;
+    }
+    .help-card {
+      padding: 22px 24px;
+      border-radius: 24px;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      background: rgba(255, 255, 255, 0.92);
+      box-shadow: 0 20px 48px rgba(15, 23, 42, 0.06);
+    }
+    .help-card h3 {
+      margin: 0 0 10px;
+      font-size: 1.08rem;
+      font-weight: 900;
+      color: var(--text-main);
+    }
+    .help-card p,
+    .help-card li {
+      color: var(--text-muted);
+      line-height: 1.7;
+      font-size: 0.95rem;
+    }
+    .help-card ul {
+      margin: 10px 0 0 20px;
+      padding: 0;
+    }
+    .help-note {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(37, 99, 235, 0.08);
+      border: 1px solid rgba(37, 99, 235, 0.12);
+      color: #1d4ed8;
+      font-size: 0.88rem;
+      line-height: 1.65;
+      font-weight: 700;
+    }
+    .help-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 14px;
+    }
+    .help-links .btn {
+      min-width: 180px;
+    }
+    @media (max-width: 960px) {
+      .help-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body class="course-page">
+  <header class="topbar">
+    <a class="topbar-logo" href="../index.html">Class<span>Show</span></a>
+    <div class="topbar-right">
+      <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='../student-entry.html'">学生入口</button>
+      <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='../teacher-login.html'">教师入口</button>
+      <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='../super-admin.html'">超管入口</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="course-hero">
+      <div class="course-hero-copy">
+        <div class="brand-kicker">HELP CENTER</div>
+        <h1>ClassShow 帮助中心</h1>
+        <p>这里汇总学生、教师、超级管理员三端手册，以及恢复演练、10 分钟恢复手册和课程接入规范。以后只要记住这个入口，就能快速找到操作说明。</p>
+        <div class="course-hero-actions">
+          <button class="btn btn-primary" type="button" onclick="location.href='../help'">帮助中心短地址</button>
+          <button class="btn btn-secondary" type="button" onclick="location.href='../disaster-recovery-10min.html'">10 分钟恢复手册</button>
+          <button class="btn btn-secondary" type="button" onclick="location.href='../project-backup-recovery.html'">恢复演练详情</button>
+        </div>
+      </div>
+      <div class="course-scoreboard" aria-label="帮助中心摘要">
+        <div><strong>3</strong><span>角色手册</span></div>
+        <div><strong>2</strong><span>恢复手册</span></div>
+        <div><strong>1</strong><span>接入规范</span></div>
+        <div><strong>1</strong><span>统一入口</span></div>
+      </div>
+    </section>
+
+    <section class="course-control-strip">
+      <div>
+        <strong>固定帮助入口</strong>
+        <span>推荐统一使用 <code>/help</code> 或 <code>/help-center</code> 进入帮助中心。</span>
+      </div>
+      <div class="course-card-actions">
+        <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='../help'">/help</button>
+        <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='../help-center'">/help-center</button>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">ROLE MANUALS</div>
+          <h2>三端角色手册</h2>
+        </div>
+      </div>
+      <div class="help-grid">
+        <article class="help-card">
+          <h3>学生手册</h3>
+          <p>适合学生快速了解如何进入“经济学基础”课程、何时保存记录、如何理解排行榜和作品展示入口。</p>
+          <ul>
+            <li>姓名 + 学号 + 邀请码进入</li>
+            <li>学习记录本地优先、手动保存到云端</li>
+            <li>老师控制作品展示区是否开放</li>
+          </ul>
+          <div class="help-links">
+            <button class="btn btn-primary btn-sm" type="button" onclick="location.href='../student-quick-manual.html'">打开学生手册</button>
+            <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='../student-manual'">学生手册短地址</button>
+          </div>
+        </article>
+        <article class="help-card">
+          <h3>教师手册</h3>
+          <p>适合任课教师快速掌握“先导名单、后发邀请码”的课堂流程，以及学习监控、模块复盘处理和作品展示控制。</p>
+          <ul>
+            <li>先导实名名单，再开放学生进入</li>
+            <li>查看上次保存时间与待保存状态</li>
+            <li>处理模块综合复盘证据</li>
+          </ul>
+          <div class="help-links">
+            <button class="btn btn-primary btn-sm" type="button" onclick="location.href='../teacher-quick-manual.html'">打开教师手册</button>
+            <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='../teacher-manual'">教师手册短地址</button>
+          </div>
+        </article>
+        <article class="help-card">
+          <h3>超级管理员手册</h3>
+          <p>适合系统管理员管理课程注册表、备份与恢复、R2 / 热存储 / egress，以及发布前验收和回滚。</p>
+          <ul>
+            <li>管理课程注册表和启停排序</li>
+            <li>查看稳定恢复点和备份链路</li>
+            <li>在升级失败时回滚到稳定版</li>
+          </ul>
+          <div class="help-links">
+            <button class="btn btn-primary btn-sm" type="button" onclick="location.href='../super-admin-quick-manual.html'">打开超管手册</button>
+            <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='../admin-manual'">超管手册短地址</button>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">OPERATIONS</div>
+          <h2>恢复与运维手册</h2>
+        </div>
+      </div>
+      <div class="help-grid">
+        <article class="help-card">
+          <h3>10 分钟恢复手册</h3>
+          <p>系统崩溃、误删、配置损坏或页面异常时，先按这里的止损和恢复步骤执行。</p>
+          <div class="help-links">
+            <button class="btn btn-primary btn-sm" type="button" onclick="location.href='../disaster-recovery-10min.html'">打开恢复手册</button>
+          </div>
+        </article>
+        <article class="help-card">
+          <h3>恢复演练详情</h3>
+          <p>查看项目代码快照、加密 secrets bundle、恢复命令与演练细节。</p>
+          <div class="help-links">
+            <button class="btn btn-primary btn-sm" type="button" onclick="location.href='../project-backup-recovery.html'">打开演练详情</button>
+          </div>
+        </article>
+        <article class="help-card">
+          <h3>课程接入规范</h3>
+          <p>后续数学、英语、AI 等课程接入时，统一参考这里的注册、路由、运行时和挂载规范。</p>
+          <div class="help-links">
+            <button class="btn btn-primary btn-sm" type="button" onclick="location.href='../course-integration-spec.html'">打开接入规范</button>
+          </div>
+        </article>
+      </div>
+      <div class="help-note">当前系统已经具备学生端、教师端、超级管理员端的完整手册体系，并且发布检查已覆盖这些帮助入口。</div>
+    </section>
+  </main>
+</body>
+</html>
