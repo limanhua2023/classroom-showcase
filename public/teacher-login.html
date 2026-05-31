@@ -29,7 +29,7 @@
       </div>
 
       <div id="createForm" style="display:none;">
-        <p class="subtitle">创建一个新的课程活动。</p>
+        <p class="subtitle">创建一个新的课程活动。经济学活动创建后，会先锁定学生入口，必须先导入 Excel 名单再开放邀请码。</p>
         <div class="form-group">
           <label>课程名称 *</label>
           <input type="text" id="courseName" placeholder="例如：经济学基础">
@@ -50,11 +50,14 @@
           <label>邀请码 *</label>
           <input type="text" id="invCode" placeholder="例如：ECON101" style="text-transform:uppercase;">
         </div>
+        <p class="form-hint" style="margin-top:-6px;margin-bottom:14px;">
+          这个邀请码会先由老师保留。只有名单导入成功后，教师后台才会显示为“可发给学生”。
+        </p>
         <div class="form-group">
           <label>教师密码 *</label>
           <input type="password" id="teacherPwd" placeholder="设置后台管理密码">
         </div>
-        <button class="btn btn-primary btn-block btn-lg" onclick="createActivity()">创建活动</button>
+        <button class="btn btn-primary btn-block btn-lg" onclick="createActivity()">创建活动并进入名单设置</button>
         <button class="btn btn-secondary btn-block" style="margin-top:8px;" onclick="showLogin()">返回登录</button>
       </div>
     </div>
@@ -68,7 +71,7 @@
     const teacherBackLink = document.querySelector('.back-link');
     if (teacherBackLink) {
       teacherBackLink.onclick = () => {
-        navigateToStudent('/index.html');
+        navigateToStudent('/student-entry.html');
         return false;
       };
     }
@@ -116,8 +119,8 @@
         return toast('请填写所有必填项', 'error');
       }
       try {
-        const act = await api('/activities', { method: 'POST', body: JSON.stringify(data) });
-        toast('活动创建成功，邀请码：' + act.invite_code, 'success');
+        await api('/activities', { method: 'POST', body: JSON.stringify(data) });
+        toast('活动已创建。请先上传 Excel 名单，名单导入后系统才会解锁邀请码。', 'success');
         const loginRes = await api('/teacher/login', {
           method: 'POST',
           body: JSON.stringify({ invite_code: data.invite_code, password: data.teacher_password })
@@ -125,7 +128,7 @@
         sessionStorage.setItem('teacherToken', loginRes.token);
         sessionStorage.setItem('classshow_activity', JSON.stringify(loginRes.activity));
         sessionStorage.setItem('classshow_activity_id', loginRes.activity.id);
-        setTimeout(() => { location.href = 'teacher-dashboard.html'; }, 800);
+        setTimeout(() => { location.href = 'teacher-dashboard.html?setup=roster'; }, 800);
       } catch (e) {
         toast('创建失败: ' + e.message, 'error');
       }

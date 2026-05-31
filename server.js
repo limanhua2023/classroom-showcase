@@ -7382,6 +7382,44 @@ function arePortalCourseNamesCompatible(left, right) {
   return !!a && !!b && (a === b || a.includes(b) || b.includes(a));
 }
 
+const ROSTER_FIRST_COURSE_ALIASES = [
+  '\u7ecf\u6d4e\u5b66\u57fa\u7840',
+  '\u7ecf\u6d4e\u5b66\u57fa\u7840\u8bfe\u7a0b'
+].map(value => normalizeCourseNameForMatch(value));
+
+function activityRequiresLockedRosterFlow(activityOrCourseName) {
+  const courseName = typeof activityOrCourseName === 'string'
+    ? activityOrCourseName
+    : activityOrCourseName?.course_name || '';
+  const normalized = normalizeCourseNameForMatch(courseName);
+  return ROSTER_FIRST_COURSE_ALIASES.some(alias =>
+    !!normalized && !!alias && (normalized === alias || normalized.includes(alias) || alias.includes(normalized))
+  );
+}
+
+async function getActivityRosterGateStatus(activityId) {
+  if (!activityId) {
+    return { schema_ready: true, active_count: 0, locked: true };
+  }
+
+  const { count, error } = await supabase.from('student_roster')
+    .select('id', { count: 'exact', head: true })
+    .eq('activity_id', activityId)
+    .eq('active', true);
+
+  if (error && /student_roster|schema cache/i.test(error.message || '')) {
+    return { schema_ready: false, active_count: 0, locked: true };
+  }
+  if (error) throw error;
+
+  const activeCount = Number(count || 0);
+  return {
+    schema_ready: true,
+    active_count: activeCount,
+    locked: activeCount <= 0
+  };
+}
+
 function sanitizeCourseEntryPath(value) {
   const text = String(value || '').trim();
   if (!text || !text.startsWith('/')) return '';
@@ -8287,9 +8325,55 @@ app.post('/api/activities', async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
 
-    const { data, error } = await supabase.from('activities').insert([{
-      course_name, class_name, activity_name, description, invite_code, teacher_password
-    }]).select().single();
+    const requiresRosterGate = activityRequiresLockedRosterFlow(course_name);
+    const activityPayload = {
+      course_name,
+      class_name,
+      activity_name,
+      description,
+      invite_code,
+      teacher_password
+    };
+    if (requiresRosterGate) {
+      activityPayload.roster_enabled = true;
+      activityPayload.pin_required = false;
+    }
+
+    let result = await supabase.from('activities').insert([activityPayload]).select().single();
+    if (result.error && requiresRosterGate && /roster_enabled|pin_required/i.test(result.error.message || '')) {
+      const fallbackPayload = {
+        course_name,
+        class_name,
+        activity_name,
+        description,
+        invite_code,
+        teacher_password
+      };
+      result = await supabase.from('activities').insert([fallbackPayload]).select().single();
+      if (!result.error && result.data) {
+        await supabase.from('activities')
+          .update({ roster_enabled: true, pin_required: false })
+          .eq('id', result.data.id);
+        result = await fetchActivityById(result.data.id);
+      }
+    }
+
+    const insertedRosterEnabled = coerceBoolean(result.data?.roster_enabled);
+    const insertedPinRequired = coerceBoolean(result.data?.pin_required);
+    if (!result.error && result.data && requiresRosterGate) {
+      const enforced = await supabase.from('activities')
+        .update({ roster_enabled: true, pin_required: false })
+        .eq('id', result.data.id)
+        .select()
+        .single();
+      if (!enforced.error && enforced.data) {
+        result = { data: sanitizeActivity(enforced.data), error: null };
+      } else if (!enforced.error) {
+        result = await fetchActivityById(result.data.id);
+      }
+    }
+
+    const { data, error } = result;
     if (error) throw error;
     res.status(201).json(sanitizeActivity(data));
   } catch (e) { res.status(500).json({ error: e.message }); }
@@ -8299,6 +8383,16 @@ app.get('/api/activities/code/:code', async (req, res) => {
   try {
     const { data, error } = await fetchActivityByCode(req.params.code);
     if (error) throw error;
+    const requiresRosterGate = activityRequiresLockedRosterFlow(data) || coerceBoolean(data?.roster_enabled);
+    if (requiresRosterGate) {
+      const gate = await getActivityRosterGateStatus(data.id);
+      data.roster_gate_required = true;
+      data.roster_enabled = true;
+      data.pin_required = false;
+      data.roster_gate_locked = !!gate.locked;
+      data.roster_ready = gate.schema_ready !== false;
+      data.active_roster_count = Number(gate.active_count || 0);
+    }
     res.json(data);
   } catch (e) { res.status(404).json({ error: 'Activity not found' }); }
 });
@@ -8307,6 +8401,12 @@ app.put('/api/activities/:id', teacherAuth, async (req, res) => {
   try {
     const auth = await ensureTeacherCanAccessActivity(req, req.params.id);
     if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+    const currentActivityResult = await fetchActivityById(req.params.id);
+    if (currentActivityResult.error || !currentActivityResult.data) {
+      throw currentActivityResult.error || new Error('Activity not found');
+    }
+    const currentActivity = currentActivityResult.data;
+    const requiresRosterGate = activityRequiresLockedRosterFlow(currentActivity);
 
     const allowed = [
       'upload_open',
@@ -8335,6 +8435,17 @@ app.put('/api/activities/:id', teacherAuth, async (req, res) => {
       else if (key === 'archive_after_days') payload[key] = parseArchiveAfterDaysInput(req.body[key]);
       else if (key === 'quarantine_retention_days') payload[key] = parseQuarantineRetentionDaysInput(req.body[key]);
       else payload[key] = coerceBoolean(req.body[key]);
+    }
+
+    if (requiresRosterGate) {
+      if ('roster_enabled' in req.body && !coerceBoolean(req.body.roster_enabled)) {
+        return res.status(400).json({ error: 'Economics activities require roster gating. Import the roster first and keep roster restriction enabled.' });
+      }
+      if ('pin_required' in req.body && coerceBoolean(req.body.pin_required)) {
+        return res.status(400).json({ error: 'Economics student entry only supports name + student ID + invite code. Leave PIN disabled.' });
+      }
+      payload.roster_enabled = true;
+      payload.pin_required = false;
     }
 
     const { data, error } = await supabase.from('activities').update(payload).eq('id', req.params.id).select().single();
@@ -10578,6 +10689,11 @@ app.get('/api/teacher/dashboard-summary', teacherAuth, async (req, res) => {
       : 0;
     const activeRosterRows = rosterRows.filter(item => item.active !== false);
     const mutedRosterRows = rosterRows.filter(item => item.feedback_muted);
+    const rosterGateRequired = activityRequiresLockedRosterFlow(activitySafe) || coerceBoolean(activitySafe?.roster_enabled);
+    activitySafe.roster_gate_required = rosterGateRequired;
+    activitySafe.roster_gate_locked = rosterGateRequired && (!rosterReady || activeRosterRows.length <= 0);
+    activitySafe.active_roster_count = activeRosterRows.length;
+    activitySafe.roster_ready = rosterReady;
     const archiveProvider = getArchiveProviderInfo(archivePolicy);
     const archiveDestination = archiveProvider.name === 'google-drive'
       ? await inspectGoogleDriveDestination().catch(() => null)

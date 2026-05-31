@@ -29,6 +29,63 @@
       font-size: 0.82rem;
       line-height: 1.5;
     }
+    .control-tile.locked {
+      background: rgba(245, 158, 11, 0.08);
+      border-color: rgba(245, 158, 11, 0.16);
+    }
+    .control-lock-note {
+      margin-top: 8px;
+      color: #b45309;
+      font-size: 0.75rem;
+      font-weight: 700;
+      line-height: 1.55;
+    }
+    .roster-gate-banner {
+      margin-top: 16px;
+      padding: 16px 18px;
+      border-radius: 20px;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      background: rgba(255, 255, 255, 0.9);
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 14px;
+      box-shadow: inset 0 1px 0 rgba(255,255,255,0.45);
+    }
+    .roster-gate-banner.locked {
+      background: rgba(245, 158, 11, 0.12);
+      border-color: rgba(245, 158, 11, 0.2);
+    }
+    .roster-gate-banner.ready {
+      background: rgba(16, 185, 129, 0.12);
+      border-color: rgba(16, 185, 129, 0.2);
+    }
+    .roster-gate-title {
+      font-size: 0.92rem;
+      font-weight: 900;
+      color: var(--text-main);
+    }
+    .roster-gate-note {
+      margin-top: 6px;
+      color: var(--text-muted);
+      font-size: 0.82rem;
+      line-height: 1.6;
+    }
+    .roster-gate-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      justify-content: flex-end;
+    }
+    .invite-code-line.invite-locked strong {
+      color: #b45309;
+      cursor: not-allowed;
+      text-decoration: none;
+    }
+    .invite-gate-card-note {
+      margin-bottom: 12px;
+    }
     .storage-meta-row {
       display: flex;
       flex-wrap: wrap;
@@ -2103,6 +2160,179 @@
       return courseName === '经济学基础' || courseName === '经济学基础课程' || courseName.includes('经济学基础');
     }
 
+    function activityRequiresRosterGate(activity) {
+      return isEconomicsActivity(activity);
+    }
+
+    function buildStudentEntryShareUrl(inviteCode) {
+      const path = '/student-entry.html?code=' + encodeURIComponent(String(inviteCode || '').trim());
+      return typeof window.classShowStudentUrl === 'function'
+        ? window.classShowStudentUrl(path)
+        : (location.origin + path);
+    }
+
+    function getRosterGateState(summary = dashboardSummary) {
+      const activity = summary?.activity || act || {};
+      const roster = summary?.roster || {};
+      const required = !!activity.roster_gate_required || activityRequiresRosterGate(activity);
+      const schemaReady = activity.roster_ready !== false && roster.ready !== false;
+      const activeCount = Number(activity.active_roster_count ?? roster.active_count ?? 0);
+      const locked = required && (!!activity.roster_gate_locked || !schemaReady || activeCount <= 0);
+      return {
+        required,
+        schemaReady,
+        activeCount,
+        inviteCode: String(activity.invite_code || '').trim(),
+        locked,
+        readyToShare: required ? !locked : !!String(activity.invite_code || '').trim()
+      };
+    }
+
+    function getToggleLockMeta(activity, key) {
+      if (!activityRequiresRosterGate(activity)) return null;
+      if (key === 'roster_enabled') {
+        return {
+          summary: '固定开启',
+          button: '固定开启',
+          note: '经济学活动必须先导入实名名单，再开放学生进入。名单限制不可关闭。'
+        };
+      }
+      if (key === 'pin_required') {
+        return {
+          summary: '固定关闭',
+          button: '固定关闭',
+          note: '经济学学生入口固定使用“姓名 + 学号 + 邀请码”，PIN 登录保持关闭。'
+        };
+      }
+      return null;
+    }
+
+    function ensureRosterGateScaffold() {
+      const hero = document.querySelector('.dashboard-hero');
+      const actions = hero?.querySelector('.dashboard-actions');
+      const inviteCodeLine = hero?.querySelector('.invite-code-line');
+      if (inviteCodeLine && !inviteCodeLine.id) inviteCodeLine.id = 'inviteCodeLine';
+
+      if (hero && actions && !document.getElementById('rosterGateBanner')) {
+        const banner = document.createElement('div');
+        banner.className = 'roster-gate-banner';
+        banner.id = 'rosterGateBanner';
+        banner.innerHTML = `
+          <div>
+            <div class="roster-gate-title" id="rosterGateTitle">学生入口锁定中</div>
+            <div class="roster-gate-note" id="rosterGateNote">请先导入 Excel 名单，系统才会解锁邀请码和学生二维码。</div>
+          </div>
+          <div class="roster-gate-actions">
+            <button class="btn btn-primary btn-sm" type="button" id="rosterGatePrimaryBtn">前往导入名单</button>
+            <button class="btn btn-secondary btn-sm" type="button" id="rosterGateSecondaryBtn">刷新状态</button>
+          </div>
+        `;
+        actions.insertAdjacentElement('afterend', banner);
+        banner.querySelector('#rosterGatePrimaryBtn')?.addEventListener('click', scrollToRosterSetup);
+        banner.querySelector('#rosterGateSecondaryBtn')?.addEventListener('click', () => reloadDashboard(true));
+      }
+
+      const rosterTableBody = document.getElementById('rosterBody');
+      const rosterPanel = rosterTableBody?.closest('.dashboard-panel');
+      if (rosterPanel && !rosterPanel.id) rosterPanel.id = 'rosterPanel';
+
+      const qrBox = document.querySelector('.qr-box');
+      if (qrBox && !document.getElementById('inviteGateCardNote')) {
+        const note = document.createElement('div');
+        note.id = 'inviteGateCardNote';
+        note.className = 'storage-warning warning-attention invite-gate-card-note';
+        note.style.display = 'none';
+        qrBox.insertAdjacentElement('beforebegin', note);
+      }
+    }
+
+    function scrollToRosterSetup() {
+      ensureRosterGateScaffold();
+      const panel = document.getElementById('rosterPanel');
+      panel?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      const input = document.getElementById('rosterFile');
+      if (input) {
+        try { input.focus({ preventScroll: true }); } catch { input.focus(); }
+      }
+    }
+
+    function renderInviteGate(summary) {
+      ensureRosterGateScaffold();
+      const state = getRosterGateState(summary);
+      const inviteCodeLine = document.getElementById('inviteCodeLine');
+      const inviteCodeEl = document.getElementById('inviteCode');
+      const banner = document.getElementById('rosterGateBanner');
+      const bannerTitle = document.getElementById('rosterGateTitle');
+      const bannerNote = document.getElementById('rosterGateNote');
+      const primaryBtn = document.getElementById('rosterGatePrimaryBtn');
+      const secondaryBtn = document.getElementById('rosterGateSecondaryBtn');
+      const cardNote = document.getElementById('inviteGateCardNote');
+      const qrImage = document.getElementById('qrCode');
+      const qrDownload = document.getElementById('downloadQr');
+
+      if (inviteCodeLine) inviteCodeLine.classList.toggle('invite-locked', state.required && state.locked);
+      if (inviteCodeEl) {
+        inviteCodeEl.textContent = state.required && state.locked
+          ? '名单导入后解锁'
+          : (state.inviteCode || '-');
+        inviteCodeEl.title = state.required && state.locked
+          ? '当前仍处于名单导入阶段，暂不建议把邀请码发给学生。'
+          : '点击复制邀请码';
+      }
+
+      if (banner) {
+        banner.hidden = !state.required;
+        banner.classList.toggle('locked', state.required && state.locked);
+        banner.classList.toggle('ready', state.required && !state.locked);
+      }
+      if (state.required && bannerTitle) {
+        bannerTitle.textContent = state.locked ? '学生入口锁定中' : '学生入口已解锁';
+      }
+      if (state.required && bannerNote) {
+        bannerNote.textContent = state.locked
+          ? (state.schemaReady
+            ? '请先导入 Excel 名单。导入成功后，系统才会显示可发给学生的邀请码和二维码。'
+            : '名单表尚未就绪，请先完成数据库升级，再导入 Excel 名单。')
+          : `已导入 ${state.activeCount} 名学生，现在可以把邀请码和二维码发给学生。`;
+      }
+      if (primaryBtn) primaryBtn.textContent = state.locked ? '前往导入名单' : '查看名单';
+      if (secondaryBtn) secondaryBtn.textContent = state.locked ? '刷新状态' : '重新检查';
+
+      if (cardNote) {
+        if (state.required) {
+          cardNote.style.display = '';
+          cardNote.textContent = state.locked
+            ? '当前处于“先名单后邀请码”模式。请先导入 Excel 名单，学生二维码和邀请码解锁后再发给学生。'
+            : `名单已导入，学生可通过“姓名 + 学号 + 邀请码”进入当前活动。已就绪人数：${state.activeCount}。`;
+        } else {
+          cardNote.style.display = 'none';
+          cardNote.textContent = '';
+        }
+      }
+
+      if (state.required && state.locked) {
+        if (qrImage) {
+          qrImage.style.display = 'none';
+          qrImage.removeAttribute('src');
+        }
+        if (qrDownload) {
+          qrDownload.style.display = 'none';
+          qrDownload.removeAttribute('href');
+        }
+      }
+    }
+
+    function maybeRunRosterSetupGuide() {
+      const params = new URLSearchParams(location.search);
+      if (params.get('setup') !== 'roster') return;
+      const nextUrl = `${location.pathname}${location.hash || ''}`;
+      history.replaceState(null, '', nextUrl);
+      if (getRosterGateState().locked) {
+        toast('请先上传 Excel 名单。导入成功后，邀请码和学生二维码才会解锁。', 'success');
+        setTimeout(() => scrollToRosterSetup(), 140);
+      }
+    }
+
     function getToggleMeta(activity) {
       return isEconomicsActivity(activity)
         ? { ...baseToggleMeta, ...economicsToggleMeta }
@@ -2227,7 +2457,11 @@
     }
 
     function copyInviteCode() {
-      const code = (dashboardSummary?.activity?.invite_code) || '';
+      const state = getRosterGateState();
+      if (state.required && state.locked) {
+        return toast('请先导入 Excel 名单。名单未导入前，不建议把邀请码发给学生。', 'error');
+      }
+      const code = state.inviteCode || '';
       if (!code) return;
       navigator.clipboard.writeText(code).then(() => toast('邀请码已复制', 'success')).catch(() => {});
     }
@@ -3081,12 +3315,17 @@ function renderLearningGroups(targetId, rows) {
     function renderStatusPills(activity) {
       const meta = getToggleMeta(activity);
       const keys = Object.keys(meta);
-      document.getElementById('statusPills').innerHTML = keys.map(key => `
+      const pills = keys.map(key => {
+        const lock = getToggleLockMeta(activity, key);
+        const stateLabel = lock ? lock.summary : (activity[key] ? '寮€鍚?' : '鍏抽棴');
+        return `
         <span class="dashboard-pill ${activity[key] ? 'on' : 'off'}">
           <span>${escapeHtml(meta[key].label)}</span>
-          <strong>${activity[key] ? '开启' : '关闭'}</strong>
+          <strong>${escapeHtml(stateLabel)}</strong>
         </span>
-      `).join('');
+      `;
+      });
+      document.getElementById('statusPills').innerHTML = pills.join('');
     }
 
     function renderControls(activity) {
@@ -6335,6 +6574,216 @@ function renderLearningGroups(targetId, rows) {
         toast(`${actionText}失败：` + e.message, 'error');
       }
     }
+
+    function renderMeta(activity) {
+      dashboardBaseTitle = `${activity.activity_name || 'ClassShow'} - 教师后台`;
+      document.title = dashboardBaseTitle;
+      document.getElementById('heroTitle').textContent = activity.activity_name || 'ClassShow';
+      document.getElementById('heroSubtitle').textContent = `${activity.course_name || ''} / ${activity.class_name || ''} / 教师可先导入名单，再发学生邀请码`;
+      document.getElementById('inviteCode').textContent = activity.invite_code || '-';
+      document.getElementById('inviteCode').onclick = copyInviteCode;
+      document.getElementById('metaCourse').textContent = `${activity.course_name || '-'} / ${activity.class_name || '-'}`;
+      document.getElementById('metaActivity').textContent = activity.activity_name || '-';
+      document.getElementById('metaDesc').textContent = activity.description || '暂无说明';
+      document.getElementById('dashboardTimestamp').textContent = `更新于 ${formatBangkokTime(new Date().toISOString())}`;
+    }
+
+    async function loadQrCode(activity) {
+      const state = getRosterGateState({ activity, roster: dashboardSummary?.roster || {} });
+      const img = document.getElementById('qrCode');
+      const link = document.getElementById('downloadQr');
+      if (state.required && state.locked) {
+        if (img) {
+          img.style.display = 'none';
+          img.removeAttribute('src');
+        }
+        if (link) {
+          link.style.display = 'none';
+          link.removeAttribute('href');
+        }
+        return;
+      }
+      try {
+        const url = buildStudentEntryShareUrl(activity.invite_code || '');
+        const result = await api('/qrcode?text=' + encodeURIComponent(url));
+        if (result.url) {
+          img.src = result.url;
+          img.style.display = 'block';
+          link.href = result.url;
+          link.style.display = 'inline-flex';
+        }
+      } catch {}
+    }
+
+    function copyInviteCode() {
+      const state = getRosterGateState();
+      if (state.required && state.locked) {
+        return toast('请先导入 Excel 名单。名单未导入前，不建议把邀请码发给学生。', 'error');
+      }
+      const code = state.inviteCode || '';
+      if (!code) return;
+      navigator.clipboard.writeText(code).then(() => toast('邀请码已复制', 'success')).catch(() => {});
+    }
+
+    function renderStatusPills(activity) {
+      const meta = getToggleMeta(activity);
+      const keys = Object.keys(meta);
+      const pills = keys.map(key => {
+        const lock = getToggleLockMeta(activity, key);
+        const stateLabel = lock ? lock.summary : (activity[key] ? '开启' : '关闭');
+        return `
+          <span class="dashboard-pill ${activity[key] ? 'on' : 'off'}">
+            <span>${escapeHtml(meta[key].label)}</span>
+            <strong>${escapeHtml(stateLabel)}</strong>
+          </span>
+        `;
+      });
+      const gate = getRosterGateState(dashboardSummary || { activity });
+      if (gate.required) {
+        pills.unshift(`
+          <span class="dashboard-pill ${gate.locked ? 'off' : 'on'}">
+            <span>学生入口</span>
+            <strong>${gate.locked ? '锁定中' : '已解锁'}</strong>
+          </span>
+        `);
+      }
+      document.getElementById('statusPills').innerHTML = pills.join('');
+    }
+
+    function renderControls(activity) {
+      document.getElementById('controlGrid').innerHTML = Object.entries(getToggleMeta(activity)).map(([key, meta]) => {
+        const lock = getToggleLockMeta(activity, key);
+        const buttonClass = lock ? 'btn-secondary' : (activity[key] ? 'btn-success' : 'btn-danger');
+        const buttonLabel = lock ? lock.button : (activity[key] ? '已开启' : '已关闭');
+        return `
+          <div class="control-tile ${lock ? 'locked' : ''}">
+            <strong>${escapeHtml(meta.label)}</strong>
+            <span>${escapeHtml(meta.note)}</span>
+            <button class="btn btn-sm ${buttonClass}" type="button" onclick="toggleSetting('${key}')" ${lock ? 'disabled' : ''}>
+              ${escapeHtml(buttonLabel)}
+            </button>
+            ${lock ? `<div class="control-lock-note">${escapeHtml(lock.note)}</div>` : ''}
+          </div>
+        `;
+      }).join('');
+    }
+
+    function renderRoster(summary) {
+      const roster = summary.roster || {};
+      const rows = roster.items || [];
+      const gate = getRosterGateState(summary);
+      document.getElementById('rosterSummary').textContent = `已导入 ${rows.length} 人`;
+      if (gate.required && gate.locked) {
+        document.getElementById('rosterStatus').textContent = roster.ready
+          ? '当前仍处于“名单导入阶段”。请先上传 Excel 名单，名单导入成功后邀请码才会解锁。'
+          : '名单表未初始化，请先运行升级 SQL。';
+      } else if (gate.required) {
+        document.getElementById('rosterStatus').textContent = `名单已就绪，当前活动允许 ${gate.activeCount} 名实名学生使用邀请码进入。`;
+      } else {
+        document.getElementById('rosterStatus').textContent = roster.ready
+          ? `当前实名名单 ${rows.length} 人，其中 ${roster.muted_count || 0} 人已被限制反馈`
+          : '名单表未初始化，请先运行升级 SQL';
+      }
+      document.getElementById('rosterBody').innerHTML = rows.length ? rows.map(row => `
+        <tr>
+          <td>${escapeHtml(row.name || '-')}</td>
+          <td>${escapeHtml(row.student_id || '-')}</td>
+          <td>${row.active === false ? '停用' : '启用'}</td>
+          <td>${row.feedback_muted ? '已禁言反馈' : '反馈正常'}</td>
+          <td>
+            <button class="btn btn-sm ${row.feedback_muted ? 'btn-secondary' : 'btn-danger'}" type="button"
+              onclick="toggleRosterFeedbackMute('${encodeURIComponent(row.student_id || '')}', ${row.feedback_muted ? 'false' : 'true'}, '${encodeURIComponent(row.name || '')}')">
+              ${row.feedback_muted ? '解除禁言' : '禁言反馈'}
+            </button>
+          </td>
+        </tr>
+      `).join('') : '<tr><td colspan="5" style="color:var(--text-muted);">暂无名单</td></tr>';
+    }
+
+    async function toggleSetting(key) {
+      const activity = dashboardSummary?.activity || act;
+      const toggleDefinitions = getToggleMeta(activity);
+      const lock = getToggleLockMeta(activity, key);
+      if (lock) {
+        return toast(lock.note, 'error');
+      }
+      const nextValue = !activity[key];
+      try {
+        await api('/activities/' + actId, {
+          method: 'PUT',
+          body: JSON.stringify({ [key]: nextValue })
+        });
+        await reloadDashboard();
+        toast(`${toggleDefinitions[key].label}${nextValue ? '已开启' : '已关闭'}`, 'success');
+      } catch (e) {
+        toast('切换失败：' + e.message, 'error');
+      }
+    }
+
+    async function importRosterText() {
+      const students = parseRosterText(document.getElementById('rosterText').value);
+      if (!students.length) return toast('没有可导入的名单行', 'error');
+      try {
+        const result = await api('/teacher/roster/import', {
+          method: 'POST',
+          body: JSON.stringify({
+            activity_id: actId,
+            default_class_name: act.class_name || '',
+            students
+          })
+        });
+        document.getElementById('rosterText').value = '';
+        await reloadDashboard();
+        const gate = getRosterGateState();
+        toast(
+          gate.required && !gate.locked
+            ? `名单导入成功，已导入 ${result.imported || 0} 人，邀请码现已解锁。`
+            : `名单导入成功，已导入 ${result.imported || 0} 人。`,
+          'success'
+        );
+      } catch (e) {
+        toast('导入失败：' + e.message, 'error');
+      }
+    }
+
+    async function importRosterFile() {
+      const input = document.getElementById('rosterFile');
+      const file = input.files && input.files[0];
+      if (!file) return toast('请先选择 .xlsx 或 .csv 文件', 'error');
+
+      const fd = new FormData();
+      fd.append('activity_id', actId);
+      fd.append('default_class_name', act.class_name || '');
+      fd.append('roster', file);
+
+      try {
+        const res = await fetch('/api/teacher/roster/import-file', {
+          method: 'POST',
+          headers: { 'x-teacher-auth': token },
+          body: fd
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || data.detail || data.message || res.statusText);
+        input.value = '';
+        await reloadDashboard();
+        const gate = getRosterGateState();
+        toast(
+          gate.required && !gate.locked
+            ? `名单上传成功，已导入 ${data.imported || 0} 人，邀请码现已解锁。`
+            : `名单上传成功，已导入 ${data.imported || 0} 人。`,
+          'success'
+        );
+      } catch (e) {
+        toast('上传失败：' + e.message, 'error');
+      }
+    }
+
+    const classshowBaseReloadDashboard = reloadDashboard;
+    reloadDashboard = async function(showToast = false) {
+      await classshowBaseReloadDashboard(showToast);
+      renderInviteGate(dashboardSummary);
+      maybeRunRosterSetupGuide();
+    };
 
     document.getElementById('missingMediaRepairInput')?.addEventListener('change', repairSelectedMediaFile);
     document.getElementById('quarantinePurgePreviewOverlay')?.addEventListener('click', (event) => {

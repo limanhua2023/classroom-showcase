@@ -79,6 +79,17 @@ async function runAudit(studentBaseUrl, backendBaseUrl) {
   }
 
   try {
+    const { response, text } = await fetchText(`${backendBaseUrl}/teacher-login.html`);
+    const ok = response.ok
+      && text.includes('teacher-dashboard.html?setup=roster')
+      && text.includes('Excel')
+      && text.includes('名单');
+    add('Backend teacher roster-first entry', ok, `HTTP ${response.status}`);
+  } catch (error) {
+    add('Backend teacher roster-first entry', false, error.message);
+  }
+
+  try {
     const { response, text } = await fetchText(`${backendBaseUrl}/teacher-dashboard.html`);
     add('Backend teacher dashboard shell', response.ok && text.includes('learningMonitorBadge'), `HTTP ${response.status}`);
   } catch (error) {
@@ -91,7 +102,9 @@ async function runAudit(studentBaseUrl, backendBaseUrl) {
       && text.includes('learningEvidenceSearchInput')
       && text.includes('learningEvidenceQuickStats')
       && text.includes('learningEvidenceResetBtn')
-      && text.includes('data-learning-evidence-filter="recent24h"');
+      && text.includes('data-learning-evidence-filter="recent24h"')
+      && text.includes('rosterGateBanner')
+      && text.includes('classshowBaseReloadDashboard');
     add('Backend teacher evidence tools', ok, `HTTP ${response.status}`);
   } catch (error) {
     add('Backend teacher evidence tools', false, error.message);

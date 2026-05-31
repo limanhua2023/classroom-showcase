@@ -167,11 +167,33 @@ async function main() {
   });
   const teacherToken = teacherLogin.token;
   if (!teacherToken) fail('Teacher token missing after login');
+  const publicActivity = await api(BACKEND_BASE, `/api/activities/code/${encodeURIComponent(inviteCode)}`);
+  if (!publicActivity?.roster_gate_locked) fail('New economics activity should stay locked before roster import');
 
   const students = [
     { name: '保存链路学生甲', student_id: `${inviteCode}-01`, group_name: 'A组' },
     { name: '保存链路学生乙', student_id: `${inviteCode}-02`, group_name: 'B组' }
   ];
+
+  const rosterImport = await api(BACKEND_BASE, '/api/teacher/roster/import', {
+    method: 'POST',
+    headers: { 'x-teacher-auth': teacherToken },
+    body: JSON.stringify({
+      activity_id: activity.id,
+      default_class_name: '鉴动验证班-请忽略',
+      students: students.map(student => ({
+        name: student.name,
+        student_id: student.student_id,
+        class_name: '鉴动验证班-请忽略',
+        group_name: student.group_name
+      }))
+    })
+  });
+  if (Number(rosterImport?.imported || 0) !== students.length) {
+    fail(`Roster import count mismatch: expected ${students.length}, got ${rosterImport?.imported || 0}`);
+  }
+  const unlockedActivity = await api(BACKEND_BASE, `/api/activities/code/${encodeURIComponent(inviteCode)}`);
+  if (unlockedActivity?.roster_gate_locked) fail('Economics activity should unlock after roster import');
 
   const registered = [];
   for (const student of students) {

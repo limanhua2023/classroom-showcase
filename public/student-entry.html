@@ -73,6 +73,9 @@
 
       try {
         const activity = await api('/activities/code/' + encodeURIComponent(inviteCode));
+        if (activity.roster_gate_required && activity.roster_gate_locked) {
+          return toast('老师还没有导入本次课堂名单，邀请码暂未开放给学生。请联系老师先上传 Excel 名单。', 'error');
+        }
         if (activity.pin_required) {
           return toast('当前活动启用了 PIN 登录，这个精简学生入口暂不支持，请联系老师关闭 PIN 登录。', 'error');
         }
