@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>超级管理员简明手册 - ClassShow</title>
+  <link rel="stylesheet" href="css/main.css">
+  <style>
+    .manual-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+    .manual-card {
+      padding: 20px 22px;
+      border-radius: 24px;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 20px 48px rgba(15, 23, 42, 0.06);
+    }
+    .manual-card h3 {
+      margin: 0 0 10px;
+      font-size: 1.05rem;
+      font-weight: 900;
+      color: var(--text-main);
+    }
+    .manual-card p,
+    .manual-card li {
+      color: var(--text-muted);
+      line-height: 1.7;
+      font-size: 0.95rem;
+    }
+    .manual-card ul,
+    .manual-card ol {
+      margin: 10px 0 0 20px;
+      padding: 0;
+    }
+    .manual-tip {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(245, 158, 11, 0.12);
+      border: 1px solid rgba(245, 158, 11, 0.18);
+      color: #92400e;
+      font-size: 0.88rem;
+      line-height: 1.65;
+      font-weight: 700;
+    }
+    .manual-link-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .manual-link-list .btn {
+      min-width: 180px;
+    }
+    @media (max-width: 900px) {
+      .manual-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body class="course-page">
+  <header class="topbar">
+    <a class="topbar-logo" href="super-admin.html">Class<span>Show</span></a>
+    <div class="topbar-right">
+      <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='super-admin.html'">超管入口</button>
+      <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='teacher-login.html'">教师入口</button>
+      <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='index.html'">总门户</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="course-hero">
+      <div class="course-hero-copy">
+        <div class="brand-kicker">SUPER ADMIN QUICK MANUAL</div>
+        <h1>超级管理员简明手册</h1>
+        <p>这是一份系统层操作手册。目标不是解释教学，而是确保课程注册表、备份恢复、流量存储和发布回滚都能被稳定管理。</p>
+        <div class="course-hero-actions">
+          <button class="btn btn-primary" type="button" onclick="location.href='super-admin.html'">打开超管入口</button>
+          <button class="btn btn-secondary" type="button" onclick="location.href='disaster-recovery-10min.html'">10 分钟恢复手册</button>
+          <button class="btn btn-secondary" type="button" onclick="location.href='project-backup-recovery.html'">恢复演练详情</button>
+        </div>
+      </div>
+      <div class="course-scoreboard" aria-label="超管职责摘要">
+        <div><strong>1</strong><span>管课程注册表</span></div>
+        <div><strong>2</strong><span>看备份恢复</span></div>
+        <div><strong>3</strong><span>看存储流量</span></div>
+        <div><strong>4</strong><span>控发布回滚</span></div>
+      </div>
+    </section>
+
+    <section class="course-control-strip">
+      <div>
+        <strong>当前稳定恢复点</strong>
+        <span><code>restore/2026-06-01-stable-system-signoff</code> / <code>restore-2026-06-01-stable-system-signoff</code></span>
+      </div>
+      <div class="course-card-actions">
+        <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='admin'">短地址入口</button>
+        <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='admin-manual'">手册短地址</button>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">PRIMARY DUTIES</div>
+          <h2>超级管理员主要负责什么</h2>
+          <p>超管只负责系统层，不负责具体课堂教学细节。</p>
+        </div>
+      </div>
+      <div class="manual-grid">
+        <article class="manual-card">
+          <h3>课程注册表</h3>
+          <ul>
+            <li>新增课程</li>
+            <li>修改课程名称和 slug</li>
+            <li>启用 / 停用课程</li>
+            <li>调整课程排序</li>
+            <li>挂载 scaffold</li>
+          </ul>
+        </article>
+        <article class="manual-card">
+          <h3>运维与恢复</h3>
+          <ul>
+            <li>查看备份与恢复总览</li>
+            <li>查看项目代码快照状态</li>
+            <li>查看加密 secrets 备份状态</li>
+            <li>查看 Render egress / R2 / 热存储状态</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">RELEASE CHECK</div>
+          <h2>发布前你至少要确认什么</h2>
+          <p>每次重要上线前，先确认这套系统还能从学生、教师、超管三个面正常走通。</p>
+        </div>
+      </div>
+      <div class="manual-grid">
+        <article class="manual-card">
+          <h3>最小检查清单</h3>
+          <ol>
+            <li>学生站可打开</li>
+            <li>教师后台可登录</li>
+            <li>超管登录正常</li>
+            <li><code>/api/health</code> 正常</li>
+            <li>最近一次项目代码备份正常</li>
+            <li>最近一次 secrets 备份正常</li>
+            <li>最近一次业务数据本地备份正常</li>
+          </ol>
+        </article>
+        <article class="manual-card">
+          <h3>严格验收命令</h3>
+          <p>需要完整发布验收时，跑这一条：</p>
+          <div class="manual-tip"><code>$env:CLASSSHOW_ENABLE_SUPER_ADMIN_SMOKE='1'</code><br><code>$env:CLASSSHOW_SUPER_ADMIN_PASSWORD='你的超管密码'</code><br><code>node scripts/check-public-readiness.mjs https://classshow-student.pages.dev https://classroom-showcase.onrender.com</code></div>
+          <p>当前稳定签收结果是 <strong>21/21 passed</strong>。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">ROLLBACK</div>
+          <h2>升级失败时怎么回到稳定版</h2>
+          <p>先回滚代码，再按需恢复 secrets 和业务数据。</p>
+        </div>
+      </div>
+      <div class="manual-grid">
+        <article class="manual-card">
+          <h3>代码回滚</h3>
+          <div class="manual-tip"><code>git fetch origin</code><br><code>git checkout main</code><br><code>git reset --hard restore-2026-06-01-stable-system-signoff</code><br><code>git push --force-with-lease origin main</code></div>
+        </article>
+        <article class="manual-card">
+          <h3>恢复资产</h3>
+          <ul>
+            <li>项目代码快照</li>
+            <li>secrets bundle</li>
+            <li>本地业务数据备份</li>
+          </ul>
+          <p>详细路径和校验值都写在 <code>STABLE_BACKUP_2026-06-01.md</code>。</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">QUICK LINKS</div>
+          <h2>常用入口</h2>
+        </div>
+      </div>
+      <div class="manual-card">
+        <div class="manual-link-list">
+          <button class="btn btn-primary" type="button" onclick="location.href='super-admin.html'">超级管理员页</button>
+          <button class="btn btn-secondary" type="button" onclick="location.href='course-integration-spec.html'">课程接入规范</button>
+          <button class="btn btn-secondary" type="button" onclick="location.href='disaster-recovery-10min.html'">10 分钟恢复手册</button>
+          <button class="btn btn-secondary" type="button" onclick="location.href='key-rotation-backup-acceptance.html'">密钥轮换重验收</button>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

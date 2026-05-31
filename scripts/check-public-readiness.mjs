@@ -126,6 +126,28 @@ async function runAudit(studentBaseUrl, backendBaseUrl) {
   }
 
   try {
+    const { response, text } = await fetchText(`${backendBaseUrl}/teacher-quick-manual.html`);
+    const ok = response.ok
+      && text.includes('教师简明手册')
+      && text.includes('teacher-manual')
+      && text.includes('teacher-dashboard.html');
+    add('Backend teacher quick manual page', ok, `HTTP ${response.status}`);
+  } catch (error) {
+    add('Backend teacher quick manual page', false, error.message);
+  }
+
+  try {
+    const { response, text } = await fetchText(`${backendBaseUrl}/super-admin-quick-manual.html`);
+    const ok = response.ok
+      && text.includes('超级管理员简明手册')
+      && text.includes('admin-manual')
+      && text.includes('super-admin.html');
+    add('Backend super admin quick manual page', ok, `HTTP ${response.status}`);
+  } catch (error) {
+    add('Backend super admin quick manual page', false, error.message);
+  }
+
+  try {
     const response = await fetch(`${backendBaseUrl}/teacher`, { redirect: 'manual' });
     const location = response.headers.get('location') || '';
     const ok = response.status >= 300 && response.status < 400 && location.includes('/teacher-login.html');
@@ -141,6 +163,24 @@ async function runAudit(studentBaseUrl, backendBaseUrl) {
     add('Backend short alias /admin', ok, `HTTP ${response.status}; location=${location || '-'}`);
   } catch (error) {
     add('Backend short alias /admin', false, error.message);
+  }
+
+  try {
+    const response = await fetch(`${backendBaseUrl}/teacher-manual`, { redirect: 'manual' });
+    const location = response.headers.get('location') || '';
+    const ok = response.status >= 300 && response.status < 400 && location.includes('/teacher-quick-manual.html');
+    add('Backend short alias /teacher-manual', ok, `HTTP ${response.status}; location=${location || '-'}`);
+  } catch (error) {
+    add('Backend short alias /teacher-manual', false, error.message);
+  }
+
+  try {
+    const response = await fetch(`${backendBaseUrl}/admin-manual`, { redirect: 'manual' });
+    const location = response.headers.get('location') || '';
+    const ok = response.status >= 300 && response.status < 400 && location.includes('/super-admin-quick-manual.html');
+    add('Backend short alias /admin-manual', ok, `HTTP ${response.status}; location=${location || '-'}`);
+  } catch (error) {
+    add('Backend short alias /admin-manual', false, error.message);
   }
 
   try {

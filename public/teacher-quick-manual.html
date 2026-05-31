@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>教师简明手册 - ClassShow</title>
+  <link rel="stylesheet" href="css/main.css">
+  <style>
+    .manual-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+    .manual-card {
+      padding: 20px 22px;
+      border-radius: 24px;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 20px 48px rgba(15, 23, 42, 0.06);
+    }
+    .manual-card h3 {
+      margin: 0 0 10px;
+      font-size: 1.05rem;
+      font-weight: 900;
+      color: var(--text-main);
+    }
+    .manual-card p,
+    .manual-card li {
+      color: var(--text-muted);
+      line-height: 1.7;
+      font-size: 0.95rem;
+    }
+    .manual-card ul,
+    .manual-card ol {
+      margin: 10px 0 0 20px;
+      padding: 0;
+    }
+    .manual-tip {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(37, 99, 235, 0.08);
+      border: 1px solid rgba(37, 99, 235, 0.12);
+      color: #1d4ed8;
+      font-size: 0.88rem;
+      line-height: 1.65;
+      font-weight: 700;
+    }
+    .manual-link-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .manual-link-list .btn {
+      min-width: 180px;
+    }
+    @media (max-width: 900px) {
+      .manual-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body class="course-page">
+  <header class="topbar">
+    <a class="topbar-logo" href="teacher-login.html">Class<span>Show</span></a>
+    <div class="topbar-right">
+      <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='teacher-login.html'">教师入口</button>
+      <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='teacher-dashboard.html'">教师后台</button>
+      <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='index.html'">总门户</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="course-hero">
+      <div class="course-hero-copy">
+        <div class="brand-kicker">TEACHER QUICK MANUAL</div>
+        <h1>教师简明手册</h1>
+        <p>这是一份面向任课教师的直接操作版说明。目标不是解释系统架构，而是让老师按固定顺序完成开课、导名单、发邀请码、监控学习和处理复盘。</p>
+        <div class="course-hero-actions">
+          <button class="btn btn-primary" type="button" onclick="location.href='teacher-login.html'">打开教师入口</button>
+          <button class="btn btn-secondary" type="button" onclick="location.href='teacher-dashboard.html'">打开教师后台</button>
+          <button class="btn btn-secondary" type="button" onclick="location.href='disaster-recovery-10min.html'">10 分钟恢复手册</button>
+        </div>
+      </div>
+      <div class="course-scoreboard" aria-label="教师操作摘要">
+        <div><strong>1</strong><span>先导名单</span></div>
+        <div><strong>2</strong><span>再发邀请码</span></div>
+        <div><strong>3</strong><span>看保存状态</span></div>
+        <div><strong>4</strong><span>处理模块复盘</span></div>
+      </div>
+    </section>
+
+    <section class="course-control-strip">
+      <div>
+        <strong>当前适用课程</strong>
+        <span>经济学基础已完整接通实名名单、学习监控、模块复盘与作品展示控制。</span>
+      </div>
+      <div class="course-card-actions">
+        <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='teacher'">短地址入口</button>
+        <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='teacher-manual'">手册短地址</button>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">STANDARD FLOW</div>
+          <h2>一节课开始前的标准顺序</h2>
+          <p>不要颠倒。当前系统已经固定为“先名单、后开放”的教师流程。</p>
+        </div>
+      </div>
+      <div class="manual-grid">
+        <article class="manual-card">
+          <h3>1. 创建或进入本次活动</h3>
+          <ol>
+            <li>进入教师后台。</li>
+            <li>创建新的“经济学基础”活动，或进入已有活动。</li>
+            <li>新活动创建后，学生入口默认锁定，这是正常保护机制。</li>
+          </ol>
+        </article>
+        <article class="manual-card">
+          <h3>2. 先导入实名名单</h3>
+          <p>支持 Excel / CSV。最稳的列名只有两列：</p>
+          <ul>
+            <li><code>姓名</code></li>
+            <li><code>学号</code></li>
+          </ul>
+          <div class="manual-tip">名单导入后，系统会自动开启实名限制并关闭 PIN；名单外学生不能进入课程。</div>
+        </article>
+        <article class="manual-card">
+          <h3>3. 再发邀请码</h3>
+          <p>只有名单到位后，邀请码和学生二维码才会解锁。学生正式入口固定为：</p>
+          <ul>
+            <li><code>https://classshow-student.pages.dev/student</code></li>
+          </ul>
+          <p>学生只填写：姓名、学号、邀请码。</p>
+        </article>
+        <article class="manual-card">
+          <h3>4. 开课后主要看三块</h3>
+          <ul>
+            <li>学习榜 / 活跃榜</li>
+            <li>上次保存时间 / 待保存状态</li>
+            <li>模块综合复盘证据</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">TEACHING CONTROL</div>
+          <h2>你最常用的两个控制点</h2>
+          <p>先把课堂放通，再判断学生到底是没学、在学未保存，还是已经完成并保存。</p>
+        </div>
+      </div>
+      <div class="manual-grid">
+        <article class="manual-card">
+          <h3>名单与邀请码</h3>
+          <p>如果学生说“进不去课程”，先看：</p>
+          <ul>
+            <li>本次活动是否已经导入实名名单</li>
+            <li>学生姓名、学号是否和 Excel 完全一致</li>
+            <li>邀请码是否发对</li>
+          </ul>
+        </article>
+        <article class="manual-card">
+          <h3>保存状态与学习时长</h3>
+          <p>学生端学习记录是本地优先、手动保存到云端。老师后台里的：</p>
+          <ul>
+            <li><strong>上次保存时间</strong>：最后一次云端落库时间</li>
+            <li><strong>待保存状态</strong>：学生可能已学，但还没点“保存记录”</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">MODULE REVIEW</div>
+          <h2>模块综合复盘怎么处理</h2>
+          <p>这部分已经接进教师后台，可直接形成老师处理闭环。</p>
+        </div>
+      </div>
+      <div class="manual-grid">
+        <article class="manual-card">
+          <h3>你可以做什么</h3>
+          <ul>
+            <li>按姓名 / 学号 / 班级 / 小组搜索</li>
+            <li>筛选待老师处理、近 24 小时新保存、老师已读闭环</li>
+            <li>写点评</li>
+            <li>标记已读</li>
+            <li>导出当前视图为 Excel / CSV</li>
+          </ul>
+        </article>
+        <article class="manual-card">
+          <h3>课后建议顺序</h3>
+          <ol>
+            <li>先看“近 24 小时新保存”</li>
+            <li>再看“待老师处理”</li>
+            <li>给重点学生写简短点评</li>
+            <li>标记已读，形成闭环</li>
+          </ol>
+        </article>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">QUICK LINKS</div>
+          <h2>常用入口</h2>
+        </div>
+      </div>
+      <div class="manual-card">
+        <div class="manual-link-list">
+          <button class="btn btn-primary" type="button" onclick="location.href='teacher-login.html'">教师登录页</button>
+          <button class="btn btn-secondary" type="button" onclick="location.href='teacher-dashboard.html'">教师后台</button>
+          <button class="btn btn-secondary" type="button" onclick="location.href='project-backup-recovery.html'">恢复演练详情</button>
+          <button class="btn btn-secondary" type="button" onclick="location.href='key-rotation-backup-acceptance.html'">密钥轮换重验收</button>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>

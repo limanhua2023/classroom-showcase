@@ -5907,6 +5907,10 @@ function renderLearningGroups(targetId, rows) {
       location.href = 'project-backup-recovery.html';
     }
 
+    function openTeacherQuickManual() {
+      location.href = 'teacher-quick-manual.html';
+    }
+
     function openKeyRotationAcceptanceGuide() {
       location.href = 'key-rotation-backup-acceptance.html';
     }
@@ -6184,6 +6188,7 @@ function renderLearningGroups(targetId, rows) {
           <div class="teacher-backup-guide-meta" id="teacherRecoveryGuideMeta"></div>
           <div class="teacher-backup-guide-note" id="teacherRecoveryGuideNote">正在读取备份与恢复状态...</div>
           <div class="teacher-backup-guide-actions">
+            <button class="btn btn-secondary btn-sm" type="button" onclick="openTeacherQuickManual()">教师手册</button>
             <button class="btn btn-secondary btn-sm" type="button" onclick="openDisasterRecoveryHandbook()">打开手册</button>
             <button class="btn btn-secondary btn-sm" type="button" onclick="openProjectBackupRecoveryPage()">恢复演练详情</button>
           </div>
@@ -6199,6 +6204,7 @@ function renderLearningGroups(targetId, rows) {
           <div class="teacher-backup-guide-meta" id="teacherKeyRotationGuideMeta"></div>
           <div class="teacher-backup-guide-note" id="teacherKeyRotationGuideNote">正在读取维护链路状态...</div>
           <div class="teacher-backup-guide-actions">
+            <button class="btn btn-secondary btn-sm" type="button" onclick="openTeacherQuickManual()">教师手册</button>
             <button class="btn btn-secondary btn-sm" type="button" onclick="openKeyRotationAcceptanceGuide()">打开验收</button>
             <button class="btn btn-secondary btn-sm" type="button" onclick="openProjectBackupRecoveryPage()">查看备份状态</button>
           </div>

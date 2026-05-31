@@ -6040,8 +6040,14 @@ app.get(['/student', '/student/'], (_req, res) => {
 app.get(['/teacher', '/teacher/'], (_req, res) => {
   res.redirect(302, '/teacher-login.html');
 });
+app.get(['/teacher-manual', '/teacher-manual/', '/teacher-guide', '/teacher-guide/'], (_req, res) => {
+  res.redirect(302, '/teacher-quick-manual.html');
+});
 app.get(['/admin', '/admin/', '/super-admin', '/super-admin/'], (_req, res) => {
   res.redirect(302, '/super-admin.html');
+});
+app.get(['/admin-manual', '/admin-manual/', '/super-admin-manual', '/super-admin-manual/'], (_req, res) => {
+  res.redirect(302, '/super-admin-quick-manual.html');
 });
 app.get(['/course/economics', '/course/economics/'], (_req, res) => {
   res.redirect(302, '/courses/economics-fundamentals/');
