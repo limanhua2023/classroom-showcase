@@ -258,6 +258,7 @@ async function runAudit(studentBaseUrl, backendBaseUrl) {
     const ok = response.ok
       && text.includes('studentEnter(event)')
       && text.includes('normalizeRequestedEntryPath')
+      && text.includes('student-quick-manual.html')
       && !text.includes('teacher-login.html')
       && !text.includes('super-admin.html');
     add('Student simplified entry page', ok, `HTTP ${response.status}`);
@@ -285,6 +286,26 @@ async function runAudit(studentBaseUrl, backendBaseUrl) {
     add('Student short alias /student', ok, `HTTP ${response.status}; location=${location || '-'}`);
   } catch (error) {
     add('Student short alias /student', false, error.message);
+  }
+
+  try {
+    const { response, text } = await fetchText(`${studentBaseUrl}/student-quick-manual.html`);
+    const ok = response.ok
+      && text.includes('学生简明手册')
+      && text.includes('student-manual')
+      && text.includes('economics');
+    add('Student quick manual page', ok, `HTTP ${response.status}`);
+  } catch (error) {
+    add('Student quick manual page', false, error.message);
+  }
+
+  try {
+    const response = await fetch(`${studentBaseUrl}/student-manual`, { redirect: 'manual' });
+    const location = response.headers.get('location') || '';
+    const ok = response.status >= 300 && response.status < 400 && location.includes('/student-quick-manual.html');
+    add('Student short alias /student-manual', ok, `HTTP ${response.status}; location=${location || '-'}`);
+  } catch (error) {
+    add('Student short alias /student-manual', false, error.message);
   }
 
   try {

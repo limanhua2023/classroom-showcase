@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>学生简明手册 - ClassShow</title>
+  <link rel="stylesheet" href="css/main.css">
+  <style>
+    .manual-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 18px;
+    }
+    .manual-card {
+      padding: 20px 22px;
+      border-radius: 24px;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      background: rgba(255, 255, 255, 0.9);
+      box-shadow: 0 20px 48px rgba(15, 23, 42, 0.06);
+    }
+    .manual-card h3 {
+      margin: 0 0 10px;
+      font-size: 1.05rem;
+      font-weight: 900;
+      color: var(--text-main);
+    }
+    .manual-card p,
+    .manual-card li {
+      color: var(--text-muted);
+      line-height: 1.7;
+      font-size: 0.95rem;
+    }
+    .manual-card ul,
+    .manual-card ol {
+      margin: 10px 0 0 20px;
+      padding: 0;
+    }
+    .manual-tip {
+      margin-top: 14px;
+      padding: 12px 14px;
+      border-radius: 16px;
+      background: rgba(16, 185, 129, 0.1);
+      border: 1px solid rgba(16, 185, 129, 0.15);
+      color: #047857;
+      font-size: 0.88rem;
+      line-height: 1.65;
+      font-weight: 700;
+    }
+    .manual-link-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin-top: 12px;
+    }
+    .manual-link-list .btn {
+      min-width: 180px;
+    }
+    @media (max-width: 900px) {
+      .manual-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body class="course-page">
+  <header class="topbar">
+    <a class="topbar-logo" href="student-entry.html">Class<span>Show</span></a>
+    <div class="topbar-right">
+      <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='student-entry.html'">学生入口</button>
+      <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='economics'">经济学基础</button>
+      <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='index.html'">总门户</button>
+    </div>
+  </header>
+
+  <main class="container">
+    <section class="course-hero">
+      <div class="course-hero-copy">
+        <div class="brand-kicker">STUDENT QUICK MANUAL</div>
+        <h1>学生简明手册</h1>
+        <p>这是一份给学生直接使用的说明。目标不是讲系统原理，而是帮助学生顺利进入“经济学基础”课程，并正确保存自己的学习时长和进度。</p>
+        <div class="course-hero-actions">
+          <button class="btn btn-primary" type="button" onclick="location.href='student-entry.html'">打开学生入口</button>
+          <button class="btn btn-secondary" type="button" onclick="location.href='economics'">经济学基础直达</button>
+        </div>
+      </div>
+      <div class="course-scoreboard" aria-label="学生操作摘要">
+        <div><strong>1</strong><span>填姓名</span></div>
+        <div><strong>2</strong><span>填学号</span></div>
+        <div><strong>3</strong><span>填邀请码</span></div>
+        <div><strong>4</strong><span>记得保存记录</span></div>
+      </div>
+    </section>
+
+    <section class="course-control-strip">
+      <div>
+        <strong>学生正式入口</strong>
+        <span><code>https://classshow-student.pages.dev/student</code></span>
+      </div>
+      <div class="course-card-actions">
+        <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='student'">短地址入口</button>
+        <button class="btn btn-secondary btn-sm" type="button" onclick="location.href='student-manual'">手册短地址</button>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">ENTRY FLOW</div>
+          <h2>进入课程只需要三项</h2>
+          <p>学生端已经精简，不需要看到教师和超管入口。</p>
+        </div>
+      </div>
+      <div class="manual-grid">
+        <article class="manual-card">
+          <h3>你需要填写</h3>
+          <ul>
+            <li>姓名</li>
+            <li>学号</li>
+            <li>邀请码</li>
+          </ul>
+        </article>
+        <article class="manual-card">
+          <h3>你不需要填写</h3>
+          <ul>
+            <li>教师密码</li>
+            <li>超级管理员密码</li>
+            <li>PIN</li>
+          </ul>
+          <div class="manual-tip">通过后会直接进入“经济学基础”课程学习页面。</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">IF YOU CANNOT ENTER</div>
+          <h2>进不去时先检查什么</h2>
+          <p>大多数问题不是系统坏了，而是名单或邀请码不匹配。</p>
+        </div>
+      </div>
+      <div class="manual-grid">
+        <article class="manual-card">
+          <h3>最常见原因</h3>
+          <ol>
+            <li>老师还没导入本次课堂实名名单</li>
+            <li>你的姓名、学号和老师 Excel 名单不一致</li>
+            <li>邀请码输入错误</li>
+          </ol>
+        </article>
+        <article class="manual-card">
+          <h3>你应该怎么做</h3>
+          <ol>
+            <li>先刷新页面重试一次</li>
+            <li>重新核对姓名、学号、邀请码</li>
+            <li>联系老师确认实名名单是否已经导入</li>
+          </ol>
+        </article>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">SAVE FLOW</div>
+          <h2>学习记录怎么保存</h2>
+          <p>当前系统采用“本地优先、手动保存”的低成本模型。</p>
+        </div>
+      </div>
+      <div class="manual-grid">
+        <article class="manual-card">
+          <h3>进入课程后你能看到</h3>
+          <ul>
+            <li>本次可见学习时长</li>
+            <li>云端已保存时长</li>
+            <li>班级在线学习排名</li>
+            <li>保存记录按钮</li>
+          </ul>
+        </article>
+        <article class="manual-card">
+          <h3>建议保存时机</h3>
+          <ul>
+            <li>学完一个章节或模块后保存一次</li>
+            <li>离开页面前再保存一次</li>
+          </ul>
+          <div class="manual-tip">如果你学了但没点“保存记录”，老师后台可能只会显示“待保存状态”。</div>
+        </article>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">WORK GALLERY</div>
+          <h2>作品展示区什么时候出现</h2>
+          <p>这部分不是一直开放，而是由老师控制。</p>
+        </div>
+      </div>
+      <div class="manual-grid">
+        <article class="manual-card">
+          <h3>老师没开启时</h3>
+          <ul>
+            <li>你只能学习课程</li>
+            <li>看不到作品上传入口</li>
+            <li>看不到作品展示页</li>
+          </ul>
+        </article>
+        <article class="manual-card">
+          <h3>老师已开启时</h3>
+          <ul>
+            <li>你可以上传作品</li>
+            <li>你可以浏览作品展示页</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="course-portal">
+      <div class="course-portal-head">
+        <div>
+          <div class="brand-kicker course-kicker">QUICK LINKS</div>
+          <h2>常用入口</h2>
+        </div>
+      </div>
+      <div class="manual-card">
+        <div class="manual-link-list">
+          <button class="btn btn-primary" type="button" onclick="location.href='student-entry.html'">学生入口</button>
+          <button class="btn btn-secondary" type="button" onclick="location.href='economics'">经济学基础直达</button>
+          <button class="btn btn-secondary" type="button" onclick="location.href='student-manual'">学生手册短地址</button>
+        </div>
+      </div>
+    </section>
+  </main>
+</body>
+</html>
