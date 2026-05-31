@@ -139,6 +139,7 @@ async function main() {
   const inviteCode = makeInviteCode();
   const teacherPassword = makeTeacherPassword();
   const activityName = `自动验证-保存链路-${inviteCode}`;
+  const className = `自动验证班-${inviteCode}`;
   const registry = await api(BACKEND_BASE, '/api/portal/course-registry');
   const courseEntry = (registry?.courses || []).find(entry => String(entry.slug || '') === COURSE_SLUG);
   if (!courseEntry) fail(`Course registry is missing slug ${COURSE_SLUG}`);
@@ -150,7 +151,7 @@ async function main() {
     method: 'POST',
     body: JSON.stringify({
       course_name: courseName,
-      class_name: '自动验证班-请忽略',
+      class_name: className,
       activity_name: activityName,
       description: '自动烟测：学生保存状态链路',
       invite_code: inviteCode,
@@ -180,11 +181,11 @@ async function main() {
     headers: { 'x-teacher-auth': teacherToken },
     body: JSON.stringify({
       activity_id: activity.id,
-      default_class_name: '鉴动验证班-请忽略',
+      default_class_name: className,
       students: students.map(student => ({
         name: student.name,
         student_id: student.student_id,
-        class_name: '鉴动验证班-请忽略',
+        class_name: className,
         group_name: student.group_name
       }))
     })
@@ -203,7 +204,7 @@ async function main() {
         activity_id: activity.id,
         name: student.name,
         student_id: student.student_id,
-        class_name: '自动验证班-请忽略',
+        class_name: className,
         group_name: student.group_name
       })
     });

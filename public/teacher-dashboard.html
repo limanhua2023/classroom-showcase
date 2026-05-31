@@ -40,6 +40,53 @@
       font-weight: 700;
       line-height: 1.55;
     }
+    .roster-reuse-panel {
+      margin-top: 14px;
+      padding: 14px 16px;
+      border-radius: 18px;
+      border: 1px solid rgba(15, 23, 42, 0.08);
+      background: rgba(15, 23, 42, 0.03);
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    .roster-reuse-head {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: baseline;
+      justify-content: space-between;
+    }
+    .roster-reuse-head strong {
+      font-size: 0.88rem;
+      font-weight: 900;
+      color: var(--text-main);
+    }
+    .roster-reuse-note {
+      color: var(--text-muted);
+      font-size: 0.78rem;
+      line-height: 1.55;
+    }
+    .roster-reuse-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+    .roster-reuse-actions select {
+      min-width: 280px;
+      flex: 1 1 320px;
+      padding: 11px 14px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: rgba(255,255,255,0.92);
+      font: inherit;
+      color: var(--text-main);
+    }
+    .roster-reuse-status {
+      font-size: 0.78rem;
+      color: var(--text-light);
+    }
     .roster-gate-banner {
       margin-top: 16px;
       padding: 16px 18px;
@@ -2134,6 +2181,8 @@
       return ['all', 'pending', 'recent24h', 'reviewed'].includes(saved) ? saved : 'all';
     })();
     let learningEvidenceSearchQuery = readLearningEvidencePreference('search', '').trim();
+    let rosterReuseSources = [];
+    let rosterReuseLoaded = false;
     let dashboardBaseTitle = '教师后台 - ClassShow';
     let lastQuarantineExpiryReminderKey = '';
     let lastLocalBackupAlertKey = '';
@@ -2253,6 +2302,161 @@
       const input = document.getElementById('rosterFile');
       if (input) {
         try { input.focus({ preventScroll: true }); } catch { input.focus(); }
+      }
+    }
+
+    function ensureRosterReuseScaffold() {
+      ensureRosterGateScaffold();
+      const toolbar = document.querySelector('.roster-toolbar');
+      if (!toolbar) return;
+      if (document.getElementById('rosterReusePanel')) return;
+      const panel = document.createElement('div');
+      panel.className = 'roster-reuse-panel';
+      panel.id = 'rosterReusePanel';
+      panel.innerHTML = `
+        <div class="roster-reuse-head">
+          <strong>复用同课程历史名单</strong>
+          <span class="roster-reuse-status" id="rosterReuseStatus">系统会优先推荐同班最近一次已导入的名单。</span>
+        </div>
+        <div class="roster-reuse-note" id="rosterReuseNote">如果这门课重复开班，不需要重新整理 Excel。可以直接把上一场活动的实名名单复制到当前活动。</div>
+        <div class="roster-reuse-actions">
+          <select id="rosterReuseSelect">
+            <option value="">先读取可复用名单</option>
+          </select>
+          <button class="btn btn-secondary btn-sm" type="button" id="rosterReuseRefreshBtn">读取历史名单</button>
+          <button class="btn btn-primary btn-sm" type="button" id="rosterReuseApplyBtn">复用到当前活动</button>
+        </div>
+      `;
+      toolbar.insertAdjacentElement('afterend', panel);
+      panel.querySelector('#rosterReuseRefreshBtn')?.addEventListener('click', () => loadRosterReuseSources(true));
+      panel.querySelector('#rosterReuseApplyBtn')?.addEventListener('click', reuseRosterFromSelectedSource);
+    }
+
+    function formatRosterReuseSourceLabel(source) {
+      if (!source) return '';
+      const createdAt = source.created_at ? formatBangkokTime(source.created_at) : '未知时间';
+      const classLabel = source.class_name || '未分班';
+      const flag = source.same_class ? '同班优先' : '同课程';
+      return `${source.activity_name || '未命名活动'} / ${classLabel} / ${source.active_roster_count || 0} 人 / ${createdAt} / ${flag}`;
+    }
+
+    function renderRosterReuseSources() {
+      ensureRosterReuseScaffold();
+      const panel = document.getElementById('rosterReusePanel');
+      const select = document.getElementById('rosterReuseSelect');
+      const status = document.getElementById('rosterReuseStatus');
+      const note = document.getElementById('rosterReuseNote');
+      if (!panel || !select || !status || !note) return;
+
+      const activity = dashboardSummary?.activity || act || {};
+      const enabled = activityRequiresRosterGate(activity);
+      panel.style.display = enabled ? '' : 'none';
+      if (!enabled) return;
+
+      const gate = getRosterGateState(dashboardSummary);
+      const currentValue = select.value || '';
+      select.innerHTML = '<option value="">选择一份历史名单来源</option>';
+      for (const source of rosterReuseSources) {
+        const option = document.createElement('option');
+        option.value = source.activity_id;
+        option.textContent = formatRosterReuseSourceLabel(source);
+        if (source.same_class) option.dataset.sameClass = '1';
+        select.appendChild(option);
+      }
+      if (currentValue && rosterReuseSources.some(item => item.activity_id === currentValue)) {
+        select.value = currentValue;
+      } else if (rosterReuseSources.length === 1) {
+        select.value = rosterReuseSources[0].activity_id;
+      } else if (!currentValue) {
+        const preferred = rosterReuseSources.find(item => item.same_class) || rosterReuseSources[0];
+        if (preferred) select.value = preferred.activity_id;
+      }
+
+      if (!rosterReuseLoaded) {
+        status.textContent = '点击“读取历史名单”后，会列出当前课程可复用的实名名单来源。';
+      } else if (!rosterReuseSources.length) {
+        status.textContent = '还没有找到可复用的历史名单。请先上传当前活动名单，或先完成一次上一场活动的名单导入。';
+      } else {
+        status.textContent = `已找到 ${rosterReuseSources.length} 份可复用名单，默认优先推荐同班最近一次名单。`;
+      }
+
+      if (activity.roster_auto_reused && activity.roster_auto_reused_from_label) {
+        note.textContent = `当前活动已自动继承上一份名单：${activity.roster_auto_reused_from_label}。如需切换成另一份历史名单，可在下方重新选择并覆盖。`;
+      } else if (!gate.locked) {
+        note.textContent = '当前活动名单已解锁。若这次导入有误，仍可从历史活动重新复用并覆盖当前名单。';
+      } else {
+        note.textContent = '如果这是重复开设的经济学基础班级，优先复用上一场同班名单，会比重新整理 Excel 更快。';
+      }
+    }
+
+    async function loadRosterReuseSources(showToast = false) {
+      ensureRosterReuseScaffold();
+      const activity = dashboardSummary?.activity || act || {};
+      if (!activityRequiresRosterGate(activity)) return;
+      const status = document.getElementById('rosterReuseStatus');
+      const refreshBtn = document.getElementById('rosterReuseRefreshBtn');
+      const originalLabel = refreshBtn?.textContent || '读取历史名单';
+      if (refreshBtn) {
+        refreshBtn.disabled = true;
+        refreshBtn.textContent = '读取中...';
+      }
+      if (status) status.textContent = '正在读取当前课程可复用的历史名单...';
+      try {
+        const result = await api('/teacher/roster/reuse-sources?activity_id=' + encodeURIComponent(actId));
+        rosterReuseSources = Array.isArray(result?.sources) ? result.sources : [];
+        rosterReuseLoaded = true;
+        renderRosterReuseSources();
+        if (showToast) {
+          toast(
+            rosterReuseSources.length
+              ? `已读取 ${rosterReuseSources.length} 份历史名单来源。`
+              : '没有找到可复用的历史名单。',
+            'success'
+          );
+        }
+      } catch (e) {
+        if (status) status.textContent = '读取历史名单失败，请稍后重试。';
+        if (showToast) toast('读取历史名单失败：' + e.message, 'error');
+      } finally {
+        if (refreshBtn) {
+          refreshBtn.disabled = false;
+          refreshBtn.textContent = originalLabel;
+        }
+      }
+    }
+
+    async function reuseRosterFromSelectedSource() {
+      ensureRosterReuseScaffold();
+      const select = document.getElementById('rosterReuseSelect');
+      const sourceActivityId = String(select?.value || '').trim();
+      if (!sourceActivityId) return toast('请先选择一份历史名单来源。', 'error');
+      const source = rosterReuseSources.find(item => item.activity_id === sourceActivityId) || null;
+      if (!confirm(`确认用“${source?.activity_name || '所选活动'}”的实名名单覆盖当前活动吗？当前名单会被替换。`)) return;
+      const applyBtn = document.getElementById('rosterReuseApplyBtn');
+      const originalLabel = applyBtn?.textContent || '复用到当前活动';
+      if (applyBtn) {
+        applyBtn.disabled = true;
+        applyBtn.textContent = '复用中...';
+      }
+      try {
+        const result = await api('/teacher/roster/reuse', {
+          method: 'POST',
+          body: JSON.stringify({
+            activity_id: actId,
+            source_activity_id: sourceActivityId,
+            overwrite: true
+          })
+        });
+        await reloadDashboard();
+        await loadRosterReuseSources(false);
+        toast(`已复用 ${result.imported || 0} 名学生，当前活动名单已切换为历史来源。`, 'success');
+      } catch (e) {
+        toast('复用历史名单失败：' + e.message, 'error');
+      } finally {
+        if (applyBtn) {
+          applyBtn.disabled = false;
+          applyBtn.textContent = originalLabel;
+        }
       }
     }
 
@@ -3436,6 +3640,7 @@ function renderLearningGroups(targetId, rows) {
           </td>
         </tr>
       `).join('') : '<tr><td colspan="5" style="color:var(--text-muted);">暂无名单</td></tr>';
+      renderRosterReuseSources();
     }
 
     function renderStorage(summary) {
@@ -6782,6 +6987,8 @@ function renderLearningGroups(targetId, rows) {
     reloadDashboard = async function(showToast = false) {
       await classshowBaseReloadDashboard(showToast);
       renderInviteGate(dashboardSummary);
+      renderRosterReuseSources();
+      await loadRosterReuseSources(false);
       maybeRunRosterSetupGuide();
     };
 

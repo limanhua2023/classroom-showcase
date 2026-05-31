@@ -80,13 +80,14 @@ async function main() {
   const inviteCode = makeInviteCode();
   const teacherPassword = makeTeacherPassword();
   const activityName = `自动验证-两学生登录-${inviteCode}`;
+  const className = `自动验证班-${inviteCode}`;
 
   console.log('Creating test activity...');
   const activity = await api(BACKEND_BASE, '/api/activities', {
     method: 'POST',
     body: JSON.stringify({
       course_name: COURSE_NAME,
-      class_name: '自动验证班-请忽略',
+      class_name: className,
       activity_name: activityName,
       description: '自动烟测创建，请忽略。',
       invite_code: inviteCode,
@@ -140,11 +141,11 @@ async function main() {
     },
     body: JSON.stringify({
       activity_id: activity.id,
-      default_class_name: '鉴动验证班-请忽略',
+      default_class_name: className,
       students: students.map(student => ({
         name: student.name,
         student_id: student.student_id,
-        class_name: '鉴动验证班-请忽略',
+        class_name: className,
         group_name: student.group_name
       }))
     })
@@ -163,7 +164,7 @@ async function main() {
         activity_id: activity.id,
         name: student.name,
         student_id: student.student_id,
-        class_name: '自动验证班-请忽略',
+        class_name: className,
         group_name: student.group_name
       })
     });

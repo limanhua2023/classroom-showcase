@@ -119,8 +119,13 @@
         return toast('请填写所有必填项', 'error');
       }
       try {
-        await api('/activities', { method: 'POST', body: JSON.stringify(data) });
-        toast('活动已创建。请先上传 Excel 名单，名单导入后系统才会解锁邀请码。', 'success');
+        const act = await api('/activities', { method: 'POST', body: JSON.stringify(data) });
+        toast(
+          act?.roster_auto_reused
+            ? `活动已创建，并已自动继承上一份实名名单（${act.roster_auto_reused_count || 0} 人）。`
+            : '活动已创建。请先上传 Excel 名单，名单导入后系统才会解锁邀请码。',
+          'success'
+        );
         const loginRes = await api('/teacher/login', {
           method: 'POST',
           body: JSON.stringify({ invite_code: data.invite_code, password: data.teacher_password })

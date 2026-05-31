@@ -104,7 +104,9 @@ async function runAudit(studentBaseUrl, backendBaseUrl) {
       && text.includes('learningEvidenceResetBtn')
       && text.includes('data-learning-evidence-filter="recent24h"')
       && text.includes('rosterGateBanner')
-      && text.includes('classshowBaseReloadDashboard');
+      && text.includes('classshowBaseReloadDashboard')
+      && text.includes('rosterReusePanel')
+      && text.includes('loadRosterReuseSources');
     add('Backend teacher evidence tools', ok, `HTTP ${response.status}`);
   } catch (error) {
     add('Backend teacher evidence tools', false, error.message);

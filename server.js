@@ -8373,9 +8373,24 @@ app.post('/api/activities', async (req, res) => {
       }
     }
 
+    let autoReuse = null;
+    if (!result.error && result.data && requiresRosterGate) {
+      autoReuse = await maybeAutoReuseRosterForNewActivity(result.data.id).catch(() => null);
+      if (autoReuse?.imported > 0) {
+        result = await fetchActivityById(result.data.id);
+      }
+    }
+
     const { data, error } = result;
     if (error) throw error;
-    res.status(201).json(sanitizeActivity(data));
+    const responsePayload = sanitizeActivity(data);
+    if (autoReuse?.imported > 0) {
+      responsePayload.roster_auto_reused = true;
+      responsePayload.roster_auto_reused_count = Number(autoReuse.imported || 0);
+      responsePayload.roster_auto_reused_from = autoReuse.source_activity_id;
+      responsePayload.roster_auto_reused_from_label = autoReuse.source_label || autoReuse.source_activity_name || '';
+    }
+    res.status(201).json(responsePayload);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
@@ -8517,6 +8532,145 @@ async function getActivityDefaultClassName(activityId) {
   return sanitizeText(data?.class_name, 80) || '未分班';
 }
 
+async function listReusableRosterSources(activityId, { limit = 12 } = {}) {
+  const targetResult = await fetchActivityById(activityId);
+  if (targetResult.error || !targetResult.data) {
+    throw targetResult.error || new Error('Activity not found');
+  }
+  const target = targetResult.data;
+  const targetCourseName = sanitizeText(target.course_name, 120);
+  const targetClassName = sanitizeText(target.class_name, 80);
+  if (!targetCourseName) return [];
+
+  const { data: candidates, error } = await supabase.from('activities')
+    .select('id,course_name,class_name,activity_name,invite_code,created_at')
+    .neq('id', activityId)
+    .order('created_at', { ascending: false })
+    .limit(Math.max(12, Math.min(80, Number(limit) * 4 || 48)));
+  if (error) throw error;
+
+  const rows = [];
+  for (const candidate of (candidates || [])) {
+    if (!arePortalCourseNamesCompatible(candidate.course_name, targetCourseName)) continue;
+    const gate = await getActivityRosterGateStatus(candidate.id).catch(() => ({ schema_ready: false, active_count: 0, locked: true }));
+    const activeCount = Number(gate.active_count || 0);
+    if (activeCount <= 0) continue;
+    const sameClass = normalizePortalCourseName(candidate.class_name || '') === normalizePortalCourseName(targetClassName || '');
+    rows.push({
+      id: candidate.id,
+      activity_id: candidate.id,
+      activity_name: sanitizeText(candidate.activity_name, 120) || '未命名活动',
+      class_name: sanitizeText(candidate.class_name, 80) || '',
+      course_name: sanitizeText(candidate.course_name, 120) || '',
+      invite_code: normalizeInviteCode(candidate.invite_code),
+      created_at: candidate.created_at || null,
+      active_roster_count: activeCount,
+      same_class: sameClass,
+      source_label: `${sanitizeText(candidate.activity_name, 120) || '未命名活动'} / ${sanitizeText(candidate.class_name, 80) || '未分班'} / ${activeCount} 人`
+    });
+  }
+
+  rows.sort((left, right) => {
+    if (left.same_class !== right.same_class) return left.same_class ? -1 : 1;
+    const leftTime = left.created_at ? new Date(left.created_at).getTime() : 0;
+    const rightTime = right.created_at ? new Date(right.created_at).getTime() : 0;
+    return rightTime - leftTime;
+  });
+  return rows.slice(0, Math.max(1, Math.min(30, Number(limit) || 12)));
+}
+
+async function cloneRosterFromSourceActivity(sourceActivityId, targetActivityId, { overwrite = true } = {}) {
+  if (!sourceActivityId || !targetActivityId) {
+    const err = new Error('Missing source_activity_id or activity_id');
+    err.status = 400;
+    throw err;
+  }
+  if (String(sourceActivityId) === String(targetActivityId)) {
+    const err = new Error('Source activity and target activity cannot be the same');
+    err.status = 400;
+    throw err;
+  }
+
+  const [sourceResult, targetResult] = await Promise.all([
+    fetchActivityById(sourceActivityId),
+    fetchActivityById(targetActivityId)
+  ]);
+  if (sourceResult.error || !sourceResult.data) throw sourceResult.error || new Error('Source activity not found');
+  if (targetResult.error || !targetResult.data) throw targetResult.error || new Error('Target activity not found');
+
+  const sourceActivity = sourceResult.data;
+  const targetActivity = targetResult.data;
+  if (!arePortalCourseNamesCompatible(sourceActivity.course_name, targetActivity.course_name)) {
+    const err = new Error('Roster reuse is only allowed within the same course');
+    err.status = 400;
+    throw err;
+  }
+
+  const { data: sourceRows, error: sourceError } = await supabase.from('student_roster')
+    .select('student_id,name,class_name,group_name,active')
+    .eq('activity_id', sourceActivityId)
+    .order('student_id', { ascending: true });
+  if (sourceError) throw sourceError;
+  const rows = Array.isArray(sourceRows) ? sourceRows : [];
+  if (!rows.length) {
+    const err = new Error('Source activity has no roster to reuse');
+    err.status = 400;
+    throw err;
+  }
+
+  if (overwrite) {
+    const { error: deleteError } = await supabase.from('student_roster').delete().eq('activity_id', targetActivityId);
+    if (deleteError) throw deleteError;
+  }
+
+  const payload = rows.map(row => ({
+    activity_id: targetActivityId,
+    student_id: sanitizeText(row.student_id, 80),
+    name: sanitizeText(row.name, 80),
+    class_name: sanitizeText(row.class_name, 80) || sanitizeText(targetActivity.class_name, 80) || sanitizeText(sourceActivity.class_name, 80),
+    group_name: sanitizeText(row.group_name, 80) || null,
+    active: row.active === false ? false : true,
+    pin_hash: null,
+    pin_salt: null
+  })).filter(row => row.student_id && row.name);
+
+  const { error: upsertError } = await supabase.from('student_roster')
+    .upsert(payload, { onConflict: 'activity_id,student_id' });
+  if (upsertError) throw upsertError;
+
+  const { error: updateError } = await supabase.from('activities')
+    .update({ roster_enabled: true, pin_required: false })
+    .eq('id', targetActivityId);
+  if (updateError) throw updateError;
+
+  return {
+    ok: true,
+    imported: payload.length,
+    source_activity_id: sourceActivityId,
+    source_activity_name: sanitizeText(sourceActivity.activity_name, 120) || '未命名活动',
+    source_class_name: sanitizeText(sourceActivity.class_name, 80) || '',
+    source_invite_code: normalizeInviteCode(sourceActivity.invite_code),
+    target_activity_id: targetActivityId,
+    overwrite: !!overwrite
+  };
+}
+
+async function maybeAutoReuseRosterForNewActivity(activityId) {
+  const sources = await listReusableRosterSources(activityId, { limit: 8 });
+  const preferred = sources.find(item => item.same_class) || null;
+  if (!preferred) return null;
+
+  const currentGate = await getActivityRosterGateStatus(activityId).catch(() => ({ active_count: 0 }));
+  if (Number(currentGate.active_count || 0) > 0) return null;
+
+  const result = await cloneRosterFromSourceActivity(preferred.activity_id, activityId, { overwrite: true });
+  return {
+    ...result,
+    auto_reused: true,
+    source_label: preferred.source_label
+  };
+}
+
 async function importRosterStudentsForActivity(req, { activity_id, students, default_class_name }) {
   if (!activity_id) {
     const err = new Error('Missing activity_id');
@@ -8645,6 +8799,20 @@ app.get('/api/teacher/roster', teacherAuth, async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.get('/api/teacher/roster/reuse-sources', teacherAuth, async (req, res) => {
+  try {
+    const activity_id = String(req.query.activity_id ?? '').trim();
+    if (!activity_id) return res.status(400).json({ error: 'Missing activity_id' });
+    const auth = await ensureTeacherCanAccessActivity(req, activity_id);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+
+    const sources = await listReusableRosterSources(activity_id, { limit: 12 });
+    res.json({ ok: true, activity_id, sources });
+  } catch (e) {
+    res.status(e.status || 500).json({ error: e.message });
+  }
+});
+
 app.post('/api/teacher/roster/import', teacherAuth, async (req, res) => {
   try {
     const activity_id = String(req.body.activity_id ?? '').trim();
@@ -8658,6 +8826,23 @@ app.post('/api/teacher/roster/import', teacherAuth, async (req, res) => {
       students,
       default_class_name: req.body.default_class_name
     });
+    res.json(result);
+  } catch (e) {
+    res.status(e.status || 500).json({ error: rosterImportErrorMessage(e) });
+  }
+});
+
+app.post('/api/teacher/roster/reuse', teacherAuth, async (req, res) => {
+  try {
+    const activity_id = String(req.body.activity_id ?? '').trim();
+    const source_activity_id = String(req.body.source_activity_id ?? '').trim();
+    if (!activity_id || !source_activity_id) {
+      return res.status(400).json({ error: 'Missing activity_id or source_activity_id' });
+    }
+    const auth = await ensureTeacherCanAccessActivity(req, activity_id);
+    if (!auth.ok) return res.status(auth.status).json({ error: auth.error });
+    const overwrite = req.body.overwrite !== false;
+    const result = await cloneRosterFromSourceActivity(source_activity_id, activity_id, { overwrite });
     res.json(result);
   } catch (e) {
     res.status(e.status || 500).json({ error: rosterImportErrorMessage(e) });
